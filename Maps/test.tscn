@@ -1,0 +1,76 @@
+[gd_scene format=3 uid="uid://bbtjdcwal7ax6"]
+
+[ext_resource type="Script" uid="uid://sqer1ykwxtg5" path="res://addons/day_and_night_cycle/scripts/cycle_controller.gd" id="1_ev8si"]
+[ext_resource type="Resource" uid="uid://kr0ipoip375a" path="res://addons/day_and_night_cycle/presets/default/default_day_cycle.tres" id="2_3sehy"]
+[ext_resource type="PackedScene" uid="uid://65jplqtvkywd" path="res://scenes/player.tscn" id="2_mtgl8"]
+[ext_resource type="Resource" uid="uid://b0mbm2nb4pntn" path="res://addons/day_and_night_cycle/presets/default/default_night_cycle.tres" id="3_scb4q"]
+[ext_resource type="Environment" uid="uid://cg4moryceonk" path="res://resources/default_environment.tres" id="4_mensd"]
+[ext_resource type="PackedScene" uid="uid://bi22f5rdk8agp" path="res://scenes/grid_map.tscn" id="4_scb4q"]
+[ext_resource type="PackedScene" uid="uid://dgl0gakvh73m6" path="res://scenes/evac_point.tscn" id="6_scb4q"]
+[ext_resource type="PackedScene" uid="uid://duk4o8naa00np" path="res://scenes/spawner.tscn" id="7_mensd"]
+
+[node name="Test" type="Node3D" unique_id=495423455]
+
+[node name="CycleController" type="Node3D" parent="." unique_id=1594314322 node_paths=PackedStringArray("world_environment", "sun_light")]
+script = ExtResource("1_ev8si")
+day_data = ExtResource("2_3sehy")
+night_data = ExtResource("3_scb4q")
+world_environment = NodePath("WorldEnvironment")
+sun_light = NodePath("DirectionalLight3D")
+metadata/_custom_type_script = "uid://sqer1ykwxtg5"
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="CycleController" unique_id=363659427]
+environment = ExtResource("4_mensd")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="CycleController" unique_id=876112764]
+transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
+light_color = Color(1, 0.960252, 0.8652216, 1)
+shadow_enabled = true
+directional_shadow_max_distance = 200.0
+
+[node name="GridMap" parent="." unique_id=1507718784 instance=ExtResource("4_scb4q")]
+data = {
+"cells": PackedInt32Array(65531, 65533, 44, 65531, 65534, 44, 65531, 65535, 44, 65531, 0, 44, 65531, 1, 44, 65531, 2, 44, 65531, 3, 44, 65531, 4, 44, 65532, 65533, 44, 65532, 65534, 44, 65532, 65535, 44, 65532, 0, 44, 65532, 1, 44, 65532, 2, 44, 65532, 3, 44, 65532, 4, 44, 65533, 65533, 44, 65533, 65534, 44, 65533, 65535, 44, 65533, 0, 44, 65533, 1, 44, 65533, 2, 44, 65533, 3, 44, 65533, 4, 44, 65534, 65533, 44, 65534, 65534, 44, 65534, 65535, 44, 65534, 0, 44, 65534, 1, 44, 65534, 2, 44, 65534, 3, 44, 65534, 4, 44, 65535, 65533, 44, 65535, 65534, 44, 65535, 65535, 44, 65535, 0, 44, 65535, 1, 44, 65535, 2, 44, 65535, 3, 44, 65535, 4, 44, 0, 65533, 44, 0, 65534, 44, 0, 65535, 44, 0, 0, 44, 0, 1, 44, 0, 2, 44, 0, 3, 44, 0, 4, 44, 1, 65533, 44, 1, 65534, 44, 1, 65535, 44, 1, 0, 44, 1, 1, 44, 1, 2, 44, 1, 3, 44, 1, 4, 44, 2, 65533, 44, 2, 65534, 44, 2, 65535, 44, 2, 0, 44, 2, 1, 44, 2, 2, 44, 2, 3, 44, 2, 4, 44, 3, 65533, 44, 3, 65534, 44, 3, 65535, 44, 3, 0, 44, 3, 1, 44, 3, 2, 44, 3, 3, 44, 3, 4, 44, 4, 65533, 44, 4, 65534, 44, 4, 65535, 44, 4, 0, 44, 4, 1, 44, 4, 2, 44, 4, 3, 44, 4, 4, 44)
+}
+
+[node name="Player" parent="." unique_id=854614395 instance=ExtResource("2_mtgl8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 0)
+
+[node name="EvacPoint" parent="." unique_id=1148303783 instance=ExtResource("6_scb4q")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -43.333332, 2, 16)
+
+[node name="Spawner" parent="." unique_id=650907625 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, 6)
+spawn_quota = 1000
+
+[node name="Spawner2" parent="." unique_id=463864646 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, 11.333333)
+spawn_quota = 1000
+
+[node name="Spawner3" parent="." unique_id=238410085 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, 0.666667)
+spawn_quota = 1000
+
+[node name="Spawner4" parent="." unique_id=1991736467 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, 22.666668)
+spawn_quota = 1000
+
+[node name="Spawner5" parent="." unique_id=832570527 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, 28)
+spawn_quota = 1000
+
+[node name="Spawner6" parent="." unique_id=2144647369 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, 17.333332)
+spawn_quota = 1000
+
+[node name="Spawner7" parent="." unique_id=37978320 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, -13.333333)
+spawn_quota = 1000
+
+[node name="Spawner8" parent="." unique_id=153358169 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, -8)
+spawn_quota = 1000
+
+[node name="Spawner9" parent="." unique_id=338308005 instance=ExtResource("7_mensd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31.333332, 2, -18.666668)
+spawn_quota = 1000

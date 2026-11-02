@@ -1,0 +1,34 @@
+[gd_scene format=3]
+
+[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_thin_tree_4.png" id="1_sw2pg"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_sw2pg"]
+
+[node name="foliage_thin_tree_4" type="Node3D" unique_id=1279411221 groups=["foliage", "placeables"]]
+
+[node name="SelectionArea" type="Area3D" parent="." unique_id=878775057]
+collision_layer = 7
+collision_mask = 3
+monitoring = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=1278180216]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+shape = SubResource("BoxShape3D_sw2pg")
+
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1355679534]
+transform = Transform3D(-0.6062219, 0, -0.79529554, 0, 1, 0, 0.79529554, 0, -0.6062219, 0, 14.84375, 0)
+cast_shadow = 2
+pixel_size = 0.0625
+shaded = true
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("1_sw2pg")
+
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=1350503936]
+transform = Transform3D(-0.7952955, 0, 0.60622203, 0, 1, 0, -0.60622203, 0, -0.7952955, 0, 14.84375, 0)
+cast_shadow = 2
+pixel_size = 0.0625
+shaded = true
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("1_sw2pg")

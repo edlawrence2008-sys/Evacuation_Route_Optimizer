@@ -1,0 +1,40 @@
+[gd_scene format=3 uid="uid://b37ntkp8ap2rl"]
+
+[ext_resource type="Script" uid="uid://bblxlflsakhas" path="res://scripts/NPCstuff/Member.gd" id="1_vcamo"]
+[ext_resource type="PackedScene" uid="uid://cdmm03uybltp4" path="res://models/Member.gltf" id="2_10li3"]
+[ext_resource type="Script" uid="uid://dicxn3bycy5f5" path="res://scripts/NPCstuff/HealthComponent.gd" id="3_ds2fm"]
+[ext_resource type="Script" uid="uid://c21tywm5alx7i" path="res://scripts/NPCstuff/LeanAnimator.gd" id="4_7ruen"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_4hmvm"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_7ruen"]
+radius = 17.0
+
+[node name="Member" type="CharacterBody3D" unique_id=979949608 groups=["Members"]]
+collision_layer = 2
+script = ExtResource("1_vcamo")
+member_scene = null
+debug_ai = false
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="." unique_id=510829130]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1778285431]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("CapsuleShape3D_4hmvm")
+
+[node name="blockbench_export" parent="." unique_id=1267303627 instance=ExtResource("2_10li3")]
+
+[node name="DetectionArea" type="Area3D" parent="." unique_id=1407092681]
+collision_layer = 4
+collision_mask = 3
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DetectionArea" unique_id=232948979]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("SphereShape3D_7ruen")
+
+[node name="HealthComponent" type="Node" parent="." unique_id=2065925536]
+script = ExtResource("3_ds2fm")
+max_health = 50.0
+
+[node name="LeanAnimator" type="Node" parent="." unique_id=1539264424]
+script = ExtResource("4_7ruen")

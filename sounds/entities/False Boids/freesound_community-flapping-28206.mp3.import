@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://xr8g4k6tfjwt"
+path="res://.godot/imported/freesound_community-flapping-28206.mp3-c85ece0fb1d7ce4a31eaf852dfd3f6e7.mp3str"
+
+[deps]
+
+source_file="res://sounds/entities/False Boids/freesound_community-flapping-28206.mp3"
+dest_files=["res://.godot/imported/freesound_community-flapping-28206.mp3-c85ece0fb1d7ce4a31eaf852dfd3f6e7.mp3str"]
+
+[params]
+
+loop=true
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

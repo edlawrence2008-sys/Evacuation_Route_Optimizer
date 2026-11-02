@@ -1,0 +1,160 @@
+[gd_scene format=3 uid="uid://btqvcgkv12dlc"]
+
+[ext_resource type="Texture2D" uid="uid://bin7ktwtbx21i" path="res://textures/inventory/Category_arrow.png" id="1_arrow"]
+[ext_resource type="Texture2D" uid="uid://3g5uv2p8cpro" path="res://textures/inventory/inventory_bg_main.png" id="2_bg"]
+[ext_resource type="PackedScene" uid="uid://crrnl504kgocm" path="res://scenes/inventory/SimulationPanel.tscn" id="3_simulation"]
+[ext_resource type="PackedScene" uid="uid://bdv73usdpdgrg" path="res://scenes/inventory/AgentPanel.tscn" id="4_agents"]
+
+[sub_resource type="Theme" id="Theme_ect3m"]
+
+[sub_resource type="Theme" id="Theme_nyl04"]
+
+[sub_resource type="Theme" id="Theme_oqp05"]
+
+[node name="Inventory" type="Control" unique_id=42675415]
+layout_mode = 3
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -224.0
+offset_top = -146.0
+offset_right = -224.0
+offset_bottom = -146.0
+grow_horizontal = 2
+grow_vertical = 2
+offset_transform_enabled = true
+mouse_filter = 1
+
+[node name="CategoryArrow" type="Sprite2D" parent="." unique_id=908556737]
+z_index = 1
+position = Vector2(35, -5)
+texture = ExtResource("1_arrow")
+
+[node name="InventoryBgMain" type="Sprite2D" parent="." unique_id=1541739151]
+z_index = -1
+texture_filter = 1
+texture_repeat = 1
+position = Vector2(223.74998, 132)
+scale = Vector2(2.3238342, 1.184)
+texture = ExtResource("2_bg")
+
+[node name="ContentScroll" type="ScrollContainer" parent="." unique_id=927030270]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = 15.0
+offset_top = 16.0
+offset_right = 442.0
+offset_bottom = 270.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = SubResource("Theme_ect3m")
+horizontal_scroll_mode = 0
+
+[node name="Groups" type="VBoxContainer" parent="ContentScroll" unique_id=619651951]
+layout_mode = 2
+theme = SubResource("Theme_nyl04")
+theme_override_constants/separation = 4
+
+[node name="ItemCategoryScroll" type="ScrollContainer" parent="." unique_id=1032338589]
+layout_mode = 1
+offset_left = 8.0
+offset_top = -12.0
+offset_right = 320.0
+offset_bottom = 12.0
+theme = SubResource("Theme_ect3m")
+
+[node name="ItemCategoryHbox" type="HBoxContainer" parent="ItemCategoryScroll" unique_id=559936196]
+layout_mode = 2
+
+[node name="Blocks" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox" unique_id=1326482551]
+layout_mode = 2
+theme = SubResource("Theme_oqp05")
+theme_type_variation = &"FlatButton"
+toggle_mode = true
+text = "Blocks"
+
+[node name="Placeables" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox" unique_id=1541789711]
+layout_mode = 2
+theme = SubResource("Theme_oqp05")
+theme_type_variation = &"FlatButton"
+toggle_mode = true
+text = "Placeables"
+
+[node name="Simulation" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox" unique_id=203285778]
+layout_mode = 2
+theme = SubResource("Theme_oqp05")
+theme_type_variation = &"FlatButton"
+toggle_mode = true
+text = "Simulation"
+
+[node name="Agents" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox" unique_id=1442000001]
+layout_mode = 2
+theme = SubResource("Theme_oqp05")
+theme_type_variation = &"FlatButton"
+toggle_mode = true
+text = "Agents"
+
+[node name="SearchBar" type="LineEdit" parent="." unique_id=479352117]
+layout_mode = 0
+offset_left = 326.0
+offset_top = -12.0
+offset_right = 438.0
+offset_bottom = 12.0
+theme_override_font_sizes/font_size = 16
+placeholder_text = "Search..."
+clear_button_enabled = true
+
+[node name="VarScroll" type="ScrollContainer" parent="." unique_id=1462170755]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = 16.0
+offset_top = 80.0
+offset_right = 424.0
+offset_bottom = 225.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme = SubResource("Theme_ect3m")
+horizontal_scroll_mode = 0
+
+[node name="AdjustableVars" type="VBoxContainer" parent="VarScroll" unique_id=1190057288]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="SimulationPanel" parent="." unique_id=1076172330 instance=ExtResource("3_simulation")]
+layout_mode = 0
+offset_left = 17.0
+offset_top = 12.0
+offset_right = 411.0
+offset_bottom = 270.0
+
+[node name="AgentPanel" parent="." unique_id=1442000002 instance=ExtResource("4_agents")]
+layout_mode = 0
+offset_left = 17.0
+offset_top = 12.0
+offset_right = 411.0
+offset_bottom = 270.0
+
+[node name="ItemFilters" type="ScrollContainer" parent="." unique_id=164861352]
+layout_mode = 0
+offset_left = 2.0
+offset_top = 284.0
+offset_right = 447.0
+offset_bottom = 376.0
+theme = SubResource("Theme_ect3m")
+
+[node name="GridContainer" type="GridContainer" parent="ItemFilters" unique_id=86088299]
+custom_minimum_size = Vector2(445, 0)
+custom_maximum_size = Vector2(445, -1)
+layout_mode = 2
+columns = 5

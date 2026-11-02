@@ -1,0 +1,543 @@
+[gd_scene load_steps=19 format=4 uid="uid://csklvk2yj1q7y"]
+
+[ext_resource type="Script" uid="uid://sqer1ykwxtg5" path="res://addons/day_and_night_cycle/scripts/cycle_controller.gd" id="1_0an13"]
+[ext_resource type="PackedScene" uid="uid://65jplqtvkywd" path="res://scenes/player.tscn" id="2_2ydhb"]
+[ext_resource type="Resource" uid="uid://kr0ipoip375a" path="res://addons/day_and_night_cycle/presets/default/default_day_cycle.tres" id="2_r81xi"]
+[ext_resource type="Resource" uid="uid://b0mbm2nb4pntn" path="res://addons/day_and_night_cycle/presets/default/default_night_cycle.tres" id="3_5nvw1"]
+[ext_resource type="PackedScene" uid="uid://ei5ncnue0bgl" path="res://scenes/items/PhysicalItem.tscn" id="6_mnod4"]
+[ext_resource type="PackedScene" uid="uid://bbnlmrcekc00" path="res://scenes/npcs/rival.tscn" id="6_ukstf"]
+[ext_resource type="PackedScene" uid="uid://5bu1lm17ny2a" path="res://scenes/items/Baby.tscn" id="7_mnod4"]
+[ext_resource type="PackedScene" uid="uid://dbu0p5xcxktcf" path="res://scenes/items/Cheap_Flashlight.tscn" id="8_g4u5o"]
+[ext_resource type="PackedScene" uid="uid://4mehi2pc5unf" path="res://scenes/items/Test_Shotgun.tscn" id="9_nuhh6"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_r81xi"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_5nvw1"]
+sky_material = SubResource("ProceduralSkyMaterial_r81xi")
+
+[sub_resource type="Environment" id="Environment_5nvw1"]
+background_mode = 2
+sky = SubResource("Sky_5nvw1")
+fog_enabled = true
+volumetric_fog_enabled = true
+
+[sub_resource type="NavigationMesh" id="NavigationMesh_5errq"]
+vertices = PackedVector3Array(-49.5, 0.022843242, -12.25, -24.5, 0.022843242, -12.25, -24.25, 0.022843242, -13.5, -22.25, 0.022843242, -49.5, -49.5, 0.022843242, -49.5, -22.25, 0.022843242, -13.5, 18.25, 0.022843242, -13.5, 18.25, 0.022843242, -49.5, 20.25, 0.022843242, -13.5, 20.5, 0.022843242, -12.25, 49.5, 0.022843242, -12.25, 49.5, 0.022843242, -49.5, -24.25, 0.022843242, -11.25, -49.5, 0.022843242, 49.5, 20.25, 0.022843242, -11.25, 49.5, 0.022843242, 49.5)
+polygons = [PackedInt32Array(1, 0, 2), PackedInt32Array(2, 0, 4), PackedInt32Array(2, 4, 3), PackedInt32Array(3, 5, 2), PackedInt32Array(3, 7, 5), PackedInt32Array(5, 7, 6), PackedInt32Array(9, 8, 10), PackedInt32Array(10, 8, 11), PackedInt32Array(11, 8, 7), PackedInt32Array(8, 6, 7), PackedInt32Array(1, 12, 0), PackedInt32Array(0, 12, 13), PackedInt32Array(9, 10, 14), PackedInt32Array(14, 10, 15), PackedInt32Array(12, 14, 13), PackedInt32Array(13, 14, 15)]
+geometry_parsed_geometry_type = 0
+filter_low_hanging_obstacles = true
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_5errq"]
+_surfaces = [{
+"aabb": AABB(-50, -0.5, -50, 100, 1, 100),
+"attribute_data": PackedByteArray("AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/"),
+"format": 34359738391,
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 36,
+"vertex_data": PackedByteArray("AABIwgAAAL8AAEhCAABIwgAAAL8AAEjCAABIwgAAAD8AAEjCAABIQgAAAL8AAEjCAABIwgAAAL8AAEjCAABIwgAAAL8AAEhCAABIwgAAAD8AAEjCAABIwgAAAL8AAEjCAABIQgAAAL8AAEjCAABIwgAAAD8AAEjCAABIwgAAAD8AAEhCAABIwgAAAL8AAEhCAABIwgAAAL8AAEhCAABIwgAAAD8AAEhCAABIQgAAAD8AAEhCAABIQgAAAD8AAEhCAABIwgAAAD8AAEhCAABIwgAAAD8AAEjCAABIwgAAAL8AAEhCAABIQgAAAL8AAEhCAABIQgAAAL8AAEjCAABIQgAAAD8AAEhCAABIQgAAAL8AAEhCAABIwgAAAL8AAEhCAABIQgAAAL8AAEjCAABIQgAAAL8AAEhCAABIQgAAAD8AAEhCAABIQgAAAL8AAEjCAABIQgAAAD8AAEjCAABIwgAAAD8AAEjCAABIwgAAAD8AAEjCAABIQgAAAD8AAEjCAABIQgAAAD8AAEhCAABIQgAAAD8AAEhCAABIQgAAAD8AAEjCAABIQgAAAL8AAEjCAAD/f/9//n8AAP9//3/+fwAA/3//f/5//38AAP//AAD/fwAA//8AAP9/AAD//wAA/////wAA/z//////AAD/P/////8AAP8/AAD/f/9//n8AAP9//3/+fwAA/3//f/5//3//fwAA/z//f/9/AAD/P/9//38AAP8//3//////AAD/f/////8AAP9//////wAA/38AAP//AAD/fwAA//8AAP9/AAD//wAA/3//fwAA/z//f/9/AAD/P/9//38AAP8/////f/9//n////9//3/+f////3//f/5//////wAA/z//////AAD/P/////8AAP8//3//////AAD/f/////8AAP9//////wAA////f/9//n////9//3/+f////3//f/5/")
+}]
+
+[sub_resource type="ConcavePolygonShape3D" id="ConcavePolygonShape3D_0an13"]
+data = PackedVector3Array(-50, -0.5, 50, -50, -0.5, -50, -50, 0.5, -50, 50, -0.5, -50, -50, -0.5, -50, -50, -0.5, 50, -50, 0.5, -50, -50, -0.5, -50, 50, -0.5, -50, -50, 0.5, -50, -50, 0.5, 50, -50, -0.5, 50, -50, -0.5, 50, -50, 0.5, 50, 50, 0.5, 50, 50, 0.5, 50, -50, 0.5, 50, -50, 0.5, -50, -50, -0.5, 50, 50, -0.5, 50, 50, -0.5, -50, 50, 0.5, 50, 50, -0.5, 50, -50, -0.5, 50, 50, -0.5, -50, 50, -0.5, 50, 50, 0.5, 50, 50, -0.5, -50, 50, 0.5, -50, -50, 0.5, -50, -50, 0.5, -50, 50, 0.5, -50, 50, 0.5, 50, 50, 0.5, 50, 50, 0.5, -50, 50, -0.5, -50)
+
+[sub_resource type="BoxMesh" id="BoxMesh_5errq"]
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_0an13"]
+_surfaces = [{
+"aabb": AABB(-0.5, -0.5, -0.5, 1, 1, 1),
+"attribute_data": PackedByteArray("AACAPwAAAAAAAIA/AAAAP6uqKj8AAAA/q6qqPgAAAD+rqqo+AACAPwAAAAAAAIA/q6oqPwAAAD8AAIA/AAAAP6uqKj8AAIA/AAAAAAAAAD+rqqo+AAAAPwAAAAAAAIA/q6oqPwAAAD+rqio/AACAP6uqqj4AAIA/AAAAAAAAAACrqqo+AAAAAAAAAAAAAAA/AACAPwAAAD8AAIA/AACAP6uqKj8AAIA/q6oqPwAAAACrqio/AAAAP6uqqj4AAAA/q6qqPgAAAACrqqo+AAAAPwAAAAAAAAA/q6oqPwAAAAAAAIA/AAAAAKuqKj8AAAA/q6qqPgAAAD+rqio/AAAAP6uqqj4AAIA/q6qqPgAAAACrqio/AAAAAKuqqj4AAAA/"),
+"format": 34359738391,
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 36,
+"vertex_data": PackedByteArray("AAAAvwAAAD8AAAC/AAAAvwAAAL8AAAC/AAAAPwAAAL8AAAC/AAAAvwAAAD8AAAA/AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAvwAAAD8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAC/AAAAPwAAAD8AAAC/AAAAvwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAvwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAPwAAAL8AAAC/AAAAvwAAAL8AAAC/AAAAPwAAAD8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAPwAAAD8AAAC/AAAAvwAAAD8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAD8AAAA/AAAAvwAAAD8AAAA/AAAAPwAAAD8AAAC/AAAAPwAAAD8AAAA/AAAAPwAAAD8AAAC/AAAAPwAAAL8AAAA//////wAA/7//////AAD/v/////8AAP+/AAD/f/9//78AAP9//3//vwAA/3//f/+//38AAP///7//fwAA////v/9/AAD///+/AAD/f/9//78AAP9//3//vwAA/3//f/+//3///wAA/7//f///AAD/v/9///8AAP+//3//f////7//f/9/////v/9//3////+//38AAP///7//fwAA////v/9/AAD///+/////f/////////9//////////3///////3//f////7//f/9/////v/9//3////+//////wAA/7//////AAD/v/////8AAP+//3///wAA/7//f///AAD/v/9///8AAP+/////f/////////9//////////3//////")
+}]
+
+[sub_resource type="ConcavePolygonShape3D" id="ConcavePolygonShape3D_5errq"]
+data = PackedVector3Array(-0.5, 0.5, -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5)
+
+[node name="World" type="Node3D"]
+
+[node name="CycleController" type="Node3D" parent="." node_paths=PackedStringArray("world_environment", "sun_light")]
+script = ExtResource("1_0an13")
+day_data = ExtResource("2_r81xi")
+night_data = ExtResource("3_5nvw1")
+world_environment = NodePath("WorldEnvironment")
+sun_light = NodePath("DirectionalLight3D")
+metadata/_custom_type_script = "uid://sqer1ykwxtg5"
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="CycleController"]
+environment = SubResource("Environment_5nvw1")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="CycleController"]
+transform = Transform3D(-1, -7.5710346e-08, -4.3711385e-08, 0, 0.49999997, -0.86602545, 8.742278e-08, -0.86602545, -0.49999997, 0, 0, 0)
+shadow_enabled = true
+directional_shadow_max_distance = 200.0
+
+[node name="Player" parent="." instance=ExtResource("2_2ydhb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.2797737, 1.5110149, 0.74075127)
+
+[node name="NavigationRegion3D" type="NavigationRegion3D" parent="."]
+navigation_mesh = SubResource("NavigationMesh_5errq")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.7863107, 0)
+size = Vector3(100, 1, 100)
+
+[node name="CSGBakedMeshInstance3D" type="MeshInstance3D" parent="NavigationRegion3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.7863107, 0)
+mesh = SubResource("ArrayMesh_5errq")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="NavigationRegion3D/CSGBakedMeshInstance3D"]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="NavigationRegion3D/CSGBakedMeshInstance3D/StaticBody3D"]
+shape = SubResource("ConcavePolygonShape3D_0an13")
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="NavigationRegion3D"]
+transform = Transform3D(43.629425, 0, 0, 0, 3.4208424, 0, 0, 0, 1, -2.010737, -0.016735554, -12.294911)
+mesh = SubResource("BoxMesh_5errq")
+
+[node name="CSGBakedMeshInstance3D" type="MeshInstance3D" parent="NavigationRegion3D/CSGMesh3D"]
+transform = Transform3D(0.99999994, 0, 0, 0, 0.99999994, 0, 0, 0, 1, 0, 0, 0)
+mesh = SubResource("ArrayMesh_0an13")
+skeleton = NodePath("../../..")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="NavigationRegion3D/CSGMesh3D/CSGBakedMeshInstance3D"]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="NavigationRegion3D/CSGMesh3D/CSGBakedMeshInstance3D/StaticBody3D"]
+shape = SubResource("ConcavePolygonShape3D_5errq")
+
+[node name="Node3D" type="Node3D" parent="." groups=["Bush"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.14303884, 0, -8.303529)
+
+[node name="Node3D2" type="Node3D" parent="." groups=["Bush"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.169713, 0, -8.303529)
+
+[node name="Node3D3" type="Node3D" parent="." groups=["Bush"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.8860054, 0, -0.6630759)
+
+[node name="Node3D7" type="Node3D" parent="." groups=["BRITISH_ALIGNED", "rival_cruiser"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.3251457, 0, 16.488823)
+
+[node name="Node3D8" type="Node3D" parent="." groups=["GERMAN_ALIGNED", "rival_cruiser"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27.207928, 0, 16.488823)
+
+[node name="Node3D9" type="Node3D" parent="." groups=["player_cruiser"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12.013546, 0, -6.1560955)
+
+[node name="rival24" parent="." instance=ExtResource("6_ukstf")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11.291691, -0.28631067, 15.783376)
+
+[node name="PhysicalItem" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.6351802, -0.17135713, 2.9547386)
+
+[node name="PhysicalItem2" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.023104, -0.17135713, 0.43678188)
+
+[node name="PhysicalItem3" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.5773144, -0.17135617, -1.0128603)
+
+[node name="PhysicalItem4" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12.312788, -0.17135713, 2.7135344)
+
+[node name="PhysicalItem5" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.969618, -0.17135713, -2.9001908)
+
+[node name="PhysicalItem6" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6656463, -0.17135713, 2.9547386)
+
+[node name="PhysicalItem7" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.0535703, -0.17135713, 0.43678188)
+
+[node name="PhysicalItem8" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.6077805, -0.17135617, -1.0128603)
+
+[node name="PhysicalItem9" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10.343254, -0.17135713, 2.7135344)
+
+[node name="PhysicalItem10" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.000084, -0.17135713, -2.9001908)
+
+[node name="PhysicalItem11" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.08808541, -0.17135713, 2.9547386)
+
+[node name="PhysicalItem12" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.29983854, -0.17135713, 0.43678188)
+
+[node name="PhysicalItem13" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.8540487, -0.17135617, -1.0128603)
+
+[node name="PhysicalItem14" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.589522, -0.17135713, 2.7135344)
+
+[node name="PhysicalItem15" parent="." instance=ExtResource("6_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.246352, -0.17135713, -2.9001908)
+
+[node name="Baby" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby2" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby3" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby4" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby5" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby6" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby7" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby8" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby9" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby10" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby11" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby12" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby13" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby14" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby15" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby16" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby17" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby18" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby19" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby20" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby21" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby22" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby23" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby24" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby25" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby26" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby27" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby28" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby29" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby30" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby31" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby32" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby33" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby34" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby35" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby36" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby37" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby38" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby39" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby40" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby41" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby42" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby43" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby44" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby45" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby46" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby47" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby48" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby49" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby50" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby51" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby52" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby53" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby54" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby55" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby56" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby57" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby58" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby59" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby60" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby61" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby62" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby63" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby64" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby65" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby66" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby67" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.402655, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby68" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.0671034, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby69" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.9459014, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby70" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.61035, -0.28630877, -1.240499)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby71" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.6411595, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Baby72" parent="." instance=ExtResource("7_mnod4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6.305608, -0.28630972, -2.91363)
+base_carry_speed_mult = 0.3
+help_boost_per_baby = 0.2
+
+[node name="Cheap_Flashlight" parent="." instance=ExtResource("8_g4u5o")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.9840684, 0.21076298, -5.610304)
+
+[node name="Test_Shotgun" parent="." instance=ExtResource("9_nuhh6")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.471156, -0.16320078, 1.4815284)

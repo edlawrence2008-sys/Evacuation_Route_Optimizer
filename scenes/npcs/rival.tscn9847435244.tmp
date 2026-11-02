@@ -1,0 +1,57 @@
+[gd_scene load_steps=7 format=3 uid="uid://bbnlmrcekc00"]
+
+[ext_resource type="Script" uid="uid://c2ugwti7mjywp" path="res://rival.gd" id="1_vcamo"]
+[ext_resource type="Script" uid="uid://dkb8ltjc6067n" path="res://addons/raytraced_audio/raytraced_audio_player_3d.gd" id="2_4hmvm"]
+[ext_resource type="Script" uid="uid://dicxn3bycy5f5" path="res://scripts/NPCstuff/HealthComponent.gd" id="2_10li3"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_fqfci"]
+radius = 0.3930664
+height = 1.5335083
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_tgpnk"]
+radius = 7.278361
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_10li3"]
+
+[node name="rival" type="CharacterBody3D" groups=["Humanoid"]]
+script = ExtResource("1_vcamo")
+speed = null
+sprint_speed = null
+acceleration = null
+rotation_speed = null
+jump_velocity = null
+jump_cooldown = null
+faction = null
+personality = null
+debug_ai = null
+detection_range = 30.0
+call_for_help_range = null
+scary_groups = Array[String](["Large"])
+rivalry_groups = Array[String](["Humanoid", "BanditFox"])
+attack_on_sight_groups = Array[String](["angry_fox", "Camocrab", "rival_thief"])
+warning_duration = null
+warning_cooldown = null
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.011657715, 0.6781764, -0.12976074)
+shape = SubResource("CapsuleShape3D_fqfci")
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
+avoidance_enabled = true
+
+[node name="DetectionArea" type="Area3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DetectionArea"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.94513094, 0)
+shape = SubResource("SphereShape3D_tgpnk")
+
+[node name="AudioStreamPlayer3D" type="AudioStreamPlayer3D" parent="."]
+script = ExtResource("2_4hmvm")
+metadata/_custom_type_script = "uid://dkb8ltjc6067n"
+
+[node name="CSGMesh3D" type="CSGMesh3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.0004653, 0)
+mesh = SubResource("CylinderMesh_10li3")
+
+[node name="HealthComponent" type="Node" parent="."]
+script = ExtResource("2_10li3")

@@ -1,0 +1,60 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" uid="uid://dbd3iskc47ab3" path="res://scenes/console_output.gd" id="1_output"]
+[ext_resource type="Script" uid="uid://bg7v5oym70w2m" path="res://scenes/console_text.gd" id="2_text"]
+[ext_resource type="Script" uid="uid://bamr4sh4rt1fr" path="res://scenes/Outputgetter.gd" id="3_getter"]
+
+[node name="Console" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ColorRect" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -256.0
+offset_bottom = -28.0
+grow_horizontal = 0
+grow_vertical = 2
+color = Color(0, 0, 0, 0.44313726)
+
+[node name="ConsoleOutput" type="RichTextLabel" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -255.0
+offset_bottom = 620.0
+grow_horizontal = 0
+focus_mode = 2
+mouse_filter = 1
+theme_override_font_sizes/normal_font_size = 16
+theme_override_font_sizes/bold_font_size = 16
+theme_override_font_sizes/bold_italics_font_size = 16
+theme_override_font_sizes/italics_font_size = 16
+theme_override_font_sizes/mono_font_size = 16
+bbcode_enabled = true
+scroll_following = true
+scroll_following_visible_characters = true
+horizontal_alignment = 2
+selection_enabled = true
+script = ExtResource("1_output")
+
+[node name="ConsoleText" type="LineEdit" parent="."]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -28.0
+offset_right = 1152.0
+grow_vertical = 0
+script = ExtResource("2_text")
+
+[node name="Outputgetter" type="Node" parent="."]
+script = ExtResource("3_getter")

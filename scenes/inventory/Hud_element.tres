@@ -1,0 +1,8 @@
+[gd_resource type="Theme" format=3 uid="uid://bqxe5gbsssjj2"]
+
+[ext_resource type="FontFile" uid="uid://cyarj71gsgrnj" path="res://font/7-12-serif.otf" id="1_pa1mv"]
+
+[resource]
+default_base_scale = 60.0
+default_font = ExtResource("1_pa1mv")
+default_font_size = 16

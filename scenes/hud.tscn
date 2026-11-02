@@ -1,0 +1,85 @@
+[gd_scene format=3 uid="uid://x5fl10b2coqt"]
+
+[ext_resource type="Script" uid="uid://dwyfhkmcohdmu" path="res://scenes/hud.gd" id="1_hud"]
+[ext_resource type="PackedScene" uid="uid://btqvcgkv12dlc" path="res://scenes/inventory/Inventory.tscn" id="2_inventory"]
+[ext_resource type="Theme" uid="uid://bqxe5gbsssjj2" path="res://scenes/inventory/Hud_element.tres" id="3_theme"]
+[ext_resource type="Script" uid="uid://csfbif841o2dk" path="res://scenes/Statistics_hud.gd" id="4_statistics"]
+[ext_resource type="PackedScene" path="res://scenes/console.tscn" id="5_console"]
+[ext_resource type="Script" uid="uid://v7uimsuhh5fh" path="res://scenes/EvacuationResults_hud.gd" id="6_results"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_results"]
+content_margin_left = 8.0
+content_margin_top = 6.0
+content_margin_right = 8.0
+content_margin_bottom = 6.0
+bg_color = Color(0.02, 0.02, 0.04, 0.82)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0.75, 0.8, 0.45)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
+[node name="HUD" type="Control" unique_id=588107602]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+script = ExtResource("1_hud")
+
+[node name="Inventory" parent="." unique_id=1199910590 instance=ExtResource("2_inventory")]
+layout_mode = 1
+
+[node name="Label" type="Label" parent="." unique_id=138846162]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -20.0
+offset_top = -23.0
+offset_right = 20.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 1
+theme = ExtResource("3_theme")
+
+[node name="Statistics_Hud" type="RichTextLabel" parent="." unique_id=30829582]
+layout_mode = 1
+offset_right = 320.0
+offset_bottom = 320.0
+mouse_filter = 2
+theme_override_font_sizes/normal_font_size = 16
+theme_override_font_sizes/bold_font_size = 16
+theme_override_font_sizes/bold_italics_font_size = 16
+theme_override_font_sizes/italics_font_size = 16
+theme_override_font_sizes/mono_font_size = 16
+bbcode_enabled = true
+scroll_active = false
+script = ExtResource("4_statistics")
+
+[node name="EvacuationResults" type="RichTextLabel" parent="." unique_id=977102170]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -342.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 370.0
+grow_horizontal = 0
+mouse_filter = 2
+theme_override_colors/default_color = Color(0.9, 0.9, 0.94, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_results")
+bbcode_enabled = true
+script = ExtResource("6_results")
+
+[node name="Console" parent="." unique_id=133788234 instance=ExtResource("5_console")]
+layout_mode = 1

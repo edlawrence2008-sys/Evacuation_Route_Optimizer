@@ -1,0 +1,19 @@
+[gd_scene format=3 uid="uid://c4tyj1ylhbiov"]
+
+[ext_resource type="Texture2D" uid="uid://3g5uv2p8cpro" path="res://textures/inventory/inventory_bg_main.png" id="1_v66dg"]
+
+[node name="Buildpanel" type="Control" unique_id=479525979]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="InventoryBgMain" type="Sprite2D" parent="." unique_id=702008505]
+z_index = -1
+texture_filter = 1
+texture_repeat = 1
+position = Vector2(35, 125)
+scale = Vector2(0.36343354, 1.0000001)
+texture = ExtResource("1_v66dg")

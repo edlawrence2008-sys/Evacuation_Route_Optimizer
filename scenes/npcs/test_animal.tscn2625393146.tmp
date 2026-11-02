@@ -1,0 +1,65 @@
+[gd_scene load_steps=6 format=3 uid="uid://dd0iiq67evp08"]
+
+[ext_resource type="Script" uid="uid://b0whju4qd6mxc" path="res://scenes/npcs/kinesis.gd" id="1_usubk"]
+[ext_resource type="PackedScene" uid="uid://d3c6h3xtxsufk" path="res://models/Robber_fox.gltf" id="2_lsppy"]
+[ext_resource type="Script" uid="uid://dicxn3bycy5f5" path="res://scripts/NPCstuff/HealthComponent.gd" id="3_uhqaa"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_fqfci"]
+height = 1.114502
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_tgpnk"]
+radius = 7.278361
+
+[node name="test_animal" type="CharacterBody3D" node_paths=PackedStringArray("health_component") groups=["BanditFox"]]
+collision_layer = 0
+script = ExtResource("1_usubk")
+health_component = NodePath("HealthComponent")
+base_speed = null
+max_speed = null
+slow_speed = null
+acceleration = null
+friction = null
+base_turn_speed = null
+panic_turn_speed = null
+social_turn_speed = null
+personal_space_dist_sq = null
+slowdown_dist_sq = null
+jump_threshold_time = null
+wander_strength = null
+wander_frequency = null
+sway_width = null
+sway_speed = null
+ray_length = null
+detection_delay = null
+turn_exit_buffer = null
+can_pause = null
+stability_required_time = null
+fast_pause_chance = null
+slow_pause_chance = null
+min_pause_duration = 0.5
+max_pause_duration = 10.0
+min_hurt_time = null
+max_hurt_time = null
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.469, 0)
+shape = SubResource("CapsuleShape3D_fqfci")
+
+[node name="blockbench_export" parent="." instance=ExtResource("2_lsppy")]
+
+[node name="Area3D" type="Area3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Area3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.94513094, 0)
+shape = SubResource("SphereShape3D_tgpnk")
+
+[node name="AudioStreamPlayer3D" type="AudioStreamPlayer3D" parent="."]
+
+[node name="HealthComponent" type="Node" parent="."]
+script = ExtResource("3_uhqaa")
+max_health = 5.0
+
+[node name="RayCast3D" type="RayCast3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.817767, -0.34056455)
+target_position = Vector3(0, 0, -2)
+hit_from_inside = true

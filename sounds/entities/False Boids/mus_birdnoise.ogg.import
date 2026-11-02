@@ -1,0 +1,19 @@
+[remap]
+
+importer="oggvorbisstr"
+type="AudioStreamOggVorbis"
+uid="uid://cxt3p77smmi2s"
+path="res://.godot/imported/mus_birdnoise.ogg-c9f1425c76febfe8b0a45cdb8f54e890.oggvorbisstr"
+
+[deps]
+
+source_file="res://sounds/entities/False Boids/mus_birdnoise.ogg"
+dest_files=["res://.godot/imported/mus_birdnoise.ogg-c9f1425c76febfe8b0a45cdb8f54e890.oggvorbisstr"]
+
+[params]
+
+loop=true
+loop_offset=0.0
+bpm=0.0
+beat_count=0
+bar_beats=4

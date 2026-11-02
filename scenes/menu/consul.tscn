@@ -1,0 +1,39 @@
+[gd_scene format=3 uid="uid://5f3or6k6amyq"]
+
+[ext_resource type="Script" uid="uid://cxaxp7vfcayde" path="res://scenes/menu/Consul.gd" id="1_0maw1"]
+[ext_resource type="Texture2D" uid="uid://ope071koq47o" path="res://textures/Consul/consul_body.png" id="2_mt0hf"]
+[ext_resource type="Texture2D" uid="uid://cn2qdyshs5i2d" path="res://textures/Consul/consul_eyeball.png" id="3_atl4i"]
+[ext_resource type="Texture2D" uid="uid://dwfyvnoqx0086" path="res://textures/Consul/consul_iris.png" id="4_x8bq3"]
+[ext_resource type="Texture2D" uid="uid://btruicki77xt4" path="res://textures/Consul/back_fist_rest.png" id="5_b4e3q"]
+
+[node name="Consul" type="Control" unique_id=1723437110]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 112.0
+offset_top = 125.0
+offset_right = 112.0
+offset_bottom = 125.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_0maw1")
+
+[node name="Consul_body" type="Sprite2D" parent="." unique_id=669323504]
+clip_children = 2
+texture = ExtResource("2_mt0hf")
+
+[node name="Consul_eyeball" type="Sprite2D" parent="Consul_body" unique_id=2107987328]
+texture = ExtResource("3_atl4i")
+
+[node name="Consul_iris" type="Sprite2D" parent="Consul_body/Consul_eyeball" unique_id=2072893080]
+scale = Vector2(1.3200004, 1.3200004)
+texture = ExtResource("4_x8bq3")
+
+[node name="Hand_L" type="Sprite2D" parent="." unique_id=1005810846]
+visible = false
+texture = ExtResource("5_b4e3q")
+
+[node name="Hand_R" type="Sprite2D" parent="." unique_id=1837721706]
+visible = false
+texture = ExtResource("5_b4e3q")

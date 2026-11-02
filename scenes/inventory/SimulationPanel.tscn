@@ -1,0 +1,127 @@
+[gd_scene format=3 uid="uid://crrnl504kgocm"]
+
+[ext_resource type="Script" uid="uid://kyuvc10hua2x" path="res://scenes/inventory/SimulationPanel.gd" id="1_panel"]
+[ext_resource type="Script" uid="uid://b5is1cflj3umr" path="res://scripts/RandomPopulator.gd" id="2_populator"]
+
+[node name="SimulationPanel" type="VBoxContainer" unique_id=1904882210]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 437.0
+offset_bottom = 274.0
+theme_override_constants/separation = 4
+script = ExtResource("1_panel")
+
+[node name="Title" type="Label" parent="." unique_id=848843198]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.35, 1)
+text = "Simulation"
+
+[node name="Actions" type="HBoxContainer" parent="." unique_id=1628137985]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Start" type="Button" parent="Actions" unique_id=1452931572]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start"
+
+[node name="Reset" type="Button" parent="Actions" unique_id=311797741]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Reset"
+
+[node name="EvacuationMode" type="CheckButton" parent="." unique_id=1636659906]
+layout_mode = 2
+tooltip_text = "On: every member evacuates. Off: every member wanders."
+text = "Evacuation Mode"
+
+[node name="Limits" type="GridContainer" parent="." unique_id=661914493]
+layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 2
+columns = 2
+
+[node name="QuotaLabel" type="Label" parent="Limits" unique_id=1576612055]
+layout_mode = 2
+text = "Quota"
+
+[node name="QuotaValue" type="SpinBox" parent="Limits" unique_id=1551053408]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Total spawn limit. -1 uses the sum of the spawner quotas."
+min_value = -1.0
+max_value = 100000.0
+value = -1.0
+allow_greater = true
+
+[node name="CapLabel" type="Label" parent="Limits" unique_id=1334644211]
+layout_mode = 2
+text = "Active Cap"
+
+[node name="CapValue" type="SpinBox" parent="Limits" unique_id=1378084935]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 100000.0
+value = 700.0
+allow_greater = true
+
+[node name="Separator" type="HSeparator" parent="." unique_id=486116844]
+layout_mode = 2
+
+[node name="RandomTitle" type="Label" parent="." unique_id=1457964940]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.35, 1)
+text = "Random Populate"
+
+[node name="RandomGrid" type="GridContainer" parent="." unique_id=386228645]
+layout_mode = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 2
+columns = 2
+
+[node name="CountLabel" type="Label" parent="RandomGrid" unique_id=1188026069]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Members"
+
+[node name="CountValue" type="SpinBox" parent="RandomGrid" unique_id=1832690845]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 10000.0
+value = 50.0
+allow_greater = true
+
+[node name="StartModeLabel" type="Label" parent="RandomGrid" unique_id=826321883]
+layout_mode = 2
+text = "Start Mode"
+
+[node name="StartModeValue" type="CheckButton" parent="RandomGrid" unique_id=553723668]
+layout_mode = 2
+tooltip_text = "Checked: evacuating. Unchecked: wandering."
+button_pressed = true
+text = "Evacuation"
+
+[node name="PathOnlyLabel" type="Label" parent="RandomGrid" unique_id=1900661339]
+layout_mode = 2
+text = "Spawn Filter"
+
+[node name="PathOnlyValue" type="CheckButton" parent="RandomGrid" unique_id=1124669611]
+layout_mode = 2
+button_pressed = true
+text = "Needs exit path"
+
+[node name="Populate" type="Button" parent="." unique_id=1454285843]
+layout_mode = 2
+text = "Populate"
+
+[node name="Status" type="Label" parent="." unique_id=926941526]
+custom_minimum_size = Vector2(0, 20)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Spawned 0 / 0 | Alive 0 / 700 | stopped"
+autowrap_mode = 3
+
+[node name="RandomPopulator" type="Node" parent="." unique_id=1295974788]
+script = ExtResource("2_populator")
