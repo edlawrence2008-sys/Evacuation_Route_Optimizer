@@ -1,5 +1,9 @@
 extends RichTextLabel
 
+const REFRESH_INTERVAL: float = 0.25
+
+var _refresh_accum: float = 0.0
+
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
@@ -12,11 +16,19 @@ func _ready() -> void:
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("ui_statistics_toggle"):
 		visible = not visible
+		_refresh_accum = REFRESH_INTERVAL
+		if visible:
+			_update_statistics_display()
 
-	if visible:
+	if not visible:
+		return
+
+	_refresh_accum += delta
+	if _refresh_accum >= REFRESH_INTERVAL:
+		_refresh_accum = 0.0
 		_update_statistics_display()
 
 
@@ -36,7 +48,7 @@ func _update_statistics_display() -> void:
 	text_builder += "• [b]Evacuated:[/b] %d\n" % total_evacuated
 	text_builder += "• [b]Total Spawn Quota:[/b] %s\n\n" % total_quota_str
 
-	text_builder += "[b][color=lightblue]Spawn Sections:[/color][/b]\n"
+	text_builder += "[b][color=yellow]Spawn Sections:[/color][/b]\n"
 
 	var sections: Array = GlobalData.get_all_sections()
 	if sections.is_empty():

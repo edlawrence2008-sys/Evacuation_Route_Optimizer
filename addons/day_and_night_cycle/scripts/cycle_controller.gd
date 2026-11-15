@@ -17,14 +17,34 @@ signal night_started
 @export var ambient_light_color: Color
 ## Percentage of light used from the sky. If your sky is red and you set this value to 1.0
 ## there'll be a red ambient light in the world.
-@export_range(0, 1, 0.01) var sky_contribution: float = 0.01
+@export_range(0, 1, 0.01) var sky_contribution: float = 0.05
 
 @export_group("Shadow Styling")
 @export var enable_purple_shadows: bool = true
 ## The dark purple color used to tint ambient light filling the shadows.
-@export var shadow_purple_color: Color = Color(0.15, 0.05, 0.25, 1.0)
+@export var shadow_purple_color: Color = Color(0.072, 0.024, 0.12, 1.0)
 ## How strongly the purple shadow tint blends into the ambient/horizon lighting (0.0 to 1.0).
-@export_range(0, 1, 0.01) var shadow_tint_strength: float = 0.4
+@export_range(0, 1, 0.01) var shadow_tint_strength: float = 0.1
+
+@export_group("Look / Color Grade")
+## Master switch for the look overrides. Neutral values preserve the existing
+## environment, so these are safe to leave alone until you want to tune the
+## image. All values are multipliers on the scene's authored environment.
+@export var enable_look_overrides: bool = true
+@export_range(0.0, 4.0, 0.01) var brightness_scale: float = 1.0
+@export_range(0.0, 4.0, 0.01) var contrast_scale: float = 1.0
+@export_range(0.0, 4.0, 0.01) var saturation_scale: float = 1.0
+@export_range(0.0, 4.0, 0.01) var exposure_scale: float = 1.0
+@export_range(0.0, 4.0, 0.01) var sun_energy_scale: float = 1.0
+@export var sun_color: Color = Color.WHITE
+@export_range(0.0, 4.0, 0.01) var ambient_energy_scale: float = 1.0
+## Saturation multiplier applied to the procedural sky colours.
+@export_range(0.0, 4.0, 0.01) var sky_saturation: float = 1.0
+@export var sky_tint: Color = Color.WHITE
+@export_range(0.0, 4.0, 0.01) var fog_density_scale: float = 1.0
+@export_range(0.0, 4.0, 0.01) var volumetric_fog_density_scale: float = 1.0
+@export var override_tonemap: bool = false
+@export var tonemap_mode: Environment.ToneMapper = Environment.TONE_MAPPER_FILMIC
 
 @export_group("Debug")
 @export var show_debug_time: bool = false
@@ -34,15 +54,41 @@ var _current_time: float = 0.0
 var _cycle_time: float = 0.0
 var _is_day: bool = true
 
+## Authored environment values captured at boot; the Look multipliers apply to
+## these so neutral defaults never change the scene.
+var _base_adjustment_enabled: bool = false
+var _base_brightness: float = 1.0
+var _base_contrast: float = 1.0
+var _base_saturation: float = 1.0
+var _base_tonemap_exposure: float = 1.0
+var _base_ambient_energy: float = 1.0
+var _base_fog_density: float = 0.0
+var _base_volumetric_fog_density: float = 0.0
+var _base_sun_color: Color = Color.WHITE
+
 
 func _ready():
 	# Auto register into tracking group so spawning units can instantly bind events
 	add_to_group("CycleControllers")
 	
 	_cycle_time = day_data.length + night_data.length
-	world_environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	world_environment.environment.ambient_light_color = ambient_light_color
-	world_environment.environment.ambient_light_sky_contribution = sky_contribution
+	if world_environment != null and world_environment.environment != null:
+		var environment := world_environment.environment
+		_base_adjustment_enabled = environment.adjustment_enabled
+		_base_brightness = environment.adjustment_brightness
+		_base_contrast = environment.adjustment_contrast
+		_base_saturation = environment.adjustment_saturation
+		_base_tonemap_exposure = environment.tonemap_exposure
+		_base_ambient_energy = environment.ambient_light_energy
+		_base_fog_density = environment.fog_density
+		_base_volumetric_fog_density = environment.volumetric_fog_density
+		environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+		environment.ambient_light_color = ambient_light_color
+		environment.ambient_light_sky_contribution = sky_contribution
+	if sun_light != null:
+		_base_sun_color = sun_light.light_color
+	
+	_apply_look()
 
 
 func _process(delta):
@@ -132,9 +178,72 @@ func _process(delta):
 		angle = progress * 180.0 + 180.0  # 180° → 360°
 	
 	sun_light.rotation_degrees.x = -angle
-	
+
+	_apply_look()
+
 	if show_debug_time:
 		_print_debug_info()
+
+
+## Applies the inspector's Look multipliers to the child WorldEnvironment and
+## DirectionalLight3D. Called after the normal day/night pass so the base
+## colours/energies are recomputed each frame and the scales never compound.
+func _apply_look() -> void:
+	if not enable_look_overrides:
+		return
+	if world_environment == null or world_environment.environment == null:
+		return
+
+	var environment := world_environment.environment
+	var needs_adjustment := (
+		_base_adjustment_enabled
+		or not is_equal_approx(brightness_scale, 1.0)
+		or not is_equal_approx(contrast_scale, 1.0)
+		or not is_equal_approx(saturation_scale, 1.0)
+	)
+
+	environment.adjustment_enabled = needs_adjustment
+	environment.adjustment_brightness = _base_brightness * brightness_scale
+	environment.adjustment_contrast = _base_contrast * contrast_scale
+	environment.adjustment_saturation = _base_saturation * saturation_scale
+	environment.tonemap_exposure = _base_tonemap_exposure * exposure_scale
+	environment.ambient_light_energy = _base_ambient_energy * ambient_energy_scale
+
+	if override_tonemap:
+		environment.tonemap_mode = tonemap_mode
+
+	if environment.fog_enabled:
+		environment.fog_density = _base_fog_density * fog_density_scale
+
+	environment.volumetric_fog_density = (
+		_base_volumetric_fog_density * volumetric_fog_density_scale
+	)
+
+	if sun_light != null:
+		sun_light.light_energy *= sun_energy_scale
+		sun_light.light_color = _base_sun_color * sun_color
+
+	if (
+		environment.sky != null
+		and environment.sky.sky_material is ProceduralSkyMaterial
+	):
+		var sky := environment.sky.sky_material as ProceduralSkyMaterial
+		sky.sky_top_color = _grade_sky_color(sky.sky_top_color)
+		sky.sky_horizon_color = _grade_sky_color(sky.sky_horizon_color)
+		sky.ground_horizon_color = _grade_sky_color(sky.ground_horizon_color)
+		sky.ground_bottom_color = _grade_sky_color(sky.ground_bottom_color)
+
+
+func _grade_sky_color(color: Color) -> Color:
+	var tinted := color * sky_tint
+	var luminance := tinted.get_luminance()
+	var graded := Color(
+		luminance + (tinted.r - luminance) * sky_saturation,
+		luminance + (tinted.g - luminance) * sky_saturation,
+		luminance + (tinted.b - luminance) * sky_saturation,
+		tinted.a
+	)
+	return graded.clamp()
 
 
 ## Formatted time string (hh:mm:ss) since entering the tree.

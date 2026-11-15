@@ -2,7 +2,7 @@ extends Node
 
 var npcs_evacuated: int = 0
 var npcs_spawned: int = 0
-@export var global_unit_cap: int = 700 # Maximum NPCs alive across the whole game/scene
+@export var global_unit_cap: int = 120 # Maximum NPCs alive across the whole game/scene
 ## Total spawn limit for the run. -1 means "use the sum of each spawner's quota".
 @export var global_spawn_quota: int = -1
 ## Default evacuation behaviour inherited by newly spawned members.
@@ -12,6 +12,20 @@ var is_spawning_enabled: bool = false # Default to false so they don't spawn dir
 ## Exported Agent/Member properties applied to every new spawn and, on Apply,
 ## to every live agent. Owned by the Agents category in the inventory.
 var agent_overrides: Dictionary = {}
+
+## Persistent dialogue/story flags, e.g. whether Consul's intro was seen.
+var dialogue_flags: Dictionary = {}
+
+
+## Release static scene caches while the rendering server is still alive.
+func _exit_tree() -> void:
+	RealisticSpriteLibrary.clear_cache()
+
+func get_dialogue_flag(key: StringName, default_value: Variant = false) -> Variant:
+	return dialogue_flags.get(key, default_value)
+
+func set_dialogue_flag(key: StringName, value: Variant = true) -> void:
+	dialogue_flags[key] = value
 
 ## Quota ownership is keyed by the spawner instance id so a spawner can be
 ## removed without leaving a phantom quota behind.
@@ -29,6 +43,41 @@ signal spawning_stopped()
 func register_npc_spawned() -> void:
 	npcs_spawned += 1
 	npc_spawned.emit(npcs_spawned)
+
+
+## Cross-spawner spawn-slot reservation. Physics bodies spawned in the same
+## frame are not in the physics space yet, so the shape query alone can miss
+## two spawners choosing the same spot.
+var _spawn_reservations: Array[Dictionary] = []
+
+
+func reserve_spawn_position(position: Vector3, radius: float) -> bool:
+	var now: int = Time.get_ticks_msec()
+	var radius_sq: float = radius * radius
+
+	for index in range(_spawn_reservations.size() - 1, -1, -1):
+		var entry: Dictionary = _spawn_reservations[index]
+
+		if now - int(entry.get("time", 0)) > 400:
+			_spawn_reservations.remove_at(index)
+			continue
+
+		var previous: Vector3 = entry.get("position", Vector3.ZERO)
+		var difference: Vector3 = previous - position
+		difference.y = 0.0
+
+		if difference.length_squared() < radius_sq:
+			return false
+
+	_spawn_reservations.append({
+		"position": position,
+		"time": now,
+	})
+	return true
+
+
+func clear_spawn_reservations() -> void:
+	_spawn_reservations.clear()
 
 
 func is_global_quota_available() -> bool:
@@ -159,6 +208,7 @@ func reset_all() -> void:
 	_section_registrations.clear()
 	_section_spawn_counts.clear()
 	_section_quotas.clear()
+	clear_spawn_reservations()
 	npcs_spawned = 0
 	npcs_evacuated = 0
 	is_spawning_enabled = false
@@ -178,6 +228,7 @@ func stop_spawning() -> void:
 func reset_spawning() -> void:
 	# Keeps sections and quotas intact, but resets current spawn counters and state
 	_section_spawn_counts.clear()
+	clear_spawn_reservations()
 	npcs_spawned = 0
 	npcs_evacuated = 0
 	is_spawning_enabled = false

@@ -1,0 +1,83 @@
+{
+	"items": {
+		"res://scenes/placeables/device/device_bulb.tscn": {
+			"icon": "res://resources/voxel_items/device_bulb.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/device/device_bulb.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/placeables/device/device_fluorescent_light.tscn": {
+			"icon": "res://resources/voxel_items/device_fluorescent_light.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/device/device_fluorescent_light.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/placeables/foilage/foliage_large_bush_1.tscn": {
+			"icon": "res://resources/voxel_items/foliage_large_bush_1.tres",
+			"mesh": "res://resources/voxel_items/foliage_large_bush_1_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_large_bush_1.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_manila_palm_tree_1.tscn": {
+			"icon": "res://resources/voxel_items/foliage_manila_palm_tree_1.tres",
+			"mesh": "res://resources/voxel_items/foliage_manila_palm_tree_1_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_manila_palm_tree_1.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_short_grass.tscn": {
+			"icon": "res://resources/voxel_items/foliage_short_grass.tres",
+			"mesh": "res://resources/voxel_items/foliage_short_grass_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_short_grass.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_small_grass.tscn": {
+			"icon": "res://resources/voxel_items/foliage_small_grass.tres",
+			"mesh": "res://resources/voxel_items/foliage_small_grass_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_small_grass.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_tall_grass.tscn": {
+			"icon": "res://resources/voxel_items/foliage_tall_grass.tres",
+			"mesh": "res://resources/voxel_items/foliage_tall_grass_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_tall_grass.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_thin_tree_1.tscn": {
+			"icon": "res://resources/voxel_items/foliage_thin_tree_1.tres",
+			"mesh": "res://resources/voxel_items/foliage_thin_tree_1_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_thin_tree_1.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_thin_tree_2.tscn": {
+			"icon": "res://resources/voxel_items/foliage_thin_tree_2.tres",
+			"mesh": "res://resources/voxel_items/foliage_thin_tree_2_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_thin_tree_2.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_thin_tree_3.tscn": {
+			"icon": "res://resources/voxel_items/foliage_thin_tree_3.tres",
+			"mesh": "res://resources/voxel_items/foliage_thin_tree_3_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_thin_tree_3.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/foilage/foliage_thin_tree_4.tscn": {
+			"icon": "res://resources/voxel_items/foliage_thin_tree_4.tres",
+			"mesh": "res://resources/voxel_items/foliage_thin_tree_4_item.res",
+			"scene": "res://scenes/placeables/foilage/foliage_thin_tree_4.tscn",
+			"viewmodel": "extruded"
+		},
+		"res://scenes/placeables/sim/sim_evac_point.tscn": {
+			"icon": "res://resources/voxel_items/sim_evac_point.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/sim/sim_evac_point.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/placeables/sim/sim_spawner.tscn": {
+			"icon": "res://resources/voxel_items/sim_spawner.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/sim/sim_spawner.tscn",
+			"viewmodel": "scene"
+		}
+	},
+	"version": 1
+}

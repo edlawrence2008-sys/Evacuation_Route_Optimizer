@@ -1,10 +1,13 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://dlkktuvnw1b0l"]
 
-[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_thin_tree_4.png" id="1_sw2pg"]
+[ext_resource type="Texture2D" uid="uid://dmjlnmfd60ikw" path="res://textures/placeables/foilage/foilage_thin_tree_4.png" id="1_sw2pg"]
+[ext_resource type="Script" uid="uid://b0idmtnwib52i" path="res://scripts/foliage_sway.gd" id="2_sway"]
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_sw2pg"]
+[sub_resource type="BoxShape3D" id="BoxShape3D_j1g51"]
+size = Vector3(2, 29.6875, 2)
 
 [node name="foliage_thin_tree_4" type="Node3D" unique_id=1279411221 groups=["foliage", "placeables"]]
+script = ExtResource("2_sway")
 
 [node name="SelectionArea" type="Area3D" parent="." unique_id=878775057]
 collision_layer = 7
@@ -12,11 +15,11 @@ collision_mask = 3
 monitoring = false
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=1278180216]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
-shape = SubResource("BoxShape3D_sw2pg")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 14.84375, 0)
+shape = SubResource("BoxShape3D_j1g51")
 
-[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1355679534]
-transform = Transform3D(-0.6062219, 0, -0.79529554, 0, 1, 0, 0.79529554, 0, -0.6062219, 0, 14.84375, 0)
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1906730380]
+transform = Transform3D(-0.16456178, 0, -0.9863668, 0, 1, 0, 0.9863668, 0, -0.16456178, 0, 14.84375, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true
@@ -24,8 +27,8 @@ alpha_cut = 1
 texture_filter = 0
 texture = ExtResource("1_sw2pg")
 
-[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=1350503936]
-transform = Transform3D(-0.7952955, 0, 0.60622203, 0, 1, 0, -0.60622203, 0, -0.7952955, 0, 14.84375, 0)
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=187179124]
+transform = Transform3D(-0.98636675, 0, 0.16456193, 0, 1, 0, -0.16456193, 0, -0.98636675, 0, 14.84375, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true

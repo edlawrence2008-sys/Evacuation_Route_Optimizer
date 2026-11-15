@@ -92,6 +92,7 @@ func _process_command(cmd_line: String) -> void:
 				out.print_to_console("=== Available Commands ===")
 				out.print_to_console("  /setglobalunitcap <int>   - Sets the global unit cap.")
 				out.print_to_console("  /debug_greedy [on|off]   - Toggles debug greedy-mesh colours.")
+				out.print_to_console("  /ao [on|off]             - Toggles baked voxel-corner ambient occlusion.")
 				out.print_to_console("  /path_mode [astar|flow]  - Switches between A* and baked flow fields.")
 				out.print_to_console("  /show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
 				out.print_to_console("  /clear                    - Clears the console window.")
@@ -121,6 +122,19 @@ func _process_command(cmd_line: String) -> void:
 				grid.debug_greedy_colors = enabled
 				if out:
 					out.print_to_console("Debug greedy colours: %s" % ("ON" if enabled else "OFF"))
+
+		"/ao", "/baked_ao", "/ambient_occlusion":
+			var grid = get_tree().get_first_node_in_group("grid_map")
+			if grid == null:
+				if out: out.print_to_console("Error: no grid map found.")
+			else:
+				var enabled: bool = _resolve_toggle(args, grid.baked_ao_enabled)
+				grid.baked_ao_enabled = enabled
+				if out:
+					out.print_to_console(
+						"Baked voxel AO: %s"
+						% ("ON (greedy merging deferred)" if enabled else "OFF")
+					)
 
 		"/path_mode", "/pathfinding", "/flowfields", "/flow_fields":
 			var grid = get_tree().get_first_node_in_group("grid_map")

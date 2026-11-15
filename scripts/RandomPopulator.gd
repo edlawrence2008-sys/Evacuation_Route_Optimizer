@@ -8,6 +8,10 @@ extends Node
 @export var member_count: int = 50
 @export var start_evacuating: bool = true
 @export var only_pathfindable_blocks: bool = true
+## Reject spawn cells closer than this to another NPC or an earlier slot in the
+## same populate batch. Without this, several agents can be created in one cell
+## and the physics depenetration launches them upward.
+@export var spawn_clearance: float = 1.5
 
 @export_group("Scene")
 @export var member_scene: PackedScene = preload("res://scenes/npcs/Member.tscn")
@@ -52,6 +56,7 @@ func populate() -> Dictionary:
 
 	var spawned: int = 0
 	var attempts: int = 0
+	var claimed: Array[Vector3] = []
 	var alive: int = tree.get_nodes_in_group("npc").size()
 	var max_attempts: int = maxi(candidates.size() * 2, member_count * 20 + 100)
 
@@ -79,6 +84,9 @@ func populate() -> Dictionary:
 			if not reachable:
 				continue
 
+		if not _is_spawn_position_clear(spawn_position, claimed):
+			continue
+
 		var member := member_scene.instantiate() as Node3D
 		if member == null:
 			continue
@@ -97,6 +105,7 @@ func populate() -> Dictionary:
 
 		spawned += 1
 		alive += 1
+		claimed.append(spawn_position)
 
 	var reason: String = ""
 	if spawned < member_count and attempts >= max_attempts:
@@ -108,3 +117,51 @@ func populate() -> Dictionary:
 		"attempts": attempts,
 		"reason": reason,
 	}
+
+
+func _is_spawn_position_clear(
+	position: Vector3,
+	claimed: Array[Vector3]
+) -> bool:
+	var clearance_sq: float = spawn_clearance * spawn_clearance
+
+	for other: Vector3 in claimed:
+		var difference: Vector3 = other - position
+		difference.y = 0.0
+
+		if difference.length_squared() < clearance_sq:
+			return false
+
+	if _npc_within(position, spawn_clearance):
+		return false
+
+	return GlobalData.reserve_spawn_position(position, spawn_clearance)
+
+
+## Physics query rather than the crowd hash: the hash can be up to 0.1 s stale
+## and does not include agents instantiated earlier in this batch until the next
+## physics frame.
+func _npc_within(position: Vector3, radius: float) -> bool:
+	var viewport := get_viewport()
+	var world: World3D = null
+
+	if viewport != null:
+		world = viewport.find_world_3d()
+
+	if world == null:
+		return false
+
+	var sphere := SphereShape3D.new()
+	sphere.radius = maxf(radius, 0.05)
+
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = sphere
+	query.transform = Transform3D(
+		Basis.IDENTITY,
+		position + Vector3(0.0, 0.5, 0.0)
+	)
+	query.collision_mask = 1 << 1
+	query.collide_with_bodies = true
+	query.collide_with_areas = false
+
+	return not world.direct_space_state.intersect_shape(query, 1).is_empty()

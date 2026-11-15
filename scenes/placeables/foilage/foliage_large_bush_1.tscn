@@ -1,10 +1,13 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://wkhs1mudexdn"]
 
-[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_large_bush_1.png" id="1_gr8mo"]
+[ext_resource type="Texture2D" uid="uid://8jcv1bxpev28" path="res://textures/placeables/foilage/foilage_large_bush_1.png" id="1_gr8mo"]
+[ext_resource type="Script" uid="uid://b0idmtnwib52i" path="res://scripts/foliage_sway.gd" id="2_sway"]
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_gr8mo"]
+[sub_resource type="BoxShape3D" id="BoxShape3D_4gu31"]
+size = Vector3(2, 9, 2)
 
 [node name="foliage_large_bush_1" type="Node3D" unique_id=586220299 groups=["foliage", "placeables"]]
+script = ExtResource("2_sway")
 
 [node name="SelectionArea" type="Area3D" parent="." unique_id=1653698710]
 collision_layer = 7
@@ -12,11 +15,11 @@ collision_mask = 3
 monitoring = false
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=550035603]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
-shape = SubResource("BoxShape3D_gr8mo")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.5, 0)
+shape = SubResource("BoxShape3D_4gu31")
 
-[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=184794339]
-transform = Transform3D(0.42375267, 0, 0.90577793, 0, 1, 0, -0.90577793, 0, 0.42375267, 0, 4.5, 0)
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1053216233]
+transform = Transform3D(0.96504575, 0, -0.26208153, 0, 1, 0, 0.26208153, 0, 0.96504575, 0, 4.5, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true
@@ -24,8 +27,8 @@ alpha_cut = 1
 texture_filter = 0
 texture = ExtResource("1_gr8mo")
 
-[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=957302729]
-transform = Transform3D(0.90577793, 0, -0.4237527, 0, 1, 0, 0.4237527, 0, 0.90577793, 0, 4.5, 0)
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=2093589826]
+transform = Transform3D(-0.26208168, 0, -0.9650457, 0, 1, 0, 0.9650457, 0, -0.26208168, 0, 4.5, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true

@@ -7,7 +7,9 @@ extends EditorScript
 # CONFIGURATION
 # ============================================================
 
-const TEXTURES_FOLDER := "res://textures/blocks/"
+## Auto-generated block textures live apart from hand-authored block art.
+## Every PNG here becomes one block group (normal block + slab/stair variants).
+const TEXTURES_FOLDER := "res://textures/autoblocks/"
 const BLOCKS_SCENE_PATH := "res://models/Blocks/blocks.tscn"
 const MESH_LIBRARY_PATH := "res://resources/blocks/.tres"
 const BLOCK_MESH_LIBRARY_SYNC := preload(
@@ -21,10 +23,15 @@ const GENERATED_PREFIX := "Auto_"
 ## If false, existing Auto_ items are skipped.
 const UPDATE_EXISTING_BLOCKS := true
 
-## Generates a top and bottom half-slab for every texture.
+## Generates top, bottom, and vertical half-slabs for every texture.
 const GENERATE_SLABS := true
 
-## Generates a simple stair block for every texture.
+## Generates thin panel plates, but only for the textures listed below. Panels
+## are intentionally not created for every block material.
+const GENERATE_PANELS := true
+const PANEL_TEXTURES: Array[String] = ["concrete_flat_offwhite"]
+
+## Generates a normal and an upside-down stair block for every texture.
 const GENERATE_STAIRS := true
 
 ## Width, height, and depth of every generated full block.
@@ -32,6 +39,9 @@ const BLOCK_SIZE := Vector3(1.0, 1.0, 1.0)
 
 ## Height of each generated slab.
 const SLAB_HEIGHT := BLOCK_SIZE.y * 0.5
+
+## Thickness of a generated panel: 3 texture pixels out of 16.
+const PANEL_THICKNESS := BLOCK_SIZE.y * (3.0 / 16.0)
 
 
 # ============================================================
@@ -96,11 +106,58 @@ func _run() -> void:
 				Vector3(0.0, -SLAB_HEIGHT * 0.5, 0.0)
 			)
 
+			# Vertical half-slab occupying the +X half of the cell. GridMap
+			# orientation rotates it to whichever side the player clicked.
+			updated_count += _generate_or_update_block(
+				blocks_root,
+				GENERATED_PREFIX + "Slab_Side_" + base_name,
+				texture,
+				Vector3(BLOCK_SIZE.x * 0.5, BLOCK_SIZE.y, BLOCK_SIZE.z),
+				Vector3(BLOCK_SIZE.x * 0.25, 0.0, 0.0)
+			)
+
 		if GENERATE_STAIRS:
 			updated_count += _generate_or_update_stairs(
 				blocks_root,
 				GENERATED_PREFIX + "Stairs_" + base_name,
 				texture
+			)
+
+			# Same two-step shape, mirrored vertically: the full-height half
+			# stays at -Z and the half-step moves to the top at +Z.
+			updated_count += _generate_or_update_stairs(
+				blocks_root,
+				GENERATED_PREFIX + "Stairs_UpsideDown_" + base_name,
+				texture,
+				true
+			)
+
+		if GENERATE_PANELS and PANEL_TEXTURES.has(base_name):
+			var panel_offset := (BLOCK_SIZE.y - PANEL_THICKNESS) * 0.5
+
+			updated_count += _generate_or_update_block(
+				blocks_root,
+				GENERATED_PREFIX + "Panel_Top_" + base_name,
+				texture,
+				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
+				Vector3(0.0, panel_offset, 0.0)
+			)
+
+			updated_count += _generate_or_update_block(
+				blocks_root,
+				GENERATED_PREFIX + "Panel_Bottom_" + base_name,
+				texture,
+				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
+				Vector3(0.0, -panel_offset, 0.0)
+			)
+
+			# Vertical panel occupying the +X edge, rotated by orientation.
+			updated_count += _generate_or_update_block(
+				blocks_root,
+				GENERATED_PREFIX + "Panel_Side_" + base_name,
+				texture,
+				Vector3(PANEL_THICKNESS, BLOCK_SIZE.y, BLOCK_SIZE.z),
+				Vector3(panel_offset, 0.0, 0.0)
 			)
 
 	if created_count == 0 and updated_count == 0:
@@ -145,6 +202,85 @@ func _run() -> void:
 	blocks_root.queue_free()
 
 
+## Runtime/headless entry point for the panel whitelist only. The editor
+## generator still owns the full pipeline; this exists so the MCP runtime can
+## add panel variants without instantiating the EditorScript.
+static func generate_panels_runtime() -> Dictionary:
+	var packed: PackedScene = load(BLOCKS_SCENE_PATH)
+	if packed == null:
+		return {"error": "Could not load blocks scene"}
+
+	var blocks_root := packed.instantiate() as Node3D
+	if blocks_root == null:
+		return {"error": "Blocks scene root is not a Node3D"}
+
+	var panel_offset := (BLOCK_SIZE.y - PANEL_THICKNESS) * 0.5
+	var added: Array[String] = []
+
+	for base_name: String in PANEL_TEXTURES:
+		var texture := load(
+			TEXTURES_FOLDER + base_name + ".png"
+		) as Texture2D
+		if texture == null:
+			continue
+
+		var specs := [
+			[
+				"Panel_Top_" + base_name,
+				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
+				Vector3(0.0, panel_offset, 0.0),
+			],
+			[
+				"Panel_Bottom_" + base_name,
+				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
+				Vector3(0.0, -panel_offset, 0.0),
+			],
+			[
+				"Panel_Side_" + base_name,
+				Vector3(PANEL_THICKNESS, BLOCK_SIZE.y, BLOCK_SIZE.z),
+				Vector3(panel_offset, 0.0, 0.0),
+			],
+		]
+
+		for spec: Array in specs:
+			var item_name := GENERATED_PREFIX + String(spec[0])
+			var existing := blocks_root.get_node_or_null(
+				NodePath(item_name)
+			) as MeshInstance3D
+
+			if existing == null:
+				existing = _create_block(
+					item_name,
+					texture,
+					spec[1] as Vector3,
+					spec[2] as Vector3
+				)
+				blocks_root.add_child(existing)
+				added.append(item_name)
+
+			_set_scene_owner(existing, blocks_root)
+
+	var updated_scene := PackedScene.new()
+	var pack_error := updated_scene.pack(blocks_root)
+	if pack_error != OK:
+		blocks_root.free()
+		return {"error": "Failed to pack blocks scene"}
+
+	var save_error := ResourceSaver.save(updated_scene, BLOCKS_SCENE_PATH)
+	if save_error != OK:
+		blocks_root.free()
+		return {"error": "Failed to save blocks scene"}
+
+	var synced := BLOCK_MESH_LIBRARY_SYNC.sync_from_blocks(
+		blocks_root,
+		MESH_LIBRARY_PATH,
+		{}
+	)
+	blocks_root.free()
+
+	return {"added": added, "synced": synced}
+
+
 func _sync_mesh_library(blocks_root: Node3D) -> int:
 	var previews := _make_scene_previews(blocks_root)
 	return BLOCK_MESH_LIBRARY_SYNC.sync_from_blocks(
@@ -158,6 +294,14 @@ func _sync_mesh_library(blocks_root: Node3D) -> int:
 ## keeps the inventory icons as shaded scene previews instead of flat texture
 ## thumbnails.
 func _make_scene_previews(blocks_root: Node3D) -> Dictionary:
+	# Headless generation has no rendering context for `make_mesh_previews`.
+	# The library sync then falls back to the flat texture previews for new
+	# items instead of spamming dummy-renderer errors.
+	if not Engine.is_editor_hint() or EditorInterface == null:
+		return {}
+	if DisplayServer.get_name() == "headless":
+		return {}
+
 	var meshes: Array[Mesh] = []
 	var names: Array[String] = []
 
@@ -220,7 +364,8 @@ func _generate_or_update_block(
 func _generate_or_update_stairs(
 	blocks_root: Node3D,
 	item_name: String,
-	texture: Texture2D
+	texture: Texture2D,
+	upside_down: bool = false
 ) -> int:
 	var existing_stairs := blocks_root.get_node_or_null(
 		NodePath(item_name)
@@ -230,12 +375,12 @@ func _generate_or_update_stairs(
 		if not UPDATE_EXISTING_BLOCKS:
 			return 0
 
-		_update_stairs(existing_stairs, texture)
+		_update_stairs(existing_stairs, texture, upside_down)
 		_set_scene_owner(existing_stairs, blocks_root)
 
 		return 1
 
-	var stairs := _create_stairs(item_name, texture)
+	var stairs := _create_stairs(item_name, texture, upside_down)
 
 	blocks_root.add_child(stairs)
 	_set_scene_owner(stairs, blocks_root)
@@ -247,7 +392,7 @@ func _generate_or_update_stairs(
 # BLOCK CREATION
 # ============================================================
 
-func _create_block(
+static func _create_block(
 	item_name: String,
 	texture: Texture2D,
 	size: Vector3,
@@ -299,7 +444,7 @@ func _update_block(
 	existing_collision.shape = box_shape
 
 
-func _create_block_mesh(
+static func _create_block_mesh(
 	texture: Texture2D,
 	size: Vector3,
 	local_offset: Vector3
@@ -328,7 +473,7 @@ func _create_block_mesh(
 	return mesh
 
 
-func _create_block_material(texture: Texture2D) -> StandardMaterial3D:
+static func _create_block_material(texture: Texture2D) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_texture = texture
 
@@ -340,7 +485,7 @@ func _create_block_material(texture: Texture2D) -> StandardMaterial3D:
 	return material
 
 
-func _create_block_collision(
+static func _create_block_collision(
 	size: Vector3,
 	local_offset: Vector3
 ) -> StaticBody3D:
@@ -367,24 +512,26 @@ func _create_block_collision(
 
 func _create_stairs(
 	item_name: String,
-	texture: Texture2D
+	texture: Texture2D,
+	upside_down: bool = false
 ) -> MeshInstance3D:
 	var stairs := MeshInstance3D.new()
 	stairs.name = item_name
 	stairs.position = Vector3.ZERO
 
-	stairs.mesh = _create_stairs_mesh(texture)
-	stairs.add_child(_create_stairs_collision())
+	stairs.mesh = _create_stairs_mesh(texture, upside_down)
+	stairs.add_child(_create_stairs_collision(upside_down))
 
 	return stairs
 
 
 func _update_stairs(
 	stairs: MeshInstance3D,
-	texture: Texture2D
+	texture: Texture2D,
+	upside_down: bool = false
 ) -> void:
 	stairs.position = Vector3.ZERO
-	stairs.mesh = _create_stairs_mesh(texture)
+	stairs.mesh = _create_stairs_mesh(texture, upside_down)
 
 	var existing_body := stairs.get_node_or_null(
 		NodePath("StaticBody3D")
@@ -397,10 +544,13 @@ func _update_stairs(
 		stairs.remove_child(existing_body)
 		existing_body.free()
 
-	stairs.add_child(_create_stairs_collision())
+	stairs.add_child(_create_stairs_collision(upside_down))
 
 
-func _create_stairs_mesh(texture: Texture2D) -> ArrayMesh:
+func _create_stairs_mesh(
+	texture: Texture2D,
+	upside_down: bool = false
+) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 
 	var material := _create_block_material(texture)
@@ -425,7 +575,11 @@ func _create_stairs_mesh(texture: Texture2D) -> ArrayMesh:
 	)
 	mesh.surface_set_material(0, material)
 
-	# Front half: lower step.
+	# Front half: lower step (normal) or upper step (upside down).
+	var step_y: float = SLAB_HEIGHT * 0.5
+	if not upside_down:
+		step_y = -step_y
+
 	var front_arrays := _create_offset_box_arrays(
 		Vector3(
 			BLOCK_SIZE.x,
@@ -434,7 +588,7 @@ func _create_stairs_mesh(texture: Texture2D) -> ArrayMesh:
 		),
 		Vector3(
 			0.0,
-			-SLAB_HEIGHT * 0.5,
+			step_y,
 			BLOCK_SIZE.z * 0.25
 		)
 	)
@@ -448,7 +602,7 @@ func _create_stairs_mesh(texture: Texture2D) -> ArrayMesh:
 	return mesh
 
 
-func _create_stairs_collision() -> StaticBody3D:
+func _create_stairs_collision(upside_down: bool = false) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = "StaticBody3D"
 	body.position = Vector3.ZERO
@@ -472,12 +626,17 @@ func _create_stairs_collision() -> StaticBody3D:
 	back_shape.shape = back_box
 	body.add_child(back_shape)
 
-	# Front half: lower-step collision.
+	# Front half: lower-step collision (normal) or upper-step collision
+	# (upside down).
+	var step_y: float = SLAB_HEIGHT * 0.5
+	if not upside_down:
+		step_y = -step_y
+
 	var front_shape := CollisionShape3D.new()
 	front_shape.name = "FrontCollision"
 	front_shape.position = Vector3(
 		0.0,
-		-SLAB_HEIGHT * 0.5,
+		step_y,
 		BLOCK_SIZE.z * 0.25
 	)
 
@@ -517,7 +676,7 @@ func _create_offset_box_arrays(
 # SCENE OWNERSHIP
 # ============================================================
 
-func _set_scene_owner(node: Node, scene_root: Node) -> void:
+static func _set_scene_owner(node: Node, scene_root: Node) -> void:
 	node.owner = scene_root
 
 	for child: Node in node.get_children():

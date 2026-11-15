@@ -1,0 +1,104 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="1_btn"]
+[ext_resource type="FontFile" uid="uid://ck7sm3xakovrl" path="res://font/dogicapixel.ttf" id="2_font"]
+
+[node name="ControlsPanel" type="Node3D"]
+visible = false
+
+[node name="LeftColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="Bind0" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.45, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="Bind1" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.2, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="Bind2" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.05, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="Bind3" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.3, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="RightColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+
+[node name="Bind4" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.45, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="Bind5" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.2, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="Bind6" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.05, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="Bind7" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.3, 0)
+action = &"keybind_empty"
+caption = ""
+label_size = 18
+label_left = true
+
+[node name="PageLabel" type="Label3D" parent="."]
+position = Vector3(0, -0.42, 0.035)
+pixel_size = 0.0021
+no_depth_test = true
+render_priority = 5
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "Page 1 / 3"
+font = ExtResource("2_font")
+font_size = 18
+outline_size = 5
+
+[node name="KeybindPrev" parent="." instance=ExtResource("1_btn")]
+transform = Transform3D(0.75, 0, 0, 0, 0.75, 0, 0, 0, 1, -0.65, -0.58, 0.035)
+action = &"keybind_prev"
+caption = "Prev"
+label_size = 20
+
+[node name="KeybindNext" parent="." instance=ExtResource("1_btn")]
+transform = Transform3D(0.75, 0, 0, 0, 0.75, 0, 0, 0, 1, 0.65, -0.58, 0.035)
+action = &"keybind_next"
+caption = "Next"
+label_size = 20
+
+[node name="KeybindReset" parent="." instance=ExtResource("1_btn")]
+transform = Transform3D(0.7, 0, 0, 0, 0.7, 0, 0, 0, 1, 0, 0.7, 0.035)
+action = &"keybind_reset"
+caption = "Reset"
+label_size = 20
+
+[node name="KeybindsBack" parent="." instance=ExtResource("1_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.78, 0.035)
+action = &"back_settings"
+caption = "Back"
+label_size = 24

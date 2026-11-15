@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://bv3gsklj6tahr"]
+
+[ext_resource type="PackedScene" uid="uid://5f3or6k6amyq" path="res://scenes/menu/consul.tscn" id="1_consul"]
+[ext_resource type="Script" uid="uid://cvn2prkr2ghty" path="res://scenes/dialogue/ConsulDialogue.gd" id="2_dialogue"]
+[ext_resource type="Script" uid="uid://c38388jw330sh" path="res://scripts/dialogue_manager.gd" id="3_manager"]
+
+[node name="ConsulDialogue" type="Control" unique_id=1255173209]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2_dialogue")
+
+[node name="Consul" parent="." unique_id=1938257181 instance=ExtResource("1_consul")]
+layout_mode = 1
+
+[node name="DialogueManager" type="Node" parent="." unique_id=1471150361]
+script = ExtResource("3_manager")

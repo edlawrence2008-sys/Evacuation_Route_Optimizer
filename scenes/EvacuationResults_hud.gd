@@ -58,7 +58,7 @@ func _refresh() -> void:
 		completion = float(evacuated) / float(spawned) * 100.0
 
 	var lines: Array[String] = []
-	lines.append("[b][color=cyan]EVACUATION RESULTS[/color][/b]")
+	lines.append("[b][color=yellow]EVACUATION RESULTS[/color][/b]")
 	lines.append(
 		"State: [color=%s]%s[/color]   Elapsed: %s"
 		% [state_color, state_text, _format_duration(float(summary.get("elapsed", 0.0)))]

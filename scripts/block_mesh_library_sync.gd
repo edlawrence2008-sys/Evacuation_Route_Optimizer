@@ -64,7 +64,10 @@ static func sync_from_blocks(
 			or preview.get_width() != 64
 			or preview.get_height() != 64
 		):
-			var generated_preview := _make_texture_preview(item_name)
+			var generated_preview := _make_texture_preview(
+				item_name,
+				library
+			)
 			if generated_preview != null:
 				library.set_item_preview(item_id, generated_preview)
 
@@ -84,20 +87,66 @@ static func sync_from_blocks(
 
 ## Fallback preview for newly generated items. Existing authored previews are
 ## left untouched; new items get a nearest-filtered 64×64 copy of their texture.
-static func _make_texture_preview(item_name: String) -> Texture2D:
+## Upside-down stairs reuse the matching normal stair preview, flipped vertically,
+## so a headless generation still gets a readable stair icon.
+static func _make_texture_preview(
+	item_name: String,
+	library: MeshLibrary = null
+) -> Texture2D:
 	var base := item_name.trim_prefix("Auto_")
 
-	for prefix in ["Slab_Top_", "Slab_Bottom_", "Stairs_"]:
+	if library != null and "Stairs_UpsideDown_" in item_name:
+		var normal_name := item_name.replace(
+			"Stairs_UpsideDown_",
+			"Stairs_"
+		)
+		for id: int in library.get_item_list():
+			if String(library.get_item_name(id)) != normal_name:
+				continue
+			var normal_preview := library.get_item_preview(id)
+			if normal_preview == null:
+				break
+			var image := normal_preview.get_image()
+			if image == null:
+				break
+			image = image.duplicate()
+			if image.is_compressed():
+				if image.decompress() != OK:
+					break
+			image.flip_y()
+			return ImageTexture.create_from_image(image)
+
+	for prefix in [
+		"Slab_Bottom_",
+		"Slab_Side_",
+		"Slab_Top_",
+		"Panel_Bottom_",
+		"Panel_Side_",
+		"Panel_Top_",
+		"Stairs_UpsideDown_",
+		"Stairs_",
+	]:
 		if base.begins_with(prefix):
 			base = base.trim_prefix(prefix)
 			break
 
-	var texture_path := "res://textures/blocks/" + base + ".png"
+	var auto_base := base.trim_prefix("Connect_")
+	var candidates: Array[String] = [
+		"res://textures/autoblocks/" + base + ".png",
+		"res://textures/auto_connecting_blocks/" + auto_base + ".png",
+	]
+	var texture: Texture2D = null
 
-	if not FileAccess.file_exists(texture_path):
-		return null
-
-	var texture := load(texture_path) as Texture2D
+	for path in candidates:
+		if not FileAccess.file_exists(path):
+			continue
+		texture = load(path) as Texture2D
+		if texture != null:
+			break
+		var raw := Image.new()
+		if raw.load(path) == OK:
+			texture = ImageTexture.create_from_image(raw)
+			break
 
 	if texture == null:
 		return null

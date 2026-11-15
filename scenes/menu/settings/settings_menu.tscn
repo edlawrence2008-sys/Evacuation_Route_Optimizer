@@ -1,0 +1,43 @@
+[gd_scene format=3 uid="uid://j3ihdqli5tqr"]
+
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="1_btn"]
+
+[node name="SettingsPanel" type="Node3D" unique_id=1860852573]
+
+[node name="HubLeft" type="Node3D" parent="." unique_id=1322386460]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="Graphics" parent="HubLeft" unique_id=2073991931 instance=ExtResource("1_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+action = &"settings_graphics"
+caption = "Graphics"
+
+[node name="Gameplay" parent="HubLeft" unique_id=2001625725 instance=ExtResource("1_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 0)
+action = &"settings_gameplay"
+caption = "Gameplay"
+
+[node name="Controls" parent="HubLeft" unique_id=738995694 instance=ExtResource("1_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.25, 0)
+action = &"settings_controls"
+caption = "Controls"
+
+[node name="HubRight" type="Node3D" parent="." unique_id=1787508362]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+
+[node name="Audio" parent="HubRight" unique_id=135606910 instance=ExtResource("1_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+action = &"settings_audio"
+caption = "Audio"
+
+[node name="WaterTuning" parent="HubRight" unique_id=644131712 instance=ExtResource("1_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 0)
+action = &"water_tuning"
+caption = "Water Tuning"
+
+[node name="SettingsBack" parent="." unique_id=789730523 instance=ExtResource("1_btn")]
+transform = Transform3D(1.9, 0, 0, 0, 1.2, 0, 0, 0, 1, 0, -0.55, 0.035)
+action = &"back_main"
+caption = "Back"
+label_size = 24
+keep_label_aspect = true

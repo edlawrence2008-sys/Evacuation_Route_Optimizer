@@ -7,10 +7,14 @@ extends EditorScript
 ## Textures ending with "_billboard" use one fixed-Y Sprite3D; every other
 ## texture uses two crossed Sprite3D quads (Minecraft-style grass/plant cross).
 ## One texture pixel equals one block-texture pixel.
+##
+## After generating scenes, run scripts/voxel_item_generator_tool.gd to refresh
+## the placeable item icons and foliage hand item.
 
 const TEXTURES_FOLDER := "res://textures/placeables/foilage/"
 const OUTPUT_FOLDER := "res://scenes/placeables/foilage/"
 const SCENE_PREFIX := "foliage_"
+const SWAY_SCRIPT: Script = preload("res://scripts/foliage_sway.gd")
 
 const UPDATE_EXISTING := true
 
@@ -93,12 +97,13 @@ static func _build_scene(
 		root = Node3D.new()
 
 	root.name = scene_stem
+	root.set_script(SWAY_SCRIPT)
 	root.add_to_group("placeables")
 	root.add_to_group("foliage")
 
 	var is_billboard := scene_stem.to_lower().ends_with("_billboard")
 	_ensure_sprites(root, texture, is_billboard)
-	_ensure_selection_area(root)
+	_ensure_selection_area(root, texture)
 	_set_scene_owner(root, root)
 
 	var packed := PackedScene.new()
@@ -241,7 +246,7 @@ static func _make_sprite(
 	return sprite
 
 
-static func _ensure_selection_area(root: Node3D) -> void:
+static func _ensure_selection_area(root: Node3D, texture: Texture2D) -> void:
 	var area := root.get_node_or_null("SelectionArea") as Area3D
 
 	if area == null:
@@ -262,10 +267,18 @@ static func _ensure_selection_area(root: Node3D) -> void:
 		shape_node.name = "CollisionShape3D"
 		area.add_child(shape_node)
 
+	# One selection box, scaled to the plant's real height. The footprint is
+	# capped at two cells so a 27 m tree does not create a huge invisible
+	# blocker; it is an Area3D, so it only participates in build selection/
+	# removal rays, not player or NPC movement.
+	var width := float(texture.get_width()) * PIXEL_SIZE
+	var height := float(texture.get_height()) * PIXEL_SIZE
+	var footprint := clampf(width, VOXEL_SIZE * 0.5, VOXEL_SIZE * 2.0)
+
 	var box := BoxShape3D.new()
-	box.size = Vector3(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
+	box.size = Vector3(footprint, height, footprint)
 	shape_node.shape = box
-	shape_node.position = Vector3(0.0, VOXEL_SIZE * 0.5, 0.0)
+	shape_node.position = Vector3(0.0, height * 0.5, 0.0)
 
 
 static func _set_scene_owner(node: Node, scene_root: Node) -> void:

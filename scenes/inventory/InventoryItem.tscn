@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://d1r2btw0l0anf" path="res://scenes/inventory/inventory_item.gd" id="1_738ec"]
 [ext_resource type="Texture2D" uid="uid://dgc2oirkwfnik" path="res://textures/inventory/inventory_slot.png" id="2_eehxj"]
 [ext_resource type="Texture2D" uid="uid://c27l8c22hhq2f" path="res://textures/inventory/Item_orientation.png" id="3_ou7gy"]
+[ext_resource type="Texture2D" uid="uid://lnmeo0r76jr6" path="res://textures/inventory/group_plus.png" id="4_group_plus"]
 
 [node name="InventoryItemControl" type="Control" unique_id=1461659582]
 custom_minimum_size = Vector2(60, 60)
@@ -34,6 +35,11 @@ grow_vertical = 2
 expand_mode = 1
 stretch_mode = 5
 
+[node name="Top_Or_Bottom" type="Sprite2D" parent="." unique_id=1427265203]
+position = Vector2(51, 10)
+scale = Vector2(1.3200024, 1.3200024)
+texture = ExtResource("3_ou7gy")
+
 [node name="Label" type="Label" parent="." unique_id=230376523]
 layout_mode = 1
 anchors_preset = 8
@@ -52,10 +58,29 @@ horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 3
 
-[node name="Top_Or_Bottom" type="Sprite2D" parent="." unique_id=1427265203]
-position = Vector2(51, 10)
-scale = Vector2(1.3200024, 1.3200024)
-texture = ExtResource("3_ou7gy")
+[node name="VariantsButton" type="TextureButton" parent="." unique_id=2088461201]
+visible = false
+texture_filter = 1
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -18.0
+offset_top = -18.0
+offset_right = -2.0
+offset_bottom = -2.0
+grow_horizontal = 0
+grow_vertical = 0
+tooltip_text = "Show block variants"
+focus_mode = 0
+mouse_default_cursor_shape = 2
+texture_normal = ExtResource("4_group_plus")
+texture_pressed = ExtResource("4_group_plus")
+texture_hover = ExtResource("4_group_plus")
+ignore_texture_size = true
+stretch_mode = 5
 
 [connection signal="mouse_entered" from="." to="." method="_on_mouse_entered"]
 [connection signal="mouse_exited" from="." to="." method="_on_mouse_exited"]

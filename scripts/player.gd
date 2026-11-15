@@ -3,6 +3,7 @@ extends CharacterBody3D
 # --- Node References ---
 @onready var head = $head
 @onready var camera = $head/CameraSmooth/Camera3D
+@onready var camera_smooth = $head/CameraSmooth
 @onready var collision_shape = $CollisionShape3D
 @onready var sfx_step = $step
 @onready var sfx_slide_loop = $slide
@@ -17,10 +18,21 @@ extends CharacterBody3D
 @export_group("Health")
 @onready var health_component: HealthComponent = $HealthComponent
 
+# --- Camera Settings ---
+@export_group("Camera")
+## Degrees of camera roll at full sideways input. Positive rolls into the
+## strafe direction; the settings menu overrides this through
+## PerformanceSettings.
+@export var view_roll: float = 1.0
+var _view_roll_current: float = 0.0
+
 # --- Movement Settings ---
 const WALK_SPEED = 5.0
 const SPRINT_SPEED = 8.0
-const JUMP_VELOCITY = 4.5
+## Jump apex height. The project gravity is 12 m/s^2, so this clears one 1 m
+## block with margin (even when the block is reached mid-ascent) while staying
+## well below two blocks.
+const JUMP_HEIGHT: float = 1.35
 const SENSITIVITY = 0.004
 const ACCELERATION = 10.0
 const FRICTION = 10.0
@@ -30,6 +42,10 @@ const CROUCH_SPEED = 2.5
 const LEDGE_DETECTION_DISTANCE = 0.8
 const LEDGE_JUMP_VELOCITY = 6.0 
 const LEDGE_CHECK_HEIGHT = 0.5 
+## Space required above a ledge before it can be mantled. A ledge with a block
+## stacked on top of it is a wall, not a ledge, and must not be climbable.
+const LEDGE_CLEARANCE_MARGIN = 0.05
+const LEDGE_CAPSULE_RADIUS = 0.25
 var is_on_ledge = false
 var ledge_y_position = 0.0
 var mantle_timer = 0.0 
@@ -40,8 +56,11 @@ const SLIDE_FRICTION = 4.0
 const SLIDE_TILT = -4.0      
 var is_sliding = false
 var slide_vector = Vector3.ZERO
-var crouch_height = 1.0      
-var standing_height = 2.0
+## Short enough to pass under a one-block gap (1 m) with 0.1 m to spare.
+var crouch_height = 0.9
+## Slightly under two block heights (2.0 m) so the standing capsule can pass
+## through a two-block doorway without catching its top on the ceiling.
+var standing_height = 1.8
 
 # --- Wall Run Settings ---
 const MAX_WALL_UPWARD_VELOCITY = 1.8
@@ -71,6 +90,14 @@ var camera_x_rotation = 0.0
 var camera_tween : Tween
 var damage_tween : Tween
 
+# --- Bunny Hop Settings ---
+## Holding jump through a landing immediately jumps again and keeps the
+## horizontal momentum, so slide jumps and chained hops carry their speed.
+const BHOP_MAX_SPEED = 14.0
+const BHOP_HOP_GAIN = 1.03
+const BHOP_AIR_TURN_RATE = 4.0
+var bhop_chain: int = 0
+
 # --- Zoom Settings ---
 const ZOOM_FOV = 40.0
 const DEFAULT_FOV = 75.0
@@ -85,9 +112,12 @@ const DEBUG_MODE: bool = true
 
 # Internal state
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
+## Derived from gravity so the apex stays at JUMP_HEIGHT if gravity is retuned.
+var jump_velocity: float = sqrt(2.0 * gravity * JUMP_HEIGHT)
 var was_on_floor = true
 var is_wall_running = false
 var wall_normal = Vector3.ZERO
+var _jumped_this_frame: bool = false
 var t_bob = 0.0
 var last_bob_y = 0.0
 
@@ -103,23 +133,41 @@ func _ready():
 		health_component.health_depleted.connect(_on_player_death)
 		health_component.damaged.connect(_on_player_damaged)
 
+
+## Release active audio playbacks so shutdown does not report leaked MP3
+## streams (Godot keeps a playback reference while a sound is playing).
+func _exit_tree() -> void:
+	for child in get_children():
+		if child is AudioStreamPlayer3D:
+			child.stop()
+			child.stream = null
+
 func _input(event):
 	if is_dead: return
 
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		var current_sensitivity = SENSITIVITY * (0.5 if is_zooming else 1.0)
-		head.rotate_y(-event.relative.x * current_sensitivity)
+		# Yaw turns the whole CharacterBody3D so the body (and anything that
+		# reads its basis) follows the camera. Pitch stays on the camera.
+		rotate_y(-event.relative.x * current_sensitivity)
 		camera_x_rotation -= event.relative.y * current_sensitivity
 		camera_x_rotation = clamp(camera_x_rotation, deg_to_rad(-89), deg_to_rad(89))
 
-	if DEBUG_MODE and noclip and event is InputEventMouseButton and event.pressed:
+	if (
+		_can_adjust_noclip_speed()
+		and event is InputEventMouseButton
+		and event.pressed
+	):
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			noclip_speed_mult = clamp(noclip_speed_mult + 0.2, 0.2, 10.0)
+			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			noclip_speed_mult = clamp(noclip_speed_mult - 0.2, 0.2, 10.0)
+			get_viewport().set_input_as_handled()
 
 func _physics_process(delta):
 	if is_dead:
+		_update_view_roll(0.0, delta)
 		if not is_on_floor():
 			velocity.y -= gravity * delta
 		velocity.x = lerp(velocity.x, 0.0, delta * 4.0)
@@ -128,12 +176,16 @@ func _physics_process(delta):
 		return
 	# Freeze the player when the inventory or console owns the cursor.
 	if not movement_enabled:
+		_update_view_roll(0.0, delta)
 		move_and_slide()
 		return
 
+	_jumped_this_frame = false
+
 	var input_dir = Input.get_vector("left", "right", "up", "down")
-	var direction = (head.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	var direction = (global_transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	cam_aligned_wish_dir = (camera.global_transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	_update_view_roll(input_dir.x, delta)
 
 	handle_noclip(delta)
 	if noclip: return
@@ -144,16 +196,25 @@ func _physics_process(delta):
 	handle_ledge_logic()
 	handle_zoom_logic()
 
+	# Landing is handled before a fresh jump press so holding jump through a
+	# landing chains straight into the next hop without a ground-friction frame.
+	if is_on_floor() and not was_on_floor:
+		_handle_landing()
+
 	if Input.is_action_just_pressed("jump"):
 		_handle_jump()
 
-	if is_on_floor() and not was_on_floor:
-		_on_land()
 	was_on_floor = is_on_floor()
 
 	_apply_movement_velocity(delta, direction, input_dir)
 
 	var target_h = crouch_height if Input.is_action_pressed("crouch") else standing_height
+
+	# Do not grow the capsule into a ceiling: stay crouched until there is
+	# standing room above the current capsule top.
+	if target_h > collision_shape.shape.height and _is_ceiling_blocked(target_h):
+		target_h = collision_shape.shape.height
+
 	collision_shape.shape.height = lerp(collision_shape.shape.height, target_h, delta * 10.0)
 	
 	if not is_on_floor() and not is_wall_running and not is_on_ledge:
@@ -167,18 +228,41 @@ func _physics_process(delta):
 	_handle_visuals(delta)
 
 # --- Noclip ---
+## Mouse-wheel speed changes belong to active gameplay noclip only. Menus and
+## the console release the mouse cursor, so they never adjust the fly speed.
+func _can_adjust_noclip_speed() -> bool:
+	return (
+		DEBUG_MODE
+		and noclip
+		and movement_enabled
+		and not is_dead
+		and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED
+	)
+
+
 func handle_noclip(delta: float):
 	if not DEBUG_MODE: return
 
 	if Input.is_action_just_pressed("ui_noclip"):
 		noclip = !noclip
+		_cancel_mantle()
 		collision_shape.disabled = noclip
 		velocity = Vector3.ZERO
 
 	if noclip:
 		const NOCLIP_BASE_SPEED = 10.0
-		var speed = NOCLIP_BASE_SPEED * noclip_speed_mult
-		velocity = cam_aligned_wish_dir * speed
+		var noclip_speed: float = NOCLIP_BASE_SPEED * noclip_speed_mult
+		var vertical_input: float = 0.0
+		if Input.is_action_pressed("jump"):
+			vertical_input += 1.0
+		if Input.is_action_pressed("crouch"):
+			vertical_input -= 1.0
+		# Vertical flight uses the same scroll-adjusted speed as horizontal
+		# flight, so jump/crouch feel identical to forward movement.
+		velocity = (
+			cam_aligned_wish_dir * noclip_speed
+			+ Vector3.UP * vertical_input * noclip_speed
+		)
 		global_position += velocity * delta
 		velocity = Vector3.ZERO
 		_handle_visuals(delta)
@@ -200,6 +284,7 @@ func _on_player_damaged(_amount: float):
 
 func _on_player_death():
 	is_dead = true
+	_cancel_mantle()
 	sfx_slide_loop.stop()
 	if camera_tween: camera_tween.kill()
 	if damage_tween: damage_tween.kill()
@@ -225,9 +310,33 @@ func _update_stamina(delta):
 		wall_stamina = MAX_WALL_STAMINA
 		penalty_timer = 0.0
 
+func _handle_landing():
+	# Auto-hop: holding jump on touchdown launches again immediately and keeps
+	# the horizontal speed the player arrived with (plus a small hop bonus).
+	if Input.is_action_pressed("jump"):
+		bhop_chain += 1
+		var horizontal := Vector3(velocity.x, 0.0, velocity.z)
+		var speed := minf(horizontal.length() * BHOP_HOP_GAIN, BHOP_MAX_SPEED)
+		if speed > 0.01:
+			horizontal = horizontal.normalized() * speed
+			velocity.x = horizontal.x
+			velocity.z = horizontal.z
+		_handle_jump()
+		if _jumped_this_frame:
+			return
+
+	bhop_chain = 0
+	_on_land()
+
+
 func _handle_jump():
+	if _jumped_this_frame:
+		return
 	if is_on_floor():
 		if is_sliding: _exit_slide()
+		# A jump from the ground starts momentum preservation, so a slide jump
+		# carries its speed and a held jump can chain on landing.
+		bhop_chain = maxi(bhop_chain, 1)
 		_on_jump()
 	elif is_on_ledge:
 		_on_ledge_jump()
@@ -237,7 +346,9 @@ func _handle_jump():
 func set_movement_enabled(enabled: bool) -> void:
 	movement_enabled = enabled
 	if not enabled:
+		_cancel_mantle()
 		velocity = Vector3.ZERO
+		bhop_chain = 0
 		if is_sliding:
 			_exit_slide()
 		if is_wall_running:
@@ -246,17 +357,33 @@ func set_movement_enabled(enabled: bool) -> void:
 			sfx_wall_run_start.stop()
 
 func _apply_movement_velocity(delta, direction, input_dir):
+	if _jumped_this_frame:
+		return
+
 	if is_sliding:
-		velocity.x = lerp(velocity.x, slide_vector.x * SLIDE_SPEED, delta * SLIDE_FRICTION)
-		velocity.z = lerp(velocity.z, slide_vector.z * SLIDE_SPEED, delta * SLIDE_FRICTION)
+		var slide_speed: float = maxf(
+			SLIDE_SPEED,
+			Vector3(velocity.x, 0.0, velocity.z).length()
+		)
+		velocity.x = lerp(velocity.x, slide_vector.x * slide_speed, delta * SLIDE_FRICTION)
+		velocity.z = lerp(velocity.z, slide_vector.z * slide_speed, delta * SLIDE_FRICTION)
 		if velocity.length() < WALK_SPEED: _exit_slide()
 	elif is_on_ledge:
 		velocity = Vector3.ZERO
 		if input_dir.y > 0: _exit_ledge()
+	elif bhop_chain > 0 and not is_on_floor() and not is_wall_running:
+		_apply_bhop_air_movement(delta, direction)
 	else:
 		var target_speed = WALK_SPEED
-		
-		if Input.is_action_pressed("sprint"):
+
+		if is_wall_running:
+			# A wall run guarantees at least sprint speed, but never caps a
+			# faster slide/bhop momentum.
+			target_speed = maxf(
+				SPRINT_SPEED,
+				Vector3(velocity.x, 0.0, velocity.z).length()
+			)
+		elif Input.is_action_pressed("sprint"):
 			target_speed = SPRINT_SPEED
 		elif Input.is_action_pressed("crouch"):
 			target_speed = CROUCH_SPEED
@@ -267,6 +394,71 @@ func _apply_movement_velocity(delta, direction, input_dir):
 		else:
 			velocity.x = lerp(velocity.x, 0.0, FRICTION * delta)
 			velocity.z = lerp(velocity.z, 0.0, FRICTION * delta)
+
+
+## Air control while a bunny-hop chain is active: keep the horizontal speed and
+## turn the momentum toward the input instead of lerping straight to walk speed.
+func _apply_bhop_air_movement(delta: float, direction: Vector3) -> void:
+	var horizontal := Vector3(velocity.x, 0.0, velocity.z)
+	var speed := minf(horizontal.length(), BHOP_MAX_SPEED)
+
+	if speed < 0.01:
+		if direction != Vector3.ZERO:
+			velocity.x = direction.x * WALK_SPEED
+			velocity.z = direction.z * WALK_SPEED
+		return
+
+	if direction == Vector3.ZERO:
+		velocity.x = horizontal.x
+		velocity.z = horizontal.z
+		return
+
+	var current_dir := horizontal / horizontal.length()
+	var turn := clampf(BHOP_AIR_TURN_RATE * delta, 0.0, 1.0)
+	var new_dir := current_dir.slerp(direction.normalized(), turn)
+	velocity.x = new_dir.x * speed
+	velocity.z = new_dir.z * speed
+
+
+## True when growing the crouched capsule to `target_height` would run into
+## geometry above the current capsule top (a low ceiling or one-block gap).
+func _is_ceiling_blocked(target_height: float) -> bool:
+	var current_height: float = collision_shape.shape.height
+	var extra: float = target_height - current_height
+
+	if extra <= 0.0:
+		return false
+
+	var radius: float = 0.25
+	if collision_shape.shape is CapsuleShape3D:
+		radius = (collision_shape.shape as CapsuleShape3D).radius
+
+	# Only the volume the taller capsule would gain above the current head is
+	# tested, so the floor and the body's current shape never self-collide.
+	var headroom := BoxShape3D.new()
+	var width: float = maxf(radius * 2.0 - 0.04, 0.05)
+	headroom.size = Vector3(width, extra, width)
+
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = headroom
+	params.transform = Transform3D(
+		Basis(),
+		global_position + Vector3.UP * (
+			current_height * 0.5 + extra * 0.5 + 0.01
+		)
+	)
+	params.collision_mask = collision_mask
+	params.collide_with_areas = false
+	params.collide_with_bodies = true
+	params.exclude = [get_rid()]
+
+	return (
+		not get_world_3d().direct_space_state.intersect_shape(
+			params,
+			1
+		).is_empty()
+	)
+
 
 func handle_zoom_logic():
 	if Input.is_action_pressed("zoom"):
@@ -347,7 +539,8 @@ func _check_wall(dir: Vector3) -> Variant:
 
 # --- Visual Effects ---
 func _on_jump():
-	velocity.y = JUMP_VELOCITY
+	_jumped_this_frame = true
+	velocity.y = jump_velocity
 	if camera_tween: camera_tween.kill()
 	camera_tween = create_tween().set_parallel(true)
 	camera_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
@@ -369,6 +562,7 @@ func _on_land():
 	_play_sfx(sfx_land)
 
 func _on_wall_jump():
+	bhop_chain = 0
 	velocity = (wall_normal * WALL_JUMP_HORIZONTAL_FORCE) + (Vector3.UP * WALL_JUMP_VERTICAL_FORCE)
 	penalty_timer = REGEN_PENALTY_TIME
 	wall_stamina -= SAME_WALL_JUMP_COST if wall_normal.dot(last_wall_normal) > 0.8 else NEW_WALL_JUMP_COST
@@ -394,6 +588,20 @@ func _tilt_camera(side):
 	camera_tween = create_tween()
 	camera_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	camera_tween.tween_property(camera, "rotation:z", target_tilt, 0.25)
+
+## Applies the strafe-based view roll to the camera rig. Kept on the smooth
+## pivot so slide/wall-run/death camera tweens can still use the camera's own
+## z rotation without fighting this offset.
+func _update_view_roll(strafe: float, delta: float) -> void:
+	var target := -deg_to_rad(view_roll) * clampf(strafe, -1.0, 1.0)
+	_view_roll_current = lerpf(
+		_view_roll_current,
+		target,
+		clampf(delta * 8.0, 0.0, 1.0)
+	)
+	if camera_smooth != null:
+		camera_smooth.rotation.z = _view_roll_current
+
 
 func _handle_visuals(delta):
 	camera_x_rotation = clamp(camera_x_rotation, deg_to_rad(-89), deg_to_rad(89))
@@ -435,12 +643,40 @@ func handle_ledge_logic():
 	if wall_hit:
 		var check_pos = global_position + (wall_dir * 1.2) + Vector3(0, LEDGE_CHECK_HEIGHT, 0)
 		var floor_hit = _check_ray(check_pos, check_pos + Vector3.DOWN * (LEDGE_CHECK_HEIGHT * 2.0))
-		if floor_hit:
+		# Only a truly exposed top counts as a ledge: if a block sits above it,
+		# the standing capsule cannot fit and the surface is a wall instead.
+		if (
+			floor_hit
+			and floor_hit["normal"].y > 0.5
+			and _ledge_has_standing_clearance(floor_hit["position"])
+		):
 			ledge_y_position = floor_hit.position.y
 			is_on_ledge = true
 			is_wall_running = false
 
+
+## Checks that the full standing capsule fits above `ledge_top`.
+func _ledge_has_standing_clearance(ledge_top: Vector3) -> bool:
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = LEDGE_CAPSULE_RADIUS
+	capsule.height = standing_height
+
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = capsule
+	params.transform = Transform3D(
+		Basis(),
+		ledge_top + Vector3.UP * (standing_height * 0.5 + LEDGE_CLEARANCE_MARGIN)
+	)
+	params.collision_mask = collision_mask
+	params.collide_with_areas = false
+	params.collide_with_bodies = true
+	params.exclude = [get_rid()]
+
+	var hits := get_world_3d().direct_space_state.intersect_shape(params, 1)
+	return hits.is_empty()
+
 func _on_ledge_jump():
+	bhop_chain = 0
 	var height_to_climb = ledge_y_position - global_position.y
 	var vertical_needed = sqrt(2 * gravity * (height_to_climb + 1.5))
 	velocity = (Vector3.UP * vertical_needed) + (-head.global_transform.basis.z * 4.0)
@@ -460,6 +696,14 @@ func _on_ledge_jump():
 
 func _exit_ledge():
 	is_on_ledge = false
+
+
+## Drops any in-progress mantle. Noclip, the inventory/console, and death all
+## interrupt movement while `mantle_timer` is still ticking; leaving it set
+## would re-enter the mantle path (and its upward velocity) later.
+func _cancel_mantle() -> void:
+	is_on_ledge = false
+	mantle_timer = 0.0
 
 func _check_ray(from: Vector3, to: Vector3) -> Variant:
 	var space_state = get_world_3d().direct_space_state

@@ -260,8 +260,14 @@ static func normalize_block_collisions(
 
 		if "stair" in item_name:
 			# Generated stairs are two 0.5 m deep steps inside one cell.
-			# Legacy stairs keep their authored concave hull (already scaled).
+			# Upside-down variants put the half-step at the top instead of
+			# the bottom. Legacy stairs keep their authored concave hull.
 			if not _has_concave_shape(mesh_node):
+				var step_y: float = (
+					cell_size.y * 0.25
+					if "upside" in item_name
+					else -cell_size.y * 0.25
+				)
 				_rebuild_body(mesh_node, root, [
 					{
 						"name": "BackCollision",
@@ -281,7 +287,7 @@ static func normalize_block_collisions(
 						),
 						"offset": Vector3(
 							0.0,
-							-cell_size.y * 0.25,
+							step_y,
 							cell_size.z * 0.25
 						),
 					},

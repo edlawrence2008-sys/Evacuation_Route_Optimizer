@@ -486,7 +486,11 @@ func _fire_hit_channel(stream: AudioStream, final_volume_db: float, variance: fl
 
 func _get_speed_ratio() -> float:
 	if is_instance_valid(_animator) and _animator.has_method("get_speed_ratio"):
-		var ref_speed: float = _animator.reference_speed if "reference_speed" in _animator else 10.0
+		var ref_speed: float = 10.0
+
+		if "reference_speed" in _animator:
+			ref_speed = float(_animator.reference_speed)
+
 		return _animator.get_speed_ratio(ref_speed)
 	var h: float = Vector3(_parent.velocity.x, 0.0, _parent.velocity.z).length()
 	return clamp(h / 5.0, 0.0, 1.0)

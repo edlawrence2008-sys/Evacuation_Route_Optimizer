@@ -7,6 +7,9 @@ extends VBoxContainer
 const ROW_SCENE: PackedScene = preload(
 	"res://scenes/inventory/AdjustableVariableRow.tscn"
 )
+const SPRITE_LIBRARY = preload(
+	"res://scripts/NPCstuff/RealisticSpriteLibrary.gd"
+)
 
 @export var agent_scene: PackedScene = preload(
 	"res://scenes/npcs/Member.tscn"
@@ -63,18 +66,15 @@ func _build_rows() -> void:
 
 		var property_name: String = String(prop.name)
 		var label: Label = row.get_node_or_null("HBoxContainer/Label")
-		var line_edit: LineEdit = row.get_node_or_null(
-			"HBoxContainer/LineEdit"
-		)
 
 		if label:
 			label.text = property_name.capitalize()
-		if line_edit:
-			line_edit.text = _value_to_text(temp.get(prop.name))
 
+		var value: Variant = temp.get(prop.name)
 		row.set_meta("var_name", property_name)
 		row.set_meta("var_type", prop.type)
-		_defaults[property_name] = temp.get(prop.name)
+		_apply_row_value(row, value, prop.type)
+		_defaults[property_name] = value
 
 	temp.free()
 	_set_status("Edit values, then Apply to live and future agents.")
@@ -87,16 +87,12 @@ func _sync_from_state() -> void:
 			continue
 
 		var property_name: String = row.get_meta("var_name")
+		var property_type: int = row.get_meta("var_type")
 		var value: Variant = GlobalData.agent_overrides.get(
 			property_name,
 			_defaults.get(property_name)
 		)
-		var line_edit: LineEdit = row.get_node_or_null(
-			"HBoxContainer/LineEdit"
-		)
-
-		if line_edit:
-			line_edit.text = _value_to_text(value)
+		_apply_row_value(row, value, property_type)
 
 
 func _collect_overrides() -> Dictionary:
@@ -108,6 +104,26 @@ func _collect_overrides() -> Dictionary:
 
 		var property_name: String = row.get_meta("var_name")
 		var property_type: int = row.get_meta("var_type")
+
+		if property_type == TYPE_BOOL:
+			var check_box: CheckBox = row.get_node_or_null(
+				"HBoxContainer/CheckBox"
+			)
+			overrides[property_name] = (
+				check_box.button_pressed if check_box != null else false
+			)
+			continue
+
+		if property_name == "realistic_sprite":
+			var sprite_option: OptionButton = row.get_node_or_null(
+				"HBoxContainer/SpriteOption"
+			)
+			if sprite_option != null and sprite_option.selected >= 0:
+				overrides[property_name] = String(
+					sprite_option.get_item_metadata(sprite_option.selected)
+				)
+			continue
+
 		var line_edit: LineEdit = row.get_node_or_null(
 			"HBoxContainer/LineEdit"
 		)
@@ -155,6 +171,91 @@ func _on_reset_pressed() -> void:
 func _set_status(message: String) -> void:
 	if status_label:
 		status_label.text = message
+
+
+## Bool rows become checkboxes, sprite IDs become dropdowns, and every other
+## editable type stays a text field.
+func _apply_row_value(row: Control, value: Variant, type: int) -> void:
+	var line_edit: LineEdit = row.get_node_or_null(
+		"HBoxContainer/LineEdit"
+	)
+	var check_box: CheckBox = row.get_node_or_null(
+		"HBoxContainer/CheckBox"
+	)
+	var property_name: String = row.get_meta("var_name", "")
+
+	if property_name == "realistic_sprite":
+		_apply_sprite_option(row, value)
+		return
+
+	if type == TYPE_BOOL:
+		if check_box == null:
+			check_box = CheckBox.new()
+			check_box.name = "CheckBox"
+			var row_box: HBoxContainer = row.get_node("HBoxContainer")
+			row_box.add_child(check_box)
+
+		check_box.button_pressed = bool(value)
+		if line_edit:
+			line_edit.visible = false
+		return
+
+	if check_box:
+		check_box.queue_free()
+	if line_edit:
+		line_edit.visible = true
+		line_edit.text = _value_to_text(value)
+
+
+func _apply_sprite_option(row: Control, value: Variant) -> void:
+	var line_edit: LineEdit = row.get_node_or_null(
+		"HBoxContainer/LineEdit"
+	)
+	var sprite_option: OptionButton = row.get_node_or_null(
+		"HBoxContainer/SpriteOption"
+	)
+
+	if sprite_option == null:
+		sprite_option = OptionButton.new()
+		sprite_option.name = "SpriteOption"
+		sprite_option.custom_minimum_size = Vector2(150.0, 0.0)
+		var row_box: HBoxContainer = row.get_node("HBoxContainer")
+		row_box.add_child(sprite_option)
+
+	if line_edit:
+		line_edit.visible = false
+
+	var wanted: String = String(value).strip_edges()
+	if wanted.is_empty():
+		wanted = String(SPRITE_LIBRARY.default_id())
+
+	var ids: PackedStringArray = SPRITE_LIBRARY.get_ids()
+	var selected: int = -1
+
+	sprite_option.clear()
+
+	# Keep the explicit single-sprite choices and add a per-agent random pick.
+	sprite_option.add_item("Random")
+	sprite_option.set_item_metadata(0, String(SPRITE_LIBRARY.RANDOM_ID))
+	if wanted == String(SPRITE_LIBRARY.RANDOM_ID):
+		selected = 0
+
+	for index in ids.size():
+		var item_index: int = sprite_option.item_count
+		sprite_option.add_item(ids[index])
+		sprite_option.set_item_metadata(item_index, ids[index])
+		if ids[index] == wanted:
+			selected = item_index
+
+	if selected == -1:
+		sprite_option.add_item(wanted)
+		sprite_option.set_item_metadata(
+			sprite_option.item_count - 1,
+			wanted
+		)
+		selected = sprite_option.item_count - 1
+
+	sprite_option.select(selected)
 
 
 func _is_editable_property_type(type: int) -> bool:

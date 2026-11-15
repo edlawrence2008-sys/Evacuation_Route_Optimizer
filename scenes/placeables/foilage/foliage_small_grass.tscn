@@ -1,10 +1,13 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://bg23tx5fuloi6"]
 
-[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_small_grass.png" id="1_x3lju"]
+[ext_resource type="Texture2D" uid="uid://u3iig5a5jco6" path="res://textures/placeables/foilage/foilage_small_grass.png" id="1_x3lju"]
+[ext_resource type="Script" uid="uid://b0idmtnwib52i" path="res://scripts/foliage_sway.gd" id="2_sway"]
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_x3lju"]
+[sub_resource type="BoxShape3D" id="BoxShape3D_bipu6"]
+size = Vector3(1, 1.125, 1)
 
 [node name="foliage_small_grass" type="Node3D" unique_id=1514011995 groups=["foliage", "placeables"]]
+script = ExtResource("2_sway")
 
 [node name="SelectionArea" type="Area3D" parent="." unique_id=617750204]
 collision_layer = 7
@@ -12,11 +15,11 @@ collision_mask = 3
 monitoring = false
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=1611931624]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
-shape = SubResource("BoxShape3D_x3lju")
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5625, 0)
+shape = SubResource("BoxShape3D_bipu6")
 
-[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1756332358]
-transform = Transform3D(-0.89614534, 0, -0.44376063, 0, 1, 0, 0.44376063, 0, -0.89614534, 0, 0.5625, 0)
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=957229304]
+transform = Transform3D(-0.8936851, 0, 0.44869477, 0, 1, 0, -0.44869477, 0, -0.8936851, 0, 0.5625, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true
@@ -24,8 +27,8 @@ alpha_cut = 1
 texture_filter = 0
 texture = ExtResource("1_x3lju")
 
-[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=967334425]
-transform = Transform3D(-0.44376048, 0, 0.8961454, 0, 1, 0, -0.8961454, 0, -0.44376048, 0, 0.5625, 0)
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=1376560703]
+transform = Transform3D(0.4486948, 0, 0.89368504, 0, 1, 0, -0.89368504, 0, 0.4486948, 0, 0.5625, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true

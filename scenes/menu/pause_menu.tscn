@@ -1,0 +1,311 @@
+[gd_scene format=3 uid="uid://crksyxvtcbhx6"]
+
+[ext_resource type="Script" uid="uid://c445hpnhsnl31" path="res://scenes/menu/pause_menu.gd" id="1_menu"]
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="2_btn"]
+[ext_resource type="FontFile" uid="uid://bncul3w2dl6p" path="res://font/Pixelta.ttf" id="3_menu_font"]
+[ext_resource type="FontFile" uid="uid://ck7sm3xakovrl" path="res://font/dogicapixel.ttf" id="4_body_font"]
+[ext_resource type="PackedScene" uid="uid://j3ihdqli5tqr" path="res://scenes/menu/settings/settings_menu.tscn" id="5_settings"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/graphics_menu.tscn" id="6_graphics"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/gameplay_menu.tscn" id="7_gameplay"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/audio_menu.tscn" id="8_audio"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/controls_menu.tscn" id="9_controls"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/water_menu.tscn" id="10_water"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_dim"]
+render_priority = 3
+transparency = 1
+cull_mode = 2
+no_depth_test = true
+shading_mode = 0
+albedo_color = Color(0, 0, 0, 0.985)
+
+[sub_resource type="QuadMesh" id="QuadMesh_dim"]
+size = Vector2(32, 32)
+
+[sub_resource type="StandardMaterial3D" id="Mat_stats"]
+render_priority = 4
+transparency = 1
+cull_mode = 2
+no_depth_test = true
+shading_mode = 0
+texture_filter = 0
+
+[sub_resource type="QuadMesh" id="QuadMesh_stats"]
+size = Vector2(1.45, 1.45)
+
+[sub_resource type="StandardMaterial3D" id="Mat_thumb"]
+render_priority = 4
+transparency = 1
+cull_mode = 2
+no_depth_test = true
+shading_mode = 0
+texture_filter = 0
+
+[sub_resource type="QuadMesh" id="QuadMesh_thumb"]
+size = Vector2(0.95, 0.95)
+
+[node name="PauseMenu" type="Node3D" unique_id=237577611]
+process_mode = 3
+script = ExtResource("1_menu")
+
+[node name="Dim" type="MeshInstance3D" parent="." unique_id=186253625]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.6)
+material_override = SubResource("Mat_dim")
+cast_shadow = 0
+mesh = SubResource("QuadMesh_dim")
+
+[node name="Panel" type="Node3D" parent="." unique_id=1926233761]
+transform = Transform3D(0.9961947, 0.0030416911, -0.087102644, 0, 0.99939084, 0.034899496, 0.08715574, -0.034766693, 0.9955879, 0, 0, -1.9)
+
+[node name="MainTitle" type="Label3D" parent="Panel" unique_id=1130428772]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.85, 0.1, 0.05)
+pixel_size = 0.0036
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.96, 0.97, 1, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "MENU"
+font = ExtResource("3_menu_font")
+font_size = 200
+outline_size = 8
+
+[node name="SectionTitle" type="Label3D" parent="Panel" unique_id=1102820897]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0.05)
+pixel_size = 0.0026
+no_depth_test = true
+render_priority = 5
+modulate = Color(1, 0.88, 0.25, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "SETTINGS"
+font = ExtResource("3_menu_font")
+font_size = 48
+outline_size = 6
+
+[node name="MainPanel" type="Node3D" parent="Panel" unique_id=1082222124]
+
+[node name="Resume" parent="Panel/MainPanel" unique_id=388853646 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.55, 0.035)
+action = &"resume"
+caption = "RESUME"
+label_font = ExtResource("3_menu_font")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Settings" parent="Panel/MainPanel" unique_id=2114392593 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.27, 0.035)
+action = &"settings"
+caption = "SETTINGS"
+label_font = ExtResource("3_menu_font")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Statistics" parent="Panel/MainPanel" unique_id=855235010 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.01, 0.035)
+action = &"stats"
+caption = "STATISTICS"
+label_font = ExtResource("3_menu_font")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Maps" parent="Panel/MainPanel" unique_id=1171150350 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.29, 0.035)
+action = &"saves"
+caption = "SAVES"
+label_font = ExtResource("3_menu_font")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Quit" parent="Panel/MainPanel" unique_id=917628256 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.57, 0.035)
+action = &"quit"
+caption = "QUIT"
+label_font = ExtResource("3_menu_font")
+label_size = 56
+label_pixel = 0.0023
+label_left = true
+dim_unselected = true
+base_color = Color(0.3, 0.08, 0.06, 0)
+hover_color = Color(0.58, 0.13, 0.13, 0.35)
+selected_color = Color(0.58, 0.13, 0.13, 0.7)
+
+[node name="SettingsPanel" parent="Panel" unique_id=1827545814 instance=ExtResource("5_settings")]
+
+[node name="GraphicsPanel" parent="Panel" unique_id=457177108 instance=ExtResource("6_graphics")]
+
+[node name="GameplayPanel" parent="Panel" unique_id=1273769368 instance=ExtResource("7_gameplay")]
+
+[node name="AudioPanel" parent="Panel" unique_id=460464531 instance=ExtResource("8_audio")]
+
+[node name="ControlsPanel" parent="Panel" unique_id=1641530034 instance=ExtResource("9_controls")]
+
+[node name="WaterPanel" parent="Panel" unique_id=1185267418 instance=ExtResource("10_water")]
+
+[node name="StatisticsPanel" type="Node3D" parent="Panel" unique_id=1927227174]
+visible = false
+
+[node name="StatsMap" type="MeshInstance3D" parent="Panel/StatisticsPanel" unique_id=1711222785]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.05, 0.03)
+material_override = SubResource("Mat_stats")
+cast_shadow = 0
+mesh = SubResource("QuadMesh_stats")
+
+[node name="StatsText" type="Label3D" parent="Panel/StatisticsPanel" unique_id=750529578]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.72, 0.55, 0.04)
+pixel_size = 0.0024
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.85, 0.93, 0.96, 1)
+text = "Statistics"
+font = ExtResource("4_body_font")
+font_size = 18
+horizontal_alignment = 0
+vertical_alignment = 0
+line_spacing = 6.0
+autowrap_mode = 3
+width = 520.0
+
+[node name="ModeHeat" parent="Panel/StatisticsPanel" unique_id=1318032347 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, -0.8, 0.035)
+action = &"mode_heat"
+caption = "Congestion Heat"
+label_size = 22
+
+[node name="ModeRoute" parent="Panel/StatisticsPanel" unique_id=766054737 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, -0.8, 0.035)
+action = &"mode_route"
+caption = "Evacuation Route"
+label_size = 22
+
+[node name="ModeTopo" parent="Panel/StatisticsPanel" unique_id=591479332 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, -0.96, 0.035)
+action = &"mode_topo"
+caption = "Topography"
+label_size = 22
+
+[node name="StatsBack" parent="Panel/StatisticsPanel" unique_id=1535454258 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, -0.96, 0.035)
+action = &"back_main"
+caption = "Back"
+label_size = 22
+
+[node name="SavesPanel" type="Node3D" parent="Panel" unique_id=1781424098]
+visible = false
+
+[node name="SaveList" type="Node3D" parent="Panel/SavesPanel" unique_id=157823095]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.4, 0.035)
+
+[node name="NewMap" parent="Panel/SavesPanel" unique_id=1395742453 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0.74, 0.035)
+action = &"new_map"
+caption = "New Map..."
+label_size = 24
+
+[node name="WorldType" parent="Panel/SavesPanel" unique_id=136614253 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0.58, 0.035)
+action = &"world_type"
+caption = "World: Blank Platform"
+label_size = 20
+
+[node name="PageLabel" type="Label3D" parent="Panel/SavesPanel" unique_id=1280640653]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, -0.2, 0.04)
+pixel_size = 0.0018
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.7, 0.8, 0.85, 1)
+text = "No saves yet"
+font = ExtResource("4_body_font")
+font_size = 20
+
+[node name="StatusLabel" type="Label3D" parent="Panel/SavesPanel" unique_id=398770466]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, -0.97, 0.04)
+pixel_size = 0.0016
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.7, 0.8, 0.85, 1)
+font = ExtResource("4_body_font")
+font_size = 18
+
+[node name="Thumbnail" type="MeshInstance3D" parent="Panel/SavesPanel" unique_id=1621921201]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.72, 0.35, 0.03)
+material_override = SubResource("Mat_thumb")
+cast_shadow = 0
+mesh = SubResource("QuadMesh_thumb")
+
+[node name="SaveDetails" type="Label3D" parent="Panel/SavesPanel" unique_id=256225360]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.72, -0.22, 0.04)
+pixel_size = 0.0022
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.85, 0.93, 0.96, 1)
+text = "Select a save"
+font = ExtResource("4_body_font")
+font_size = 18
+horizontal_alignment = 0
+vertical_alignment = 0
+line_spacing = 5.0
+autowrap_mode = 3
+width = 360.0
+
+[node name="LeftActions" type="Node3D" parent="Panel/SavesPanel" unique_id=552493494]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="Rename" parent="Panel/SavesPanel/LeftActions" unique_id=768864641 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.34, 0)
+action = &"rename"
+caption = "Rename"
+label_size = 24
+
+[node name="Save" parent="Panel/SavesPanel/LeftActions" unique_id=420399152 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+action = &"save"
+caption = "Save"
+
+[node name="SaveAs" parent="Panel/SavesPanel/LeftActions" unique_id=824707774 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.66, 0)
+action = &"save_as"
+caption = "Save As"
+
+[node name="Load" parent="Panel/SavesPanel/LeftActions" unique_id=1949032858 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.82, 0)
+action = &"load"
+caption = "Load Selected"
+
+[node name="RightActions" type="Node3D" parent="Panel/SavesPanel" unique_id=1162907072]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+
+[node name="Duplicate" parent="Panel/SavesPanel/RightActions" unique_id=725784749 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+action = &"duplicate"
+caption = "Duplicate"
+
+[node name="Delete" parent="Panel/SavesPanel/RightActions" unique_id=1598864417 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.66, 0)
+action = &"delete"
+caption = "Delete"
+base_color = Color(0.2, 0.07, 0.07, 0.96)
+hover_color = Color(0.58, 0.13, 0.13, 1)
+
+[node name="Back" parent="Panel/SavesPanel/RightActions" unique_id=1957148520 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.82, 0)
+action = &"back_main"
+caption = "Back"

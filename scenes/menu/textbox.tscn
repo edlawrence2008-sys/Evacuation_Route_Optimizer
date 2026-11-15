@@ -1,0 +1,40 @@
+[gd_scene format=3 uid="uid://cys8w602y7xh"]
+
+[ext_resource type="Texture2D" uid="uid://du6sllc86b86m" path="res://textures/menu/textbox_body.png" id="1_xkatp"]
+[ext_resource type="Texture2D" uid="uid://ba5ni1hnybhcw" path="res://textures/menu/textbox_rightside.png" id="2_odgdj"]
+[ext_resource type="Texture2D" uid="uid://82s0m1bc7c65" path="res://textures/menu/textbox_leftside.png" id="3_7xf84"]
+[ext_resource type="Texture2D" uid="uid://ccdu1vjpufufn" path="res://textures/menu/textbox_arrow.png" id="4_47l4m"]
+
+[node name="Textbox" type="Control" unique_id=1608130382]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = -1152.0
+offset_bottom = -648.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="textbox_body" type="Sprite2D" parent="." unique_id=1829865306]
+z_index = 2
+scale = Vector2(1.5, 1.5)
+texture = ExtResource("1_xkatp")
+
+[node name="textbox_rightside" type="Sprite2D" parent="." unique_id=920300114]
+z_index = 2
+position = Vector2(147, 0)
+scale = Vector2(1.5, 1.5)
+texture = ExtResource("2_odgdj")
+
+[node name="textbox_leftside" type="Sprite2D" parent="." unique_id=741092904]
+z_index = 2
+position = Vector2(-147, 0)
+scale = Vector2(1.5, 1.5)
+texture = ExtResource("3_7xf84")
+
+[node name="textbox_arrow" type="Sprite2D" parent="." unique_id=1428064295]
+z_index = 2
+position = Vector2(0, 93)
+rotation = -1.5707964
+scale = Vector2(1.5, 1.5)
+texture = ExtResource("4_47l4m")
