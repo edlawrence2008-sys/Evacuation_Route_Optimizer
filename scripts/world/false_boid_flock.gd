@@ -193,9 +193,7 @@ func _ensure_leader_sprite() -> void:
 	_leader_sprite.frame = 0
 	_leader_sprite.pixel_size = leader_sprite_pixel_size
 	_leader_sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	# Unshaded keeps the silhouette dark regardless of time of day. A shaded
-	# sprite picks up enough light at noon/day-cycle peaks to wash out.
-	_leader_sprite.shaded = false
+	_leader_sprite.shaded = true
 	_leader_sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	_leader_sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	_leader_sprite.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

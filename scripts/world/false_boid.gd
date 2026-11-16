@@ -140,9 +140,7 @@ func _build_sprite() -> void:
 	_sprite.frame = 0
 	_sprite.pixel_size = sprite_pixel_size
 	_sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	# Unshaded silhouette: the bird texture is already near-black, and lighting
-	# at bright times of day was washing it to white.
-	_sprite.shaded = false
+	_sprite.shaded = true
 	_sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	_sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	_sprite.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

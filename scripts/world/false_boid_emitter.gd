@@ -133,9 +133,6 @@ func _build_particles() -> void:
 
 	var material := StandardMaterial3D.new()
 	material.albedo_texture = texture
-	# Keep the flock a dark silhouette at every time of day. The shaded pass was
-	# picking up enough daylight to make the birds look white/washed out.
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	material.alpha_scissor_threshold = 0.5
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES

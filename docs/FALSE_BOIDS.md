@@ -98,10 +98,11 @@ circling flock flickering). During migration this makes the whole cloud face
 the travel direction; during local swarming it is a best-effort average. The
 promoted birds retain accurate per-bird facing.
 
-The promoted birds, leader sprite, and particle draw material are **unshaded**.
-The texture is already a dark silhouette; letting the day/night sun light it
-made the flock wash out to white at bright times of day. Unshaded keeps the
-birds consistently dark.
+The promoted birds, leader sprite, and particle draw material remain **shaded**,
+so they pick up the world sun/ambient. The texture is a dark silhouette; under
+bright daylight the lit result can appear lighter/whitish. That is the intended
+shaded look; switching those materials to unshaded is the fallback if a
+consistent silhouette is preferred later.
 
 Placeable perches can be removed at runtime. The flock keeps a cached perch list
 between its 1 Hz scans, so it prunes freed entries (`_prune_perches`) before any
