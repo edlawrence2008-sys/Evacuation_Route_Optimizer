@@ -63,6 +63,9 @@ func _quota_remaining_count() -> int:
 	if npc_scene == null or not GlobalData.is_spawning_enabled:
 		return 0
 
+	if GlobalData.is_spawning_paused:
+		return 0
+
 	if not GlobalData.is_global_quota_available():
 		return 0
 
@@ -115,8 +118,17 @@ func _spawn_batch() -> void:
 
 func _spawn_one(spawn_pos: Vector3) -> void:
 	var npc := npc_scene.instantiate() as Node3D
-	_get_spawn_container().add_child(npc)
-	npc.global_position = spawn_pos
+	var container := _get_spawn_container()
+
+	# Place the body before it enters the tree. Adding at the origin first makes
+	# the physics server see every new agent at the world origin for a tick, so
+	# an exit or trigger volume near (0, 0, 0) fires a false entry for it.
+	if container is Node3D:
+		npc.position = (container as Node3D).to_local(spawn_pos)
+	else:
+		npc.position = spawn_pos
+
+	container.add_child(npc)
 
 	if spawn_section.is_empty():
 		_spawned_count += 1

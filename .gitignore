@@ -1,3 +1,4 @@
 # Godot 4+ specific ignores
 .godot/
+.godot_corrupt_backup/
 .mcp/

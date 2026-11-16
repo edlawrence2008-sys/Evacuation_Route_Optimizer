@@ -8,6 +8,9 @@ var npcs_spawned: int = 0
 ## Default evacuation behaviour inherited by newly spawned members.
 var evacuation_mode: bool = true
 var is_spawning_enabled: bool = false # Default to false so they don't spawn directly on start
+## Paused is distinct from stopped: counters, quotas, and the current run stay
+## intact, but spawners stop emitting until resumed.
+var is_spawning_paused: bool = false
 
 ## Exported Agent/Member properties applied to every new spawn and, on Apply,
 ## to every live agent. Owned by the Agents category in the inventory.
@@ -15,6 +18,52 @@ var agent_overrides: Dictionary = {}
 
 ## Persistent dialogue/story flags, e.g. whether Consul's intro was seen.
 var dialogue_flags: Dictionary = {}
+
+# ============================================================
+# SIMULATION CLOCK & DETERMINISM
+# ============================================================
+
+## Monotonic physics time for the current session. Advancing this only in
+## _physics_process means pausing the game, a menu, or a frame hitch cannot
+## inflate measured evacuation times. All run metrics must use sim_now().
+var sim_time: float = 0.0
+
+## Seed used for the current run. Change it (or call reset_determinism) to
+## reproduce a run exactly. Agent-local streams are derived from
+## (rng_seed, agent_serial), so spawn order no longer depends on instance IDs.
+@export var rng_seed: int = 12345
+var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+var _agent_serial: int = 0
+
+
+func _ready() -> void:
+	rng.seed = rng_seed
+	seed(rng_seed) # legacy randf_range() callers become reproducible too
+
+
+func _physics_process(delta: float) -> void:
+	# Paused trees do not tick, so sim_time stops while the game is paused.
+	sim_time += delta
+
+
+func sim_now() -> float:
+	return sim_time
+
+
+## Monotonic serial assigned on agent spawn. Used as the deterministic
+## right-of-way tie-break instead of the engine instance id.
+func claim_agent_serial() -> int:
+	_agent_serial += 1
+	return _agent_serial
+
+
+func reset_determinism(seed_value: int = -1) -> void:
+	if seed_value >= 0:
+		rng_seed = seed_value
+
+	_agent_serial = 0
+	rng.seed = rng_seed
+	seed(rng_seed)
 
 
 ## Release static scene caches while the rendering server is still alive.
@@ -39,6 +88,8 @@ signal npc_spawned(total_count: int)
 signal spawning_reset() # Signal to reset local spawner states
 signal spawning_started()
 signal spawning_stopped()
+signal spawning_paused()
+signal spawning_resumed()
 
 func register_npc_spawned() -> void:
 	npcs_spawned += 1
@@ -204,6 +255,7 @@ func increment_section_spawn_count(section: String) -> void:
 	_section_spawn_counts[section] = current + 1
 
 func reset_all() -> void:
+	kill_all_npcs()
 	_independent_quotas.clear()
 	_section_registrations.clear()
 	_section_spawn_counts.clear()
@@ -212,26 +264,91 @@ func reset_all() -> void:
 	npcs_spawned = 0
 	npcs_evacuated = 0
 	is_spawning_enabled = false
+	is_spawning_paused = false
+
+## Pauses or resumes spawning without changing quotas, counters, determinism,
+## or the live crowd. A paused run is still "started"; Start clears the pause.
+func set_spawning_paused(paused: bool) -> void:
+	if is_spawning_paused == paused:
+		return
+
+	is_spawning_paused = paused
+
+	if paused:
+		spawning_paused.emit()
+	else:
+		spawning_resumed.emit()
+
+
+## Removes every live NPC from the scene. The group is cleared immediately so
+## counters and spawners see the empty crowd on the same frame; queue_free then
+## releases the nodes at the end of the frame.
+func kill_all_npcs() -> int:
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return 0
+
+	var killed: int = 0
+
+	for npc: Node in tree.get_nodes_in_group("npc"):
+		if npc == null or not is_instance_valid(npc):
+			continue
+
+		npc.remove_from_group("npc")
+		npc.queue_free()
+		killed += 1
+
+	return killed
+
 
 func start_spawning() -> void:
+	var was_paused: bool = is_spawning_paused
+	is_spawning_paused = false
+
+	if was_paused:
+		spawning_resumed.emit()
+
 	if is_spawning_enabled:
 		return
+	# Every run starts from the same seed and agent numbering, so a repeated
+	# run on an unchanged layout is bit-for-bit reproducible. If agents from a
+	# previous run are still alive, keep the serial counter monotonic instead:
+	# two live agents must never share the right-of-way tie-break id.
+	var tree: SceneTree = get_tree()
+
+	if tree == null or tree.get_nodes_in_group("npc").is_empty():
+		reset_determinism()
+	else:
+		rng.seed = rng_seed
+		seed(rng_seed)
+
+	clear_spawn_reservations()
 	is_spawning_enabled = true
 	spawning_started.emit()
 
 func stop_spawning() -> void:
+	var was_paused: bool = is_spawning_paused
+	is_spawning_paused = false
+
+	if was_paused:
+		spawning_resumed.emit()
+
 	if not is_spawning_enabled:
 		return
 	is_spawning_enabled = false
 	spawning_stopped.emit()
 
 func reset_spawning() -> void:
-	# Keeps sections and quotas intact, but resets current spawn counters and state
+	# A reset is a new run: stop spawning, remove every live NPC, and reset
+	# counters. Quotas and section registrations stay intact.
+	kill_all_npcs()
 	_section_spawn_counts.clear()
 	clear_spawn_reservations()
 	npcs_spawned = 0
 	npcs_evacuated = 0
 	is_spawning_enabled = false
+	is_spawning_paused = false
 	spawning_reset.emit()
 
 func _registration_key(spawner: Object) -> int:

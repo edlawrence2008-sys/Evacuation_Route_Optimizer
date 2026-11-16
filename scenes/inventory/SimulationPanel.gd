@@ -5,6 +5,7 @@ extends VBoxContainer
 
 @onready var start_button: Button = $Actions/Start
 @onready var reset_button: Button = $Actions/Reset
+@onready var pause_spawning: CheckButton = $Actions/PauseSpawning
 @onready var evac_mode: CheckButton = $EvacuationMode
 @onready var quota_spin: SpinBox = $Limits/QuotaValue
 @onready var cap_spin: SpinBox = $Limits/CapValue
@@ -21,6 +22,7 @@ var _status_accum: float = 0.0
 func _ready() -> void:
 	start_button.pressed.connect(_on_start_pressed)
 	reset_button.pressed.connect(_on_reset_pressed)
+	pause_spawning.toggled.connect(_on_pause_spawning_toggled)
 	evac_mode.toggled.connect(_on_evac_mode_toggled)
 	quota_spin.value_changed.connect(_on_quota_changed)
 	cap_spin.value_changed.connect(_on_cap_changed)
@@ -32,6 +34,8 @@ func _ready() -> void:
 	GlobalData.spawning_reset.connect(_on_run_state_changed)
 	GlobalData.spawning_started.connect(_on_run_state_changed)
 	GlobalData.spawning_stopped.connect(_on_run_state_changed)
+	GlobalData.spawning_paused.connect(_on_run_state_changed)
+	GlobalData.spawning_resumed.connect(_on_run_state_changed)
 	GlobalData.npc_spawned.connect(_on_npc_count_changed)
 	GlobalData.npc_evacuated.connect(_on_npc_count_changed)
 
@@ -52,6 +56,8 @@ func _sync_from_state() -> void:
 	quota_spin.set_value_no_signal(GlobalData.global_spawn_quota)
 	cap_spin.set_value_no_signal(GlobalData.global_unit_cap)
 	evac_mode.set_pressed_no_signal(GlobalData.evacuation_mode)
+	pause_spawning.set_pressed_no_signal(GlobalData.is_spawning_paused)
+	pause_spawning.disabled = not GlobalData.is_spawning_enabled
 
 	if populator:
 		member_count_spin.set_value_no_signal(populator.member_count)
@@ -74,6 +80,11 @@ func _on_start_pressed() -> void:
 
 func _on_reset_pressed() -> void:
 	GlobalData.reset_spawning()
+	_update_status()
+
+
+func _on_pause_spawning_toggled(paused: bool) -> void:
+	GlobalData.set_spawning_paused(paused)
 	_update_status()
 
 
@@ -131,7 +142,7 @@ func _on_populate_pressed() -> void:
 
 
 func _on_run_state_changed() -> void:
-	_update_status()
+	_sync_from_state()
 
 
 func _on_npc_count_changed(_total: int) -> void:
@@ -145,7 +156,12 @@ func _update_status(keep_message: bool = false) -> void:
 	var quota: int = GlobalData.get_total_max_spawns()
 	var quota_text: String = "∞" if quota < 0 else str(quota)
 	var alive: int = get_tree().get_nodes_in_group("npc").size()
-	var state: String = "spawning" if GlobalData.is_spawning_enabled else "stopped"
+	var state: String = "spawning"
+
+	if GlobalData.is_spawning_paused:
+		state = "paused"
+	elif not GlobalData.is_spawning_enabled:
+		state = "stopped"
 
 	status_label.text = (
 		"Spawned %d / %s | Alive %d / %d | %s"

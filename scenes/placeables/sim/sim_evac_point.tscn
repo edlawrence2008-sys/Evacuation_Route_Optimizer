@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://d03jrxasvb0w5" path="res://scenes/evac_point.gd" id="1_kqe3y"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_scb4q"]
-radius = 3.0
+radius = 1.0
 height = 2.0
 
 [sub_resource type="CylinderMesh" id="CylinderMesh_g4v7s"]

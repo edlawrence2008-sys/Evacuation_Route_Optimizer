@@ -1,0 +1,18 @@
+[gd_scene format=3 uid="uid://c2jbj2yb04d3u"]
+
+[ext_resource type="Script" uid="uid://der5lybbttgf" path="res://scripts/world/false_boid_emitter.gd" id="1_emitter"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_feeder"]
+albedo_color = Color(0.28, 0.2, 0.12, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="BoxMesh_feeder"]
+size = Vector3(0.8, 0.7, 0.8)
+
+[node name="FalseBoidEmitter" type="Node3D" unique_id=1568135190 groups=["placeables"]]
+script = ExtResource("1_emitter")
+
+[node name="Feeder" type="MeshInstance3D" parent="." unique_id=1336268074]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+material_override = SubResource("StandardMaterial3D_feeder")
+mesh = SubResource("BoxMesh_feeder")

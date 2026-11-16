@@ -16,6 +16,8 @@ var _total_stuck_time: float = 0.0
 var _total_stuck_strikes: int = 0
 var _run_started_ms: int = 0
 var _last_activity_ms: int = 0
+var _total_pre_movement: float = 0.0
+var _peak_contact_force: float = 0.0
 
 
 func _ready() -> void:
@@ -24,10 +26,19 @@ func _ready() -> void:
 
 
 func begin_run() -> void:
+	_reset_contact_stats()
+
 	if _run_started_ms == 0:
 		_run_started_ms = _now_ms()
 
 	_last_activity_ms = _now_ms()
+
+
+func _reset_contact_stats() -> void:
+	var crowd := get_node_or_null("/root/CrowdManager")
+
+	if crowd != null and crowd.has_method("reset_contact_force_stats"):
+		crowd.reset_contact_force_stats()
 
 
 func reset_run() -> void:
@@ -40,8 +51,11 @@ func reset_run() -> void:
 	_total_distance = 0.0
 	_total_stuck_time = 0.0
 	_total_stuck_strikes = 0
+	_total_pre_movement = 0.0
+	_peak_contact_force = 0.0
 	_run_started_ms = 0
 	_last_activity_ms = 0
+	_reset_contact_stats()
 	metrics_changed.emit()
 
 
@@ -129,6 +143,13 @@ func register_evacuation(npc: Node, exit_node: Node3D) -> void:
 		_total_stuck_time += float(snapshot["stuck_time"])
 	if snapshot.has("stuck_strikes"):
 		_total_stuck_strikes += int(snapshot["stuck_strikes"])
+	if snapshot.has("pre_movement_wait"):
+		_total_pre_movement += float(snapshot["pre_movement_wait"])
+	if snapshot.has("peak_contact_force"):
+		_peak_contact_force = maxf(
+			_peak_contact_force,
+			float(snapshot["peak_contact_force"])
+		)
 
 	var duration: float = maxf(0.0, float(now - spawn_ms) / 1000.0)
 	var exit_key: String = _exit_key(exit_node)
@@ -212,6 +233,12 @@ func get_summary() -> Dictionary:
 		and alive == 0
 	)
 
+	var contact_stats: Dictionary = {}
+	var crowd := get_node_or_null("/root/CrowdManager")
+
+	if crowd != null and crowd.has_method("get_contact_force_stats"):
+		contact_stats = crowd.get_contact_force_stats()
+
 	return {
 		"running": running,
 		"complete": complete,
@@ -228,6 +255,9 @@ func get_summary() -> Dictionary:
 		"average_distance": _total_distance / float(maxi(evacuated, 1)),
 		"total_stuck_time": _total_stuck_time,
 		"total_stuck_strikes": _total_stuck_strikes,
+		"average_pre_movement": _total_pre_movement / float(maxi(evacuated, 1)),
+		"peak_contact_force": _peak_contact_force,
+		"contact_force_stats": contact_stats,
 		"average_time": timing["average"],
 		"median_time": timing["median"],
 		"p95_time": timing["p95"],
@@ -303,4 +333,6 @@ func _exit_label(exit_node: Node3D) -> String:
 
 
 func _now_ms() -> int:
-	return Time.get_ticks_msec()
+	# Physics-clock milliseconds. Wall time keeps running through pauses and
+	# frame hitches, which used to inflate measured evacuation times.
+	return int(round(GlobalData.sim_now() * 1000.0))

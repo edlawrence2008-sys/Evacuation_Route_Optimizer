@@ -97,6 +97,26 @@ func _refresh() -> void:
 			float(summary.get("peak_density", 0.0)),
 		]
 	)
+	var contact: Dictionary = summary.get("contact_force_stats", {})
+
+	if not contact.is_empty() and int(contact.get("samples", 0)) > 0:
+		var above: Dictionary = contact.get("agent_seconds_above", {})
+		lines.append(
+			"Contact: peak %.2f kN at %.1f s   p99 loaded: %.2f kN"
+			% [
+				float(contact.get("peak_force", 0.0)) / 1000.0,
+				float(contact.get("peak_time", 0.0)),
+				float(contact.get("p99_loaded", 0.0)) / 1000.0,
+			]
+		)
+		lines.append(
+			"Compression: >2 kN %.2f agent-s, >3 kN %.2f agent-s (%.3f%% samples in contact)"
+			% [
+				float(above.get("2000", 0.0)),
+				float(above.get("3000", 0.0)),
+				float(contact.get("nonzero_fraction", 0.0)) * 100.0,
+			]
+		)
 	lines.append(
 		"Distance: %.0f m total (%.1f m avg)   Stuck: %s (%d strikes)"
 		% [

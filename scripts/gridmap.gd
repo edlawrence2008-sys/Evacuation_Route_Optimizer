@@ -12,12 +12,24 @@ signal congestion_changed(affected_cells: Array[Vector3i])
 
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
 
-@export var agent_radius: float = 1.0
+## Body radius used for navigation clearance checks. The spawned NPC body is a
+## 0.25 m sphere; matching it here keeps path validation honest.
+@export var agent_radius: float = 0.25
 ## Side clearance used by smoothed-path ground checks. Keep this near the NPC
 ## body radius so a shortcut cannot put half the body over a ledge.
 @export var path_ground_radius: float = 0.3
 @export var wall_penalty_max: float = 2.0
 @export var gap_penalty_max: float = 3.0
+
+@export_group("Social Force Walls")
+## Wall repulsion strength A_w, newtons (Helbing & Molnar 1995 use ~2000).
+@export var wall_repulsion_a: float = 2000.0
+## Wall repulsion range B_w, metres.
+@export var wall_repulsion_b: float = 0.08
+## How far from the body centre walls are sampled, metres. Wall force is
+## negligible beyond ~0.6 m with B_w = 0.08 m.
+@export var wall_query_radius: float = 0.8
+@export var wall_force_enabled: bool = true
 
 @export_group("Navigation Costs")
 ## Multiplier for cells whose top block is a stair. Values below 1 make
@@ -140,6 +152,13 @@ const NO_CELL: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 ## Vertical offsets probed when looking for ground under a point.
 const GROUND_PROBE_DY: Array[int] = [1, 0, -1, -2]
 
+## Vertical tolerance, in cell heights, for "there is ground here". It must
+## cover one full step: an agent origin sits 0.25 m below the floor surface and
+## a one-block step raises the navigation point by 1 m, so the difference from
+## the origin is 1.25 m. 1.35 leaves a small margin while still rejecting a
+## two-block face. The smaller side tolerance used for ledge checks is separate.
+const GROUND_HEIGHT_TOLERANCE: float = 1.35
+
 ## Chunks are CHUNK_SIZE x CHUNK_SIZE columns in X/Z and span every Y level.
 const CHUNK_SIZE: int = 16
 const CHUNK_DATA_VERSION: int = 1
@@ -183,6 +202,19 @@ const DEBUG_MAX_FLOW_SEGMENTS: int = 6000
 ## target_cell -> { cell: next_cell }
 var _flow_fields: Dictionary = {}
 
+## target_cell -> { cell: cost } from the same bake. Used for exit-choice
+## route lengths (metres, including congestion weights at bake time).
+var _flow_costs: Dictionary = {}
+
+## Quantised world position -> wall repulsion force (newtons). Cached between
+## navigation changes because 600 agents share far fewer cells than positions.
+var _wall_force_cache: Dictionary = {}
+## 0.2 m buckets: fine enough to follow the exponential force profile.
+const WALL_CACHE_QUANTISATION: float = 5.0
+## Sized above the walkable area of a typical map at 0.2 m buckets so the cache
+## does not churn through a full clear every few seconds at 600 agents.
+const WALL_FORCE_CACHE_LIMIT: int = 65536
+
 ## target_cell -> FlowBakeJob (fields still being baked across frames)
 var _bake_jobs: Dictionary = {}
 
@@ -198,6 +230,13 @@ var _congestion_heat: Dictionary = {}
 ## Cells whose congestion weight changed since the last signal emission.
 var _congestion_dirty: Dictionary = {}
 var _congestion_accum: float = 0.0
+## Cells whose A* weight still needs updating. A synchronized jam can heat
+## hundreds of cells in one frame; applying every weight immediately caused
+## 4-6 ms spikes. They are flushed in small batches instead.
+var _congestion_weight_pending: Dictionary = {}
+var _congestion_weight_accum: float = 0.0
+const CONGESTION_WEIGHT_FLUSH_INTERVAL: float = 0.1
+const CONGESTION_WEIGHT_FLUSH_BUDGET: int = 64
 
 ## Moves: 4 straight, 4 flat diagonals, and 8 one-block stair steps.
 ## Flat diagonals are only allowed when both cells beside them are walkable
@@ -237,6 +276,11 @@ func _ready() -> void:
 
 	add_to_group("grid_map")
 
+	# Any navigation change can move or remove a wall, so the cached wall force
+	# is only valid until the next change.
+	if not navigation_changed.is_connected(_on_navigation_changed_clear_wall_cache):
+		navigation_changed.connect(_on_navigation_changed_clear_wall_cache)
+
 	if auto_generate_stairs:
 		_generate_auto_stairs()
 
@@ -261,6 +305,12 @@ func _exit_tree() -> void:
 	if is_instance_valid(_debug_mesh_instance):
 		_debug_mesh_instance.queue_free()
 		_debug_mesh_instance = null
+
+
+func _on_navigation_changed_clear_wall_cache(
+	_affected: Array[Vector3i]
+) -> void:
+	_wall_force_cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +473,11 @@ func initialize_navigation() -> void:
 	_nav_chunks.clear()
 	_dirty_chunks.clear()
 	_flow_fields.clear()
+	_flow_costs.clear()
 	_bake_jobs.clear()
+	_wall_force_cache.clear()
+	_congestion_weight_pending.clear()
+	_congestion_weight_accum = 0.0
 	_rebuild_surface_profiles()
 	_build_step_lengths()
 
@@ -634,12 +688,12 @@ func _heat_cell(cell: Vector3i, amount: float) -> void:
 		if not keys.is_empty():
 			var oldest: Vector3i = keys[0]
 			_congestion_heat.erase(oldest)
-			_apply_nav_point_weight(oldest, 0.0)
+			_congestion_weight_pending[oldest] = true
 			_congestion_dirty[oldest] = true
 
 	var next_heat: float = minf(1.0, current + amount)
 	_congestion_heat[cell] = next_heat
-	_apply_nav_point_weight(cell, next_heat)
+	_congestion_weight_pending[cell] = true
 	_congestion_dirty[cell] = true
 
 
@@ -691,6 +745,30 @@ func clear_congestion() -> void:
 		_congestion_dirty[cell] = true
 
 	_congestion_heat.clear()
+	_congestion_weight_pending.clear()
+	_congestion_weight_accum = 0.0
+
+
+## Applies queued congestion weights in bounded batches. Keeping this separate
+## from heat updates means a crowd-wide jam cannot monopolise one frame while
+## still letting A* see the heat almost immediately (64 cells per 0.1 s).
+func _flush_congestion_weights(delta: float) -> void:
+	if _congestion_weight_pending.is_empty():
+		return
+
+	_congestion_weight_accum += delta
+
+	if _congestion_weight_accum < CONGESTION_WEIGHT_FLUSH_INTERVAL:
+		return
+
+	_congestion_weight_accum = 0.0
+	var keys: Array = _congestion_weight_pending.keys()
+	var budget: int = mini(keys.size(), CONGESTION_WEIGHT_FLUSH_BUDGET)
+
+	for index: int in range(budget):
+		var cell: Vector3i = keys[index]
+		_congestion_weight_pending.erase(cell)
+		_apply_nav_point_weight(cell)
 
 
 func _advance_congestion(delta: float) -> void:
@@ -720,12 +798,12 @@ func _advance_congestion(delta: float) -> void:
 
 		if absf(heat - float(_congestion_heat[cell])) > 0.005:
 			_congestion_heat[cell] = heat
-			_apply_nav_point_weight(cell, heat)
+			_congestion_weight_pending[cell] = true
 			_congestion_dirty[cell] = true
 
 	for cell: Vector3i in expired:
 		_congestion_heat.erase(cell)
-		_apply_nav_point_weight(cell, 0.0)
+		_congestion_weight_pending[cell] = true
 		_congestion_dirty[cell] = true
 
 	if _congestion_dirty.is_empty():
@@ -863,6 +941,117 @@ func has_flow_field(target_world: Vector3) -> bool:
 	var target_cell: Vector3i = _resolve_nav_cell(target_world)
 
 	return target_cell != NO_CELL and _flow_fields.has(target_cell)
+
+
+## Route length in metres from a world position to a destination, taken from
+## the baked flow-field costs. Returns -1 when no field exists yet, so callers
+## can fall back without paying for an A* query per exit per agent.
+func get_path_distance(from_world: Vector3, to_world: Vector3) -> float:
+	var target_cell: Vector3i = _resolve_nav_cell(to_world)
+
+	if target_cell == NO_CELL:
+		return -1.0
+
+	var costs: Variant = _flow_costs.get(target_cell)
+
+	if costs == null:
+		return -1.0
+
+	var from_cell: Vector3i = _resolve_nav_cell(from_world)
+
+	if from_cell == NO_CELL:
+		return -1.0
+
+	if not costs.has(from_cell):
+		return -1.0
+
+	return float(costs[from_cell])
+
+
+## Repulsive force from nearby walls, newtons. Sampled in eight directions out
+## to wall_query_radius against the voxel grid, then converted to acceleration
+## by the caller's mass. A single block with nothing above it is a climbable
+## step (the nav grid links it and the kinematic probe climbs it), so it does
+## not contribute force; stacked blocks do. The result is cached per quantised
+## position so the per-tick cost for a crowd is a Dictionary lookup.
+func get_wall_acceleration(
+	world_pos: Vector3,
+	agent_radius_value: float,
+	mass: float
+) -> Vector3:
+	if not wall_force_enabled or mass <= 0.0:
+		return Vector3.ZERO
+
+	# Body radius is part of the key: the sampled force depends on it, so two
+	# agents with different radii must not share an entry.
+	var key := Vector4i(
+		roundi(world_pos.x * WALL_CACHE_QUANTISATION),
+		roundi(world_pos.y * WALL_CACHE_QUANTISATION),
+		roundi(world_pos.z * WALL_CACHE_QUANTISATION),
+		roundi(agent_radius_value * 1000.0)
+	)
+
+	var force: Variant = _wall_force_cache.get(key)
+
+	if force == null:
+		force = _compute_wall_force(world_pos, agent_radius_value)
+
+		# Positions keep changing as agents walk, so an unbounded cache would
+		# grow for the whole run. Dropping it only costs the next recompute.
+		if _wall_force_cache.size() >= WALL_FORCE_CACHE_LIMIT:
+			_wall_force_cache.clear()
+
+		_wall_force_cache[key] = force
+
+	return (force as Vector3) / mass
+
+
+func _compute_wall_force(
+	world_pos: Vector3,
+	agent_radius_value: float
+) -> Vector3:
+	var force: Vector3 = Vector3.ZERO
+	var reach: float = maxf(wall_query_radius, agent_radius_value + 0.15)
+	var step: float = 0.2
+	var exponent_cap: float = 8.0
+
+	for index in range(8):
+		var angle: float = TAU * float(index) / 8.0
+		var direction := Vector3(cos(angle), 0.0, sin(angle))
+		var distance: float = maxf(0.05, agent_radius_value * 0.5)
+
+		while distance <= reach:
+			var sample: Vector3 = world_pos + direction * distance
+			var cell: Vector3i = world_to_cell(sample)
+
+			# A single block with nothing above it is a one-block step, which
+			# the navigation graph treats as walkable and the kinematic probe
+			# climbs. Repelling it would stop agents ~0.4 m short of a step they
+			# are supposed to take, so keep scanning past it. Two or more blocks
+			# stacked (or a block directly above the sample height) is a wall.
+			var solid_at_sample: bool = has_block(cell)
+			var solid_above: bool = has_block(cell + Vector3i.UP)
+
+			if solid_above:
+				# Psychological wall repulsion: A_w exp((r - d_w) / B_w).
+				var exponent: float = (
+					(agent_radius_value - distance)
+					/ maxf(wall_repulsion_b, 1e-4)
+				)
+				var magnitude: float = (
+					wall_repulsion_a
+					* exp(clampf(exponent, -20.0, exponent_cap))
+				)
+				force -= direction * magnitude
+				break
+
+			if solid_at_sample:
+				distance += step
+				continue
+
+			distance += step
+
+	return force
 
 
 ## Resolves a world position to its navigation cell (NO_CELL when outside).
@@ -1055,6 +1244,7 @@ func _finish_bake_job(job: FlowBakeJob) -> void:
 		return
 
 	_flow_fields[job.target] = job.next_cell
+	_flow_costs[job.target] = job.costs
 	_enforce_flow_field_cache_limit()
 	flow_field_baked.emit(job.target)
 
@@ -1126,9 +1316,14 @@ func _enforce_flow_field_cache_limit() -> void:
 			return
 
 		_flow_fields.erase(oldest_key)
+		_flow_costs.erase(oldest_key)
 
 
 func _invalidate_flow_fields(affected_cells: Array[Vector3i]) -> void:
+	# Wall force depends on block layout, so drop it even when no flow fields
+	# exist yet.
+	_wall_force_cache.clear()
+
 	if not enable_flow_fields:
 		return
 
@@ -1147,6 +1342,7 @@ func _invalidate_flow_fields(affected_cells: Array[Vector3i]) -> void:
 
 	for target_cell in stale:
 		_flow_fields.erase(target_cell)
+		_flow_costs.erase(target_cell)
 
 	# A half-baked field can be stale too. Drop it; the next request restarts the bake.
 	var stale_jobs: Array[Vector3i] = []
@@ -1236,6 +1432,7 @@ func _process(_delta: float) -> void:
 
 	_update_debug_paths(_delta)
 	_advance_bake_jobs()
+	_flush_congestion_weights(_delta)
 	_advance_congestion(_delta)
 
 	if request_queue.is_empty():
@@ -1524,7 +1721,7 @@ func _segment_has_ground(from_world: Vector3, to_world: Vector3) -> bool:
 
 func is_ground_supported(
 	world_pos: Vector3,
-	height_tolerance: float = 1.1
+	height_tolerance: float = GROUND_HEIGHT_TOLERANCE
 ) -> bool:
 	return _has_ground_near(to_local(world_pos), height_tolerance)
 
@@ -1534,7 +1731,7 @@ func is_ground_supported(
 func is_ground_path_supported(
 	from_world: Vector3,
 	to_world: Vector3,
-	height_tolerance: float = 1.1
+	height_tolerance: float = GROUND_HEIGHT_TOLERANCE
 ) -> bool:
 	var from_local: Vector3 = to_local(from_world)
 	var to_local_pos: Vector3 = to_local(to_world)
@@ -1561,7 +1758,7 @@ func is_ground_path_supported(
 ## pass a smaller value so a shortcut cannot step off a ledge.
 func _has_ground_near(
 	local_pos: Vector3,
-	height_tolerance: float = 1.1
+	height_tolerance: float = GROUND_HEIGHT_TOLERANCE
 ) -> bool:
 	var base_cell: Vector3i = local_to_map(local_pos)
 
@@ -2574,6 +2771,28 @@ func get_populated_chunks() -> Array[Vector2i]:
 		result.append(chunk)
 
 	return result
+
+
+## Chunks that currently have built navigation. This is the active/loaded set
+## the false-boid leaders are allowed to explore.
+func get_active_chunks() -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+
+	for chunk: Vector2i in _nav_chunks:
+		result.append(chunk)
+
+	return result
+
+
+func get_chunk_highest_block_y(chunk: Vector2i) -> int:
+	var cells: Dictionary = _chunk_cells.get(chunk, {})
+	var highest: int = -2147483647
+
+	for cell: Vector3i in cells:
+		if cell.y > highest:
+			highest = cell.y
+
+	return highest if highest != -2147483647 else 0
 
 
 func get_chunk_cell_count(chunk: Vector2i) -> int:

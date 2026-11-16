@@ -14,30 +14,34 @@ extends CharacterBody3D
 
 @export_group("Personality & Stats")
 @export var npc_name: String = "Villager"
-@export var movement_speed: float = 3.0
+## Mean free-walking speed, m/s. Weidmann (1993) reports 1.34 m/s with a
+## 0.26 m/s standard deviation for mixed pedestrian traffic; that is the
+## default distribution (see use_desired_speed_distribution).
+@export var movement_speed: float = 1.34
 @export var enable_energy: bool = false
 @export var energy: float = 100.0
 @export var hunger: float = 0.0
 
 @export_group("Individuality & Variety")
-@export var max_extra_speed: float = 2.5
-@export var max_extra_lane_offset: float = 0.5
-@export var max_extra_separation_radius: float = 0.5
-@export var max_extra_separation_push: float = 1.0
+## Legacy uniform speed spread. Only used when
+## use_desired_speed_distribution is false.
+@export var max_extra_speed: float = 0.0
+## Extra lateral path offset (metres). Defaults to zero because lanes are an
+## emergent property of the social force model, not an authored offset.
+@export var max_extra_lane_offset: float = 0.0
 
 @export_group("Crowd Dynamics")
 @export var enable_crowd_damage: bool = false
 @export var crowd_threshold: int = 10
 @export var crush_damage_per_sec: float = 0.5
 @export var max_neighbors: int = 16
-@export var max_vertical_neighbor_distance: float = 1.5
-## When enabled, a higher-instance-ID agent backs off to break a crowd
-## deadlock. Disable to make agents keep their line and rely on collision.
+## When enabled, a higher-serial agent backs off to break a crowd deadlock.
+## Disable to make agents keep their line and rely on the social forces.
 @export var allow_yielding: bool = true
 
 @export_group("Collision")
-## When enabled, a stuck NPC may briefly stop colliding with other NPCs.
-## When disabled, NPCs always collide with each other.
+## Only used on the engine-collision path. In the default kinematic mode NPCs
+## carry collision_mask = 0 and rely on the SFM contact force instead.
 @export var allow_collision_disable: bool = false:
 	set(value):
 		allow_collision_disable = value
@@ -65,6 +69,12 @@ extends CharacterBody3D
 	set(value):
 		sprite_walk_fps = maxf(value, 1.0)
 		_sync_sprite_settings()
+## How often the sprite's facing/animation state is refreshed, seconds. The
+## node transform still follows the body every frame; this only throttles the
+## per-agent visual bookkeeping (row selection, ground offset, frame changes).
+@export_range(0.0, 0.5, 0.01) var sprite_update_interval: float = 0.1:
+	set(value):
+		sprite_update_interval = maxf(value, 0.0)
 ## Local-space nudge applied on top of the per-frame floor alignment.
 ## Use Y to lift or sink the sprite.
 @export var sprite_offset: Vector3 = Vector3.ZERO:
@@ -101,8 +111,6 @@ extends CharacterBody3D
 
 @export_group("Path Diversity")
 @export var lane_offset_strength: float = 0.0
-@export var separation_push: float = 2.0
-@export var separation_radius: float = 1.0
 
 @export_group("AI State")
 @export var is_evacuee: bool = true
@@ -113,8 +121,8 @@ extends CharacterBody3D
 @export var failed_evac_point_cooldown: float = 5.0
 
 @export_group("Movement & Physics")
-## When false, this agent never uses the automatic obstacle hop or the random
-## stuck-hop. It still follows paths and falls normally.
+## Only used on the engine-collision path. Kinematic agents climb one-block
+## steps with the ground probe and never use the obstacle/random hop.
 @export var allow_jumping: bool = true
 @export var jump_force: float = 6.0
 @export var jump_push_force: float = 3.0
@@ -123,6 +131,77 @@ extends CharacterBody3D
 @export var stuck_progress_ratio: float = 0.25
 @export var obstacle_hop_cooldown: float = 0.4
 @export var waypoint_arrival_distance: float = 0.3
+
+@export_group("Social Force Model")
+## Collision radius of the body used by the crowd solver, metres. Must match
+## the collider in Member.tscn.
+@export_range(0.05, 1.0, 0.01) var body_radius: float = 0.25
+## Body mass, kg. Used for force -> acceleration and contact impulse.
+@export_range(20.0, 200.0, 1.0) var body_mass: float = 78.0
+## Relaxation time tau, seconds. Helbing et al. use ~0.5 s; it sets how
+## quickly an agent reaches its desired velocity.
+@export_range(0.05, 2.0, 0.01) var relaxation_time: float = 0.5
+## Sample the individual desired speed from a truncated normal distribution
+## instead of using movement_speed verbatim.
+@export var use_desired_speed_distribution: bool = true
+@export var desired_speed_std: float = 0.26
+@export var desired_speed_min: float = 0.6
+@export var desired_speed_max: float = 2.2
+## Multiplier on the crowd solver's psychological force. 1 = as solved.
+@export_range(0.0, 2.0, 0.01) var social_force_scale: float = 1.0
+## Multiplier on the wall repulsion. 1 = as configured on the grid map.
+@export_range(0.0, 2.0, 0.01) var wall_force_scale: float = 1.0:
+	set(value):
+		wall_force_scale = value
+		_wall_force_dirty = true
+## How often wall repulsion is re-sampled, seconds. The force changes smoothly
+## with distance, so 0.1 s (10 Hz) is indistinguishable from per-tick sampling.
+@export_range(0.0, 0.5, 0.01) var wall_force_update_interval: float = 0.1
+## When true, NPCs keep colliding with each other's physics bodies and the
+## social contact force is disabled. When false (default), NPC-NPC contact is
+## handled by SFM and the engine only resolves world geometry.
+@export var use_physics_contact: bool = false:
+	set(value):
+		use_physics_contact = value
+		_refresh_movement_mode()
+		_apply_collision_policy()
+## Hard cap on horizontal speed (m/s) so a dense pile cannot launch an agent.
+@export var max_horizontal_speed: float = 4.0
+## Kinematic movement mode. The agent is moved by its own ground probe instead
+## of move_and_slide() against world collision. Required for 600 agents: on a
+## voxel GridMap, 600 CharacterBody3D sweeps cost ~20 ms/frame, while one
+## downward ray per agent is a fraction of that.
+@export var use_kinematic_movement: bool = true:
+	set(value):
+		use_kinematic_movement = value
+		_refresh_movement_mode()
+		_apply_collision_policy()
+## Highest step (metres) the kinematic probe climbs in one tick. The nav grid
+## connects one-block step-up edges (NEIGHBOR_OFFSETS includes y = +1), and
+## slabs/stairs can present a full 1 m surface, so this must cover one voxel.
+## 1.05 keeps a small float margin; a two-block face is still a wall.
+@export var kinematic_step_height: float = 1.05
+## Largest drop the probe snaps down in one tick. Keeping this below the step
+## height lets a 1 m ledge be a short fall rather than an instant snap.
+@export var kinematic_snap_down_height: float = 0.65
+
+@export_group("Pre-movement")
+## Time from the alarm to the first movement, seconds. Sampled lognormal so
+## the distribution is right-skewed like observed pre-movement times.
+@export var pre_movement_enabled: bool = true
+@export var pre_movement_mean: float = 6.0
+@export var pre_movement_sigma: float = 0.7
+@export var pre_movement_max: float = 45.0
+
+@export_group("Exit Choice")
+## Utility = -beta_d * path_distance - beta_q * queue_density
+##           + beta_visible * line_of_sight + familiarity.
+@export var exit_choice_beta_distance: float = 0.012
+@export var exit_choice_beta_queue: float = 3.0
+@export var exit_choice_beta_visible: float = 1.5
+@export var exit_choice_familiarity: float = 0.8
+## Softmax temperature used to sample the exit. 0 = always the best utility.
+@export_range(0.0, 2.0, 0.01) var exit_choice_temperature: float = 0.35
 
 
 # ============================================================
@@ -161,12 +240,63 @@ var _flow_target_cell: Vector3i = Vector3i.ZERO
 var _flow_wait: float = 0.0
 
 var actual_movement_speed: float = 4.0
-var actual_separation_radius: float = 1.0
-var actual_separation_push: float = 2.0
 
 var lane_offset: float = 0.0
-var _crowd_push: Vector3 = Vector3.ZERO
 var local_density: float = 0.0
+
+# --- Social Force Model state ---------------------------------------------
+## Monotonic agent id assigned at spawn. Used for the deterministic
+## right-of-way tie-break and as part of the agent RNG seed.
+var agent_serial: int = 0
+## Per-agent random stream. Seeded from (GlobalData.rng_seed, agent_serial) so
+## spawn order and instance ids never influence behaviour.
+var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
+## Desired (free) walking speed sampled once at spawn.
+var desired_speed: float = 1.34
+## Unit vector the agent wants to walk along. Read by the crowd solver for
+## the anisotropy weight.
+var _desired_direction: Vector3 = Vector3.ZERO
+## Acceleration (m/s^2) produced by the crowd solver this tick.
+var _social_accel: Vector3 = Vector3.ZERO
+## Acceleration (m/s^2) from wall repulsion this tick.
+var _wall_accel: Vector3 = Vector3.ZERO
+## Sum of contact normal forces this tick, N. Instrumentation and crush model.
+var contact_force: float = 0.0
+var contact_overlaps: int = 0
+## Pre-movement delay sampled at spawn and the time already spent waiting.
+var _pre_movement_delay: float = 0.0
+var _pre_movement_elapsed: float = 0.0
+var _has_started_moving: bool = false
+## Additive random walk accumulated from social forces, for stuck detection.
+var _force_displacement: float = 0.0
+
+# --- Kinematic movement state --------------------------------------------
+## Cached movement-mode flag, refreshed by the export setters so hot paths do
+## not recompute it thousands of times per frame.
+var _kinematic_active: bool = true
+## True when the last ground probe found support under the agent.
+var _kinematic_grounded: bool = false
+## Origin height that corresponds to standing on the last probed ground.
+var _kinematic_stand_y: float = 0.0
+## Distance from the node origin to the bottom of the collision sphere.
+var _foot_offset: float = 0.25
+## Reused ray query so 600 agents do not allocate one per tick.
+var _ground_query: PhysicsRayQueryParameters3D = null
+## Single-entry ground-probe cache. Agents move a few centimetres per tick, so
+## re-probing the same 0.2 m bucket every tick is wasted work. Only used while
+## grounded; airborne agents need a fresh hit to detect the landing surface.
+var _ground_probe_cache_valid: bool = false
+var _ground_probe_cache_key: Vector3i = Vector3i.ZERO
+var _ground_probe_cache_hit: Dictionary = {}
+const GROUND_PROBE_CACHE_HORIZONTAL: float = 0.15
+const GROUND_PROBE_CACHE_VERTICAL: float = 0.4
+## Wall repulsion is smooth relative to walking, so sampling it at 10 Hz is
+## visually indistinguishable and removes a large per-tick dictionary lookup.
+var _wall_force_accum: float = 0.0
+var _wall_force_dirty: bool = true
+## Sprite animation runs at 5 FPS; updating its visual state every physics tick
+## is unnecessary. The transform still follows the body every frame.
+var _sprite_update_accum: float = 0.0
 
 var _stuck_strikes: int = 0
 var _stuck_sample_index: int = -1
@@ -195,11 +325,15 @@ var _sprite_hurt_tween: Tween = null
 var _distance_travelled: float = 0.0
 var _stuck_time_total: float = 0.0
 var _peak_density: float = 0.0
+var _peak_contact_force: float = 0.0
 var _last_position: Vector3 = Vector3.ZERO
 var _has_last_position: bool = false
 
 const LOGIC_TICK_RATE: float = 0.15
 const FALL_CHECK_INTERVAL: float = 0.25
+## Substeps used to integrate the social force acceleration. Three substeps at
+## a 30 Hz physics rate gives an effective 90 Hz integration for contact.
+const SFM_SUBSTEPS: int = 3
 ## A pushed agent this far off the path requests a fresh path instead of
 ## walking backwards to the waypoint it already passed.
 const CORNER_REPATH_DISTANCE: float = 0.75
@@ -248,6 +382,17 @@ var _evacuation_failures: int = 0
 
 func _ready() -> void:
 	add_to_group("npc")
+	# Identity and randomness are assigned before anything else so every
+	# behaviour derived from them is reproducible for a given run seed.
+	agent_serial = GlobalData.claim_agent_serial()
+	_rng.seed = hash([GlobalData.rng_seed, agent_serial])
+	_foot_offset = _measure_foot_offset()
+	_ground_query = PhysicsRayQueryParameters3D.new()
+	_ground_query.collision_mask = 1
+	_ground_query.collide_with_bodies = true
+	_ground_query.collide_with_areas = false
+	_refresh_ground_exclusions()
+	_refresh_movement_mode()
 	_apply_collision_policy()
 
 	crowd_manager = get_node_or_null("/root/CrowdManager")
@@ -259,6 +404,7 @@ func _ready() -> void:
 
 	_sanitize_agent_settings()
 	_refresh_derived_stats()
+	_sample_pre_movement()
 	_apply_visual_mode()
 
 	if evacuation_manager and evacuation_manager.has_method("register_npc"):
@@ -274,7 +420,10 @@ func _ready() -> void:
 		)
 
 	is_evacuee = GlobalData.evacuation_mode
-	logic_tick_timer = randf_range(0.0, LOGIC_TICK_RATE)
+	# Pre-movement: the agent stays IDLE until this timer expires. IDLE is
+	# ticked by _process_npc_brain, so a pause or a hitch does not shorten it.
+	wait_timer = _pre_movement_delay
+	logic_tick_timer = _rng.randf_range(0.0, LOGIC_TICK_RATE)
 	call_deferred("_begin_initial_action")
 
 
@@ -283,6 +432,9 @@ func _begin_initial_action() -> void:
 	await get_tree().process_frame
 
 	if not is_inside_tree() or current_state == State.DEAD:
+		return
+
+	if wait_timer > 0.0:
 		return
 
 	choose_next_action()
@@ -319,10 +471,6 @@ func _sanitize_agent_settings() -> void:
 	movement_speed = maxf(0.0, movement_speed)
 	max_extra_speed = maxf(0.0, max_extra_speed)
 	max_extra_lane_offset = maxf(0.0, max_extra_lane_offset)
-	max_extra_separation_radius = maxf(0.0, max_extra_separation_radius)
-	max_extra_separation_push = maxf(0.0, max_extra_separation_push)
-	separation_radius = maxf(0.0, separation_radius)
-	separation_push = maxf(0.0, separation_push)
 	lane_offset_strength = maxf(0.0, lane_offset_strength)
 	movement_rate = maxf(1.0, movement_rate)
 	jump_force = maxf(0.0, jump_force)
@@ -340,42 +488,83 @@ func _sanitize_agent_settings() -> void:
 	crowd_threshold = maxi(0, crowd_threshold)
 	crush_damage_per_sec = maxf(0.0, crush_damage_per_sec)
 	max_neighbors = maxi(1, max_neighbors)
-	max_vertical_neighbor_distance = maxf(
-		0.0,
-		max_vertical_neighbor_distance
-	)
 	sprite_pixel_size = maxf(sprite_pixel_size, 0.0001)
 	sprite_walk_fps = maxf(sprite_walk_fps, 1.0)
 	sprite_rim_strength = clampf(sprite_rim_strength, 0.0, 1.0)
 	sprite_bounce_strength = maxf(sprite_bounce_strength, 0.0)
 	sprite_normal_strength = maxf(sprite_normal_strength, 0.0)
+	body_radius = clampf(body_radius, 0.05, 1.0)
+	body_mass = maxf(1.0, body_mass)
+	relaxation_time = maxf(0.05, relaxation_time)
+	desired_speed_std = maxf(0.0, desired_speed_std)
+	desired_speed_min = maxf(0.05, desired_speed_min)
+	desired_speed_max = maxf(desired_speed_min, desired_speed_max)
+	max_horizontal_speed = maxf(0.5, max_horizontal_speed)
+	kinematic_step_height = maxf(0.1, kinematic_step_height)
+	kinematic_snap_down_height = clampf(
+		kinematic_snap_down_height,
+		0.05,
+		kinematic_step_height
+	)
+	wall_force_update_interval = maxf(0.0, wall_force_update_interval)
+	sprite_update_interval = maxf(0.0, sprite_update_interval)
+	pre_movement_mean = maxf(0.0, pre_movement_mean)
+	pre_movement_sigma = maxf(0.0, pre_movement_sigma)
+	pre_movement_max = maxf(0.0, pre_movement_max)
+	exit_choice_beta_distance = maxf(0.0, exit_choice_beta_distance)
+	exit_choice_beta_queue = maxf(0.0, exit_choice_beta_queue)
+	exit_choice_beta_visible = maxf(0.0, exit_choice_beta_visible)
+	exit_choice_temperature = maxf(0.0, exit_choice_temperature)
 
 
 func _refresh_derived_stats() -> void:
-	actual_movement_speed = maxf(0.0, movement_speed) + randf_range(
-		0.0,
-		maxf(0.0, max_extra_speed)
-	)
-	actual_separation_radius = maxf(0.0, separation_radius) + randf_range(
-		0.0,
-		maxf(0.0, max_extra_separation_radius)
-	)
-	actual_separation_push = maxf(0.0, separation_push) + randf_range(
-		0.0,
-		maxf(0.0, max_extra_separation_push)
-	)
+	# Weidmann-style free-walking speed distribution. The mean is the export
+	# value; the spread is a truncated normal around it.
+	if use_desired_speed_distribution:
+		desired_speed = clampf(
+			maxf(0.0, movement_speed)
+			+ _rng.randfn(0.0, desired_speed_std),
+			desired_speed_min,
+			desired_speed_max
+		)
+	else:
+		desired_speed = clampf(
+			maxf(0.0, movement_speed)
+			+ _rng.randf_range(0.0, maxf(0.0, max_extra_speed)),
+			desired_speed_min,
+			desired_speed_max
+		)
+
+	actual_movement_speed = desired_speed
 
 	var cell_size: float = gridmap.cell_size.x if gridmap else 1.0
 	var effective_lane_strength: float = (
 		maxf(0.0, lane_offset_strength)
-		+ randf_range(0.0, maxf(0.0, max_extra_lane_offset))
+		+ _rng.randf_range(0.0, maxf(0.0, max_extra_lane_offset))
 	)
 
 	lane_offset = (
-		randf_range(-1.0, 1.0)
+		_rng.randf_range(-1.0, 1.0)
 		* effective_lane_strength
 		* cell_size
 	)
+
+
+## Lognormal pre-movement time, truncated at pre_movement_max. A lognormal is
+## the usual empirical shape for "time until the first move" (right-skewed,
+## non-negative). mean is the arithmetic mean of the untruncated distribution.
+func _sample_pre_movement() -> void:
+	_pre_movement_elapsed = 0.0
+	_has_started_moving = false
+
+	if not pre_movement_enabled or pre_movement_mean <= 0.0:
+		_pre_movement_delay = 0.0
+		return
+
+	var sigma: float = pre_movement_sigma
+	var mu: float = log(pre_movement_mean) - 0.5 * sigma * sigma
+	var sample: float = exp(mu + sigma * _rng.randfn(0.0, 1.0))
+	_pre_movement_delay = clampf(sample, 0.0, pre_movement_max)
 
 
 ## Switches between the 3D model + LeanAnimator and the baked sprite sheet.
@@ -524,10 +713,13 @@ func _physics_process(delta: float) -> void:
 
 	_movement_accum += delta
 	var interval: float = 1.0 / maxf(movement_rate, 1.0)
-	var update_steering: bool = _movement_accum >= interval
+	# The epsilon keeps an exact 30 Hz movement_rate from skipping ticks through
+	# float accumulation, which would otherwise halve the covered distance.
+	var update_steering: bool = _movement_accum + 0.0001 >= interval
 	var step: float = _movement_accum
 	var wants_to_move: bool = false
 	var move_direction: Vector3 = Vector3.ZERO
+	var speed_scale: float = 1.0
 
 	if update_steering:
 		_movement_accum = 0.0
@@ -537,15 +729,15 @@ func _physics_process(delta: float) -> void:
 		# Another character's body is never valid ground: an agent balanced on
 		# someone's head counts as airborne so it cannot walk, hop or steer
 		# from on top of the crowd.
-		var is_grounded: bool = (
-			is_on_floor()
-			and _character_floor_body() == null
-		)
+		var is_grounded: bool = _is_grounded()
 
-		if not is_grounded:
-			velocity.y -= gravity * step
-		elif velocity.y < 0.0:
-			velocity.y = 0.0
+		# Kinematic mode integrates gravity in _move_kinematic(), including
+		# stair support, so it must not double-apply here.
+		if not _uses_kinematic_movement():
+			if not is_grounded:
+				velocity.y -= gravity * step
+			elif velocity.y < 0.0:
+				velocity.y = 0.0
 
 		if _flow_active:
 			if (
@@ -591,100 +783,65 @@ func _physics_process(delta: float) -> void:
 			_maybe_avoid_congestion(move_direction)
 			_last_move_direction = move_direction.normalized()
 
-		var crowd_adjustment: Vector3 = Vector3.ZERO
-		var speed_scale: float = 1.0
-
 		if _yield_timer > 0.0:
-			# Deadlock yield: back away diagonally so the lower-priority agent
-			# can get through without disabling NPC collision.
+			# Deadlock yield: the lower-priority agent steps aside. The social
+			# force model then resolves the physical squeeze without turning off
+			# NPC-NPC collision.
 			wants_to_move = true
 			move_direction = _yield_direction
 			speed_scale = YIELD_SPEED_SCALE
-		elif wants_to_move and move_direction.length_squared() > 0.001:
-			# Only apply sideways crowd separation while following a path.
-			# This prevents separation forces from directly reversing navigation.
-			var lateral_push: Vector3 = (
-				_crowd_push
-				- move_direction * _crowd_push.dot(move_direction)
-			)
-
-			crowd_adjustment = lateral_push.limit_length(
-				actual_movement_speed * 0.35
-			)
-
-		if not wants_to_move:
+		elif not wants_to_move:
 			_last_move_direction = Vector3.ZERO
 
+		# Direction the solver uses for the anisotropy weight. Zero when the
+		# agent has no goal, which makes it isotropic (and therefore easier to
+		# push around) while queueing.
+		_desired_direction = Vector3.ZERO
+
+		if wants_to_move and move_direction.length_squared() > 0.0001:
+			_desired_direction = move_direction.normalized()
+
 		var desired_velocity: Vector3 = (
-			move_direction * actual_movement_speed * speed_scale
-			+ crowd_adjustment
+			_desired_direction * actual_movement_speed * speed_scale
 		)
 
-		if is_grounded and desired_velocity.length_squared() > 0.01:
-			desired_velocity = _guard_ledge(
-				desired_velocity,
-				move_direction
-			)
-
-		if is_grounded:
-			if desired_velocity.length_squared() > 0.01:
-				velocity.x = lerpf(
-					velocity.x,
-					desired_velocity.x,
-					15.0 * step
-				)
-				velocity.z = lerpf(
-					velocity.z,
-					desired_velocity.z,
-					15.0 * step
-				)
-
-				var look_direction: Vector3 = Vector3(
-					velocity.x,
-					0.0,
-					velocity.z
-				)
-
-				if look_direction.length_squared() > 0.1:
-					look_at(global_position + look_direction, Vector3.UP)
-			else:
-				velocity.x = lerpf(velocity.x, 0.0, 15.0 * step)
-				velocity.z = lerpf(velocity.z, 0.0, 15.0 * step)
-		else:
-			velocity.x = lerpf(
-				velocity.x,
-				desired_velocity.x,
-				6.0 * step
-			)
-			velocity.z = lerpf(
-				velocity.z,
-				desired_velocity.z,
-				6.0 * step
-			)
+		_update_wall_force(step)
+		_steer_with_social_forces(
+			step,
+			desired_velocity,
+			is_grounded
+		)
 
 	# Movement runs every physics tick. Steering may run at movement_rate, but
-	# move_and_slide() always integrates with the physics delta; skipping a tick
+	# the integrator always advances by the physics delta; skipping a tick
 	# silently halves the distance the NPC can cover.
 	var pre_move_position: Vector3 = global_position
-	var pre_move_grounded: bool = is_on_floor()
+	var pre_move_grounded: bool = _is_grounded()
 
-	# Agents never stand on other characters (or the player): a body balanced
-	# on someone else's collider slides off instead of becoming a step.
-	_slide_off_character_floor(delta)
-
-	move_and_slide()
-	_keep_on_walkable_ground(pre_move_position, pre_move_grounded)
+	if _uses_kinematic_movement():
+		_move_kinematic(delta)
+	else:
+		# Agents never stand on other characters (or the player): a body
+		# balanced on someone else's collider slides off instead of becoming
+		# a step.
+		_slide_off_character_floor(delta)
+		move_and_slide()
+		_keep_on_walkable_ground(pre_move_position, pre_move_grounded)
 
 	if realistic_sprites_mode and _sprite_visual != null:
-		_sprite_visual.call("tick", delta)
+		_sprite_update_accum += delta
+
+		if (
+			sprite_update_interval <= 0.0
+			or _sprite_update_accum >= sprite_update_interval
+		):
+			_sprite_visual.call("tick", _sprite_update_accum)
+			_sprite_update_accum = 0.0
 
 	_track_movement_distance()
 
 	if update_steering:
-		var grounded_now: bool = (
-			is_on_floor()
-			and _character_floor_body() == null
-		)
+		var grounded_now: bool = _is_grounded()
 		if wants_to_move and grounded_now and _yield_timer <= 0.0:
 			_try_obstacle_hop(move_direction)
 			_update_stuck_detection(step, wants_to_move, grounded_now)
@@ -694,6 +851,240 @@ func _physics_process(delta: float) -> void:
 		if logic_tick_timer >= LOGIC_TICK_RATE:
 			_process_npc_brain(logic_tick_timer)
 			logic_tick_timer = 0.0
+
+
+## Social Force Model integration (Helbing & Molnar 1995):
+##
+##   dv/dt = (v_desired - v) / tau + f_social / m + f_wall / m
+##
+## The crowd solver already returns a force/mass acceleration for every other
+## agent (evaluated once per pair, applied symmetrically). This function adds
+## the driving term and the wall term and integrates with a few substeps so a
+## stiff contact force cannot tunnel through a body in one 33 ms tick.
+func _steer_with_social_forces(
+	step: float,
+	desired_velocity: Vector3,
+	is_grounded: bool
+) -> void:
+	if step <= 0.0:
+		return
+
+	var force_accel: Vector3 = (
+		_social_accel * social_force_scale
+		+ _wall_accel * wall_force_scale
+	)
+
+	if not is_grounded:
+		# Airborne agents keep only limited air control: people cannot push a
+		# body that has already left the ground.
+		velocity.x = lerpf(
+			velocity.x,
+			desired_velocity.x,
+			6.0 * step
+		)
+		velocity.z = lerpf(
+			velocity.z,
+			desired_velocity.z,
+			6.0 * step
+		)
+		return
+
+	var substep: float = step / float(SFM_SUBSTEPS)
+
+	for _i in range(SFM_SUBSTEPS):
+		var horizontal: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+		var acceleration: Vector3 = (
+			(desired_velocity - horizontal) / relaxation_time
+			+ force_accel
+		)
+
+		horizontal += acceleration * substep
+		horizontal = horizontal.limit_length(max_horizontal_speed)
+		velocity.x = horizontal.x
+		velocity.z = horizontal.z
+
+	var travel: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+
+	if travel.length_squared() > 0.0025:
+		# Kinematic movement already refuses unsupported steps and cancels
+		# horizontal motion at a ledge, so the segment probe is redundant there
+		# and was one of the most expensive per-tick operations.
+		if not _kinematic_active:
+			travel = _guard_ledge(travel, _desired_direction)
+		velocity.x = travel.x
+		velocity.z = travel.z
+
+	if travel.length_squared() > 0.1:
+		look_at(global_position + travel, Vector3.UP)
+
+
+func _update_wall_force(step: float) -> void:
+	if wall_force_scale <= 0.0:
+		_wall_accel = Vector3.ZERO
+		return
+
+	_wall_force_accum += step
+
+	if (
+		not _wall_force_dirty
+		and _wall_force_accum < wall_force_update_interval
+	):
+		return
+
+	_wall_force_accum = 0.0
+	_wall_force_dirty = false
+	_wall_accel = Vector3.ZERO
+
+	var grid: NavGridMap = _get_gridmap()
+
+	if grid == null or not grid.has_method("get_wall_acceleration"):
+		return
+
+	# Sample at the body centre, not the foot origin. The origin sits inside the
+	# floor voxel, so a foot-height ray reports the floor as a wall (large,
+	# symmetric forces that cancel) and misses the first wall block above it.
+	# foot_offset + body_radius is the collision sphere's centre.
+	var body_centre: Vector3 = global_position + Vector3.UP * (_foot_offset + body_radius)
+	_wall_accel = grid.get_wall_acceleration(
+		body_centre,
+		body_radius,
+		body_mass
+	)
+
+
+## Grounded state used by movement and stuck detection. In kinematic mode this
+## comes from the ground probe because the body does not collide with geometry.
+func _is_grounded() -> bool:
+	if _uses_kinematic_movement():
+		return _kinematic_grounded
+
+	return is_on_floor() and _character_floor_body() == null
+
+
+## Downward ray used by kinematic movement. Returns the raw hit dictionary.
+func _probe_ground(at: Vector3) -> Dictionary:
+	if _ground_query == null:
+		return {}
+
+	var world := get_world_3d()
+
+	if world == null:
+		return {}
+
+	# Start above the tallest legal step so a too-high surface is detected as a
+	# wall instead of silently starting the ray inside the block.
+	var lift: float = kinematic_step_height + _foot_offset + 0.1
+	_ground_query.from = at + Vector3(0.0, lift, 0.0)
+	_ground_query.to = at - Vector3(0.0, 4.0, 0.0)
+
+	return world.direct_space_state.intersect_ray(_ground_query)
+
+
+## Cached ground probe for the kinematic path. A walking agent moves a few
+## centimetres per tick, so re-probing the same 0.15 m bucket every tick is
+## wasted work. Airborne agents bypass the cache because they need a fresh hit
+## to detect the landing surface.
+func _probe_ground_cached(at: Vector3) -> Dictionary:
+	if not _kinematic_active or not _kinematic_grounded:
+		return _probe_ground(at)
+
+	var key := Vector3i(
+		roundi(at.x / GROUND_PROBE_CACHE_HORIZONTAL),
+		roundi(at.y / GROUND_PROBE_CACHE_VERTICAL),
+		roundi(at.z / GROUND_PROBE_CACHE_HORIZONTAL)
+	)
+
+	if _ground_probe_cache_valid and key == _ground_probe_cache_key:
+		return _ground_probe_cache_hit
+
+	var hit: Dictionary = _probe_ground(at)
+	_ground_probe_cache_key = key
+	_ground_probe_cache_hit = hit
+	_ground_probe_cache_valid = true
+	return hit
+
+
+## Characters are never walkable ground. The player body lives on the world
+## collision layer (its layer mask includes layer 1), so a bare layer-1 ground
+## ray would let agents snap onto the player. Exclude explicit character RIDs.
+func _refresh_ground_exclusions() -> void:
+	if _ground_query == null:
+		return
+
+	var exclusions: Array[RID] = [get_rid()]
+	var player := get_tree().get_first_node_in_group("Player")
+
+	if player is CollisionObject3D and is_instance_valid(player):
+		exclusions.append((player as CollisionObject3D).get_rid())
+
+	_ground_query.exclude = exclusions
+
+
+## Kinematic step. Replaces move_and_slide() against the voxel world:
+##   1. Probe the ground under the proposed horizontal position.
+##   2. Refuse the step when there is no support (ledge) or the ground rises
+##      more than kinematic_step_height (a two-block wall). One-block steps
+##      match the navigation graph's step-up edges and are climbed.
+##   3. Follow the ground height while standing, snap down small drops, and
+##      integrate gravity while airborne or jumping.
+func _move_kinematic(delta: float) -> void:
+	var start: Vector3 = global_position
+	var target: Vector3 = start + Vector3(
+		velocity.x,
+		0.0,
+		velocity.z
+	) * delta
+
+	var hit: Dictionary = _probe_ground_cached(target)
+	var supported: bool = not hit.is_empty()
+	var stand_y: float = start.y
+
+	if supported:
+		stand_y = float(hit["position"].y) - _foot_offset
+
+		if stand_y > start.y + kinematic_step_height:
+			# Too high to be a one-block step: treat it as a wall. This also
+			# stops a falling or shoved agent from snapping up onto a two-block
+			# stack it is standing beside; landing on something higher is still
+			# possible because the agent descends from above it.
+			supported = false
+
+	if not supported:
+		if not _kinematic_grounded:
+			# Airborne: probe again under the current position to find a
+			# landing surface. A grounded agent already knows its support is
+			# start.y, so it needs no second ray.
+			hit = _probe_ground_cached(start)
+			supported = not hit.is_empty()
+
+			if supported:
+				stand_y = float(hit["position"].y) - _foot_offset
+			else:
+				stand_y = start.y
+
+		# Never walk out over empty space while standing on solid ground.
+		if _kinematic_grounded:
+			target.x = start.x
+			target.z = start.z
+			velocity.x = 0.0
+			velocity.z = 0.0
+
+	_kinematic_stand_y = stand_y
+	global_position.x = target.x
+	global_position.z = target.z
+
+	if (
+		supported
+		and velocity.y <= 0.01
+		and global_position.y - stand_y <= kinematic_snap_down_height
+	):
+		global_position.y = stand_y
+		velocity.y = 0.0
+		_kinematic_grounded = true
+	else:
+		velocity.y -= gravity * delta
+		global_position.y += velocity.y * delta
+		_kinematic_grounded = false
 
 
 func _track_movement_distance() -> void:
@@ -742,6 +1133,10 @@ func _keep_on_walkable_ground(
 	pre_move_position: Vector3,
 	pre_move_grounded: bool
 ) -> void:
+	if _uses_kinematic_movement():
+		# The kinematic step already refuses unsupported ground.
+		return
+
 	if not pre_move_grounded:
 		return
 
@@ -1085,7 +1480,7 @@ func _finish_path() -> void:
 			)
 	else:
 		current_state = State.IDLE
-		wait_timer = randf_range(1.0, 3.0)
+		wait_timer = _rng.randf_range(1.0, 3.0)
 
 
 func _complete_flow_arrival() -> void:
@@ -1103,7 +1498,7 @@ func _complete_flow_arrival() -> void:
 			)
 	else:
 		current_state = State.IDLE
-		wait_timer = randf_range(1.0, 3.0)
+		wait_timer = _rng.randf_range(1.0, 3.0)
 
 
 # ============================================================
@@ -1235,6 +1630,11 @@ func _is_obstacle_jumpable(direction: Vector3) -> bool:
 ## Returns the character whose body this agent is currently standing on, or
 ## null when the floor is world geometry.
 func _character_floor_body() -> CharacterBody3D:
+	if _uses_kinematic_movement():
+		# Kinematic bodies do not collide with each other or the world, so
+		# there are no slide collisions to inspect.
+		return null
+
 	if not is_on_floor():
 		return null
 
@@ -1370,6 +1770,9 @@ func _reset_stuck() -> void:
 
 
 func _restore_layer_2() -> void:
+	if not use_physics_contact:
+		return
+
 	if not _layer_2_disabled:
 		return
 
@@ -1406,6 +1809,9 @@ func _can_restore_npc_collision() -> bool:
 
 
 func _disable_layer_2() -> void:
+	if not use_physics_contact:
+		return
+
 	if not allow_collision_disable:
 		_apply_collision_policy()
 		return
@@ -1415,20 +1821,53 @@ func _disable_layer_2() -> void:
 		collision_mask &= ~(1 << 1)
 
 
-## Keeps NPC-vs-NPC collision enabled when this agent may not disable it.
+## NPC-NPC contact is owned by the Social Force Model by default. Kinematic
+## movement additionally takes the body out of world collision and follows the
+## grid with a downward probe, which is what makes 600 agents affordable.
+## Set use_physics_contact (or use_kinematic_movement = false) to restore
+## engine-level collision.
 func _apply_collision_policy() -> void:
-	if allow_collision_disable:
+	_layer_2_disabled = false
+
+	if _uses_kinematic_movement():
+		collision_mask = 0
 		return
 
-	_layer_2_disabled = false
-	collision_mask |= 1 << 1
+	collision_mask = 1
+
+	if use_physics_contact:
+		collision_mask |= 1 << 1
+
+
+func _refresh_movement_mode() -> void:
+	_kinematic_active = use_kinematic_movement and not use_physics_contact
+	_ground_probe_cache_valid = false
+
+
+func _uses_kinematic_movement() -> bool:
+	return _kinematic_active
+
+
+func _measure_foot_offset() -> float:
+	var shape_node := get_node_or_null("CollisionShape3D") as CollisionShape3D
+
+	if shape_node != null and shape_node.shape is SphereShape3D:
+		return shape_node.position.y - (shape_node.shape as SphereShape3D).radius
+
+	return 0.25
 
 
 func _random_hop(is_grounded: bool) -> void:
+	# Kinematic agents do not collide with the world, so a hop could carry one
+	# through a wall and leave it inside geometry. Hopping was only a workaround
+	# for engine collision, and the solver + repath handle stuck agents instead.
+	if _uses_kinematic_movement():
+		return
+
 	if not allow_jumping or not is_grounded or jump_cooldown_timer > 0.0:
 		return
 
-	var random_angle: float = randf_range(0.0, TAU)
+	var random_angle: float = _rng.randf_range(0.0, TAU)
 
 	velocity.y = jump_force
 	velocity.x = cos(random_angle) * jump_push_force
@@ -1437,10 +1876,11 @@ func _random_hop(is_grounded: bool) -> void:
 
 
 ## Deterministic right-of-way. When two agents block each other, the higher
-## instance ID backs away diagonally for a short time; the lower ID keeps moving.
-## This breaks head-on deadlocks without disabling NPC collision.
+## agent serial backs away diagonally for a short time; the lower serial keeps
+## moving. This breaks head-on deadlocks without disabling NPC collision and,
+## unlike instance IDs, is independent of spawn/engine order.
 func _try_deadlock_yield(blocker: CharacterBody3D = null) -> bool:
-	if not allow_yielding or allow_collision_disable or _yield_timer > 0.0:
+	if not allow_yielding or _yield_timer > 0.0:
 		return false
 
 	if blocker == null:
@@ -1449,7 +1889,14 @@ func _try_deadlock_yield(blocker: CharacterBody3D = null) -> bool:
 	if blocker == null:
 		return false
 
-	if get_instance_id() < blocker.get_instance_id():
+	var other_serial: int = agent_serial
+
+	if blocker.has_method("get_agent_serial"):
+		other_serial = int(blocker.get_agent_serial())
+	elif blocker.has_method("get_instance_id"):
+		other_serial = int(blocker.get_instance_id())
+
+	if agent_serial < other_serial:
 		return false
 
 	var forward: Vector3 = _last_move_direction
@@ -1464,9 +1911,7 @@ func _try_deadlock_yield(blocker: CharacterBody3D = null) -> bool:
 
 	forward = forward.normalized()
 	var side: Vector3 = forward.cross(Vector3.UP)
-	var side_sign: float = (
-		1.0 if (get_instance_id() & 1) == 0 else -1.0
-	)
+	var side_sign: float = 1.0 if (agent_serial & 1) == 0 else -1.0
 	var yield_candidate: Vector3 = (
 		-forward + side * side_sign * 0.8
 	).normalized()
@@ -1673,7 +2118,7 @@ func _process_npc_brain(elapsed_time: float) -> void:
 	if enable_energy and current_state != State.IDLE:
 		energy -= elapsed_time * 0.3
 
-	_update_crowd_push(elapsed_time)
+	_update_crowd_health(elapsed_time)
 
 	if current_state == State.ARRIVED:
 		wait_timer -= elapsed_time
@@ -1683,13 +2128,19 @@ func _process_npc_brain(elapsed_time: float) -> void:
 			# another evacuation attempt instead of wandering forever.
 			has_evacuation_target = false
 			current_state = State.IDLE
-			wait_timer = randf_range(1.0, 3.0)
+			wait_timer = _rng.randf_range(1.0, 3.0)
 
 		return
 
 	match current_state:
 		State.IDLE:
 			wait_timer -= elapsed_time
+
+			if not _has_started_moving:
+				_pre_movement_elapsed = minf(
+					_pre_movement_elapsed + elapsed_time,
+					_pre_movement_delay
+				)
 
 			if wait_timer <= 0.0:
 				if _awaiting_evac_confirmation:
@@ -1707,65 +2158,86 @@ func _process_npc_brain(elapsed_time: float) -> void:
 				_route_to_closest_evac_point()
 
 
-func _update_crowd_push(elapsed_time: float) -> void:
-	var push: Vector3 = Vector3.ZERO
-
-	if crowd_manager == null:
-		_crowd_push = Vector3.ZERO
+## Crush injury model. The crowd solver measures density inside the density
+## radius; crowd_threshold is still expressed in "people nearby", so convert it
+## to persons/m^2 with the same area the solver uses. Damage is linear in the
+## excess density, which is the usual simplification for a crushing load.
+func _update_crowd_health(elapsed_time: float) -> void:
+	if (
+		not enable_crowd_damage
+		or health_component == null
+		or crowd_threshold <= 0
+	):
 		return
 
-	var nearby: Array[CharacterBody3D] = crowd_manager.get_nearby_npcs(
-		global_position,
-		max_neighbors
+	var density_radius: float = 1.4
+	var configured_radius: Variant = crowd_manager.get("density_radius") if crowd_manager != null else null
+
+	if configured_radius != null:
+		density_radius = float(configured_radius)
+
+	var threshold_density: float = (
+		float(crowd_threshold) / (PI * density_radius * density_radius)
 	)
 
-	var neighbor_count: int = nearby.size() - 1
+	if threshold_density <= 0.0 or local_density <= threshold_density:
+		return
 
-	if (
-		enable_crowd_damage
-		and neighbor_count >= crowd_threshold
-		and health_component
-	):
-		health_component.take_damage(
-			crush_damage_per_sec * elapsed_time
-		)
+	var excess_ratio: float = (
+		local_density / threshold_density - 1.0
+	)
+	health_component.take_damage(
+		crush_damage_per_sec * elapsed_time * excess_ratio
+	)
 
-	if actual_separation_push > 0.0:
-		for other: CharacterBody3D in nearby:
-			if other == self or not is_instance_valid(other):
-				continue
 
-			var difference: Vector3 = (
-				global_position - other.global_position
-			)
+# ============================================================
+# SOCIAL FORCE MODEL INTERFACE
+# ============================================================
 
-			if (
-				absf(difference.y)
-				> max_vertical_neighbor_distance
-			):
-				continue
+## Called by CrowdManager once per solve with the net acceleration (m/s^2)
+## from every other agent, the summed contact normal force (N), the overlap
+## count and the measured density. Pairwise forces are accumulated centrally
+## so both agents are updated in the same pass, with no neighbour cap.
+func apply_social_forces(
+	social_acceleration: Vector3,
+	contact_force_sum: float,
+	overlaps: int,
+	density: float
+) -> void:
+	_social_accel = social_acceleration
+	contact_force = contact_force_sum
+	contact_overlaps = overlaps
+	_peak_contact_force = maxf(_peak_contact_force, contact_force_sum)
+	set_local_density(density)
 
-			difference.y = 0.0
 
-			var distance_squared: float = difference.length_squared()
+func get_body_radius() -> float:
+	return body_radius
 
-			if (
-				distance_squared
-				> actual_separation_radius * actual_separation_radius
-			):
-				continue
 
-			var distance: float = sqrt(distance_squared)
+func get_body_mass() -> float:
+	return body_mass
 
-			if distance < 0.001:
-				continue
 
-			var falloff: float = (
-				1.0 - distance / actual_separation_radius
-			)
-			push += (difference / distance) * falloff
+func get_desired_direction() -> Vector3:
+	return _desired_direction
 
-	_crowd_push = push * actual_separation_push
+
+func get_flat_velocity() -> Vector3:
+	return Vector3(velocity.x, 0.0, velocity.z)
+
+
+func get_agent_serial() -> int:
+	return agent_serial
+
+
+func get_desired_speed() -> float:
+	return desired_speed
+
+
+func get_pre_movement_delay() -> float:
+	return _pre_movement_delay
 
 
 # ============================================================
@@ -1835,6 +2307,8 @@ func _get_gridmap() -> NavGridMap:
 func choose_next_action() -> void:
 	if is_awaiting_path or current_state == State.DEAD:
 		return
+
+	_has_started_moving = true
 
 	if _should_evacuate() or has_evacuation_target:
 		# A stale target with no route (for example after all exits briefly
@@ -1911,7 +2385,7 @@ func _fail_evacuation() -> void:
 	current_state = State.IDLE
 	current_path.clear()
 	path_index = 0
-	wait_timer = randf_range(0.5, 1.5)
+	wait_timer = _rng.randf_range(0.5, 1.5)
 	is_awaiting_path = false
 	_flow_active = false
 	_flow_wait = 0.0
@@ -1945,7 +2419,7 @@ func _mark_evacuation_point_failed(point_position: Vector3) -> void:
 
 
 func _now_seconds() -> float:
-	return Time.get_ticks_msec() / 1000.0
+	return GlobalData.sim_now()
 
 
 func _route_to_closest_evac_point() -> void:
@@ -1976,6 +2450,7 @@ func _route_to_closest_evac_point() -> void:
 
 	var my_position: Vector3 = global_position
 	var valid_points: Array[Vector3] = []
+	var seen_positions: Dictionary = {}
 
 	for node: Node in evacuation_nodes:
 		var point := node as Node3D
@@ -1984,6 +2459,20 @@ func _route_to_closest_evac_point() -> void:
 			continue
 
 		var point_position: Vector3 = point.global_position
+
+		# Each exit is registered twice (root node + trigger area). Deduplicate
+		# by position so a duplicated exit does not win twice in the utility
+		# model.
+		var key := Vector3i(
+			roundi(point_position.x * 2.0),
+			roundi(point_position.y * 2.0),
+			roundi(point_position.z * 2.0)
+		)
+
+		if seen_positions.has(key):
+			continue
+
+		seen_positions[key] = true
 
 		if not _is_evacuation_point_failed(point_position):
 			valid_points.append(point_position)
@@ -1999,39 +2488,107 @@ func _route_to_closest_evac_point() -> void:
 		wait_timer = 2.0
 		return
 
-	valid_points.sort_custom(
-		func(a: Vector3, b: Vector3):
-			return my_position.distance_squared_to(a) < my_position.distance_squared_to(b)
+	request_evacuation_target(
+		_choose_evacuation_point(grid, valid_points)
 	)
 
-	var shortlist_size: int = mini(
-		evac_shortlist_size,
-		valid_points.size()
-	)
 
-	# Straight-line ranking avoids running an A* query per NPC just to
-	# shortlist candidates. The actual route is still found by A* or the
-	# baked flow field when the request is made.
-	var best_distance: float = sqrt(
-		my_position.distance_squared_to(valid_points[0])
-	)
-	var near_best: Array[Vector3] = []
+## Discrete-choice exit model. Agents do not simply take the nearest exit:
+## they weigh route distance, queueing at the exit, whether they can see it,
+## and a persistent (per-agent) familiarity term. Utilities are sampled with a
+## Gumbel softmax, which is equivalent to a multinomial logit over exits, so
+## two agents in the same place need not make the same choice.
+##
+##   U_j = -beta_d * d_j - beta_q * rho_j + beta_v * visible_j + fam_j
+##
+## d_j is the route length in metres (baked flow-field cost when available,
+## otherwise a straight-line estimate scaled by a documented detour factor),
+## rho_j is crowd density in persons/m^2 at the exit, and fam_j is a stable
+## uniform value in [0, familiarity] derived from (agent serial, exit).
+func _choose_evacuation_point(
+	grid: NavGridMap,
+	candidates: Array[Vector3]
+) -> Vector3:
+	var best_point: Vector3 = candidates[0]
+	var best_score: float = -INF
+	var temperature: float = maxf(exit_choice_temperature, 0.001)
 
-	for index: int in shortlist_size:
-		var candidate: Vector3 = valid_points[index]
-		var distance: float = sqrt(
-			my_position.distance_squared_to(candidate)
+	for point: Vector3 in candidates:
+		var path_distance: float = -1.0
+
+		if grid.has_method("get_path_distance"):
+			path_distance = grid.get_path_distance(global_position, point)
+
+		if path_distance < 0.0 or not is_finite(path_distance):
+			# No baked cost field yet: scale the straight line by 1.2 to
+			# approximate route detours without issuing an A* query per exit
+			# per agent.
+			path_distance = (
+				Vector2(
+					point.x - global_position.x,
+					point.z - global_position.z
+				).length() * 1.2
+			)
+
+		var queue_density: float = 0.0
+
+		if crowd_manager != null and crowd_manager.has_method("get_density_per_m2"):
+			queue_density = crowd_manager.get_density_per_m2(point, 2.0)
+
+		var visible: float = 1.0 if _has_line_of_sight(point) else 0.0
+		var familiarity: float = _exit_familiarity(point)
+
+		var utility: float = (
+			-exit_choice_beta_distance * path_distance
+			-exit_choice_beta_queue * queue_density
+			+exit_choice_beta_visible * visible
+			+familiarity
 		)
 
-		if distance <= best_distance * evac_choice_tolerance:
-			near_best.append(candidate)
+		# Gumbel-max sampling: logit noise with the correct extreme-value
+		# distribution, so this is a true multinomial logit draw.
+		var u: float = clampf(_rng.randf(), 0.000001, 0.999999)
+		var gumbel: float = -log(-log(u))
+		var score: float = utility / temperature + gumbel
 
-	var best_point: Vector3 = valid_points[0]
+		if score > best_score:
+			best_score = score
+			best_point = point
 
-	if not near_best.is_empty():
-		best_point = near_best.pick_random()
+	return best_point
 
-	request_evacuation_target(best_point)
+
+## Stable per-agent, per-exit preference. Hashing the serial and the quantised
+## exit position means the value does not depend on iteration order.
+func _exit_familiarity(point: Vector3) -> float:
+	if exit_choice_familiarity <= 0.0:
+		return 0.0
+
+	var key: Array = [
+		agent_serial,
+		roundi(point.x * 10.0),
+		roundi(point.y * 10.0),
+		roundi(point.z * 10.0),
+	]
+	var normalized: float = float(abs(hash(key)) % 1000) / 1000.0
+	return normalized * exit_choice_familiarity
+
+
+func _has_line_of_sight(point: Vector3) -> bool:
+	var world := get_world_3d()
+
+	if world == null:
+		return true
+
+	var query := PhysicsRayQueryParameters3D.create(
+		global_position + Vector3(0.0, 1.2, 0.0),
+		point + Vector3(0.0, 1.0, 0.0),
+		1
+	)
+	query.exclude = [get_rid()]
+	query.collide_with_areas = false
+
+	return world.direct_space_state.intersect_ray(query).is_empty()
 
 
 func _request_random_wander_path() -> void:
@@ -2042,12 +2599,12 @@ func _request_random_wander_path() -> void:
 
 	is_awaiting_path = true
 
-	var random_angle: float = randf_range(0.0, TAU)
+	var random_angle: float = _rng.randf_range(0.0, TAU)
 	var target_position: Vector3 = global_position + Vector3(
 		cos(random_angle),
 		0.0,
 		sin(random_angle)
-	) * randf_range(5.0, 12.0)
+	) * _rng.randf_range(5.0, 12.0)
 
 	grid.request_path(
 		self,
@@ -2114,6 +2671,10 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 # ============================================================
 
 func _on_navigation_changed(changed_cells: Array[Vector3i]) -> void:
+	# Geometry changed: no cached probe or wall sample is trustworthy.
+	_ground_probe_cache_valid = false
+	_wall_force_dirty = true
+
 	if _repath_pending or current_state == State.DEAD:
 		return
 
@@ -2146,7 +2707,7 @@ func _on_navigation_changed(changed_cells: Array[Vector3i]) -> void:
 		):
 			_repath_pending = true
 			get_tree().create_timer(
-				randf_range(0.05, 0.5)
+				_rng.randf_range(0.05, 0.5)
 			).timeout.connect(_repath)
 			return
 
@@ -2226,4 +2787,12 @@ func get_evacuation_snapshot() -> Dictionary:
 		"stuck_strikes": _stuck_strikes,
 		"state": int(current_state),
 		"target": _last_evac_target,
+		"agent_serial": agent_serial,
+		"desired_speed": desired_speed,
+		"pre_movement_delay": _pre_movement_delay,
+		"pre_movement_wait": (
+			_pre_movement_delay if _has_started_moving else _pre_movement_elapsed
+		),
+		"peak_contact_force": _peak_contact_force,
+		"contact_overlaps": contact_overlaps,
 	}
