@@ -39,6 +39,15 @@ const BINDABLE_ACTIONS: Array[StringName] = [
 
 @export var save_row_step: float = 0.165
 @export var save_rows_per_page: int = 4
+## When true this instance is a saves-only overlay for the main menu: Save and
+## Save As are hidden, Back closes the overlay instead of showing the pause
+## menu's main page, and the tree is never paused.
+@export var saves_only: bool = false
+
+signal saves_closed
+## Emitted when a save (or a new blank map) is about to be loaded, so menu-only
+## music can stop before the game scene takes over.
+signal save_loaded
 
 var _camera: Camera3D = null
 var _player: Node3D = null
@@ -102,6 +111,10 @@ var _thumbnail_rest_scale: Vector3 = Vector3.ONE
 var _camera_h_rest: float = 0.0
 var _camera_v_rest: float = 0.0
 var _title_root: Node3D = null
+var _title_rest_position: Vector3 = Vector3.ZERO
+var _title_rest_rotation: Vector3 = Vector3.ZERO
+var _cursor_nx: float = 0.0
+var _cursor_ny: float = 0.0
 var _title_letters: Array = []
 var _title_tween: Tween = null
 var _section_tween: Tween = null
@@ -146,14 +159,82 @@ func _ready() -> void:
 	if _save_manager != null:
 		_save_manager.saves_changed.connect(_on_saves_changed)
 
-	get_tree().auto_accept_quit = false
-	if not get_tree().root.close_requested.is_connected(_on_close_requested):
-		get_tree().root.close_requested.connect(_on_close_requested)
+	if not saves_only:
+		get_tree().auto_accept_quit = false
+		if not get_tree().root.close_requested.is_connected(_on_close_requested):
+			get_tree().root.close_requested.connect(_on_close_requested)
 
 	visible = false
 	_stats_map.visible = false
 	_thumbnail.visible = false
 	_show_view("main", false, false)
+
+
+	if saves_only:
+		_deactivate_all_panels()
+
+
+## Opens the pause menu's Saves page as a main-menu overlay. The tree is not
+## paused; the overlay simply takes input until Back/Load closes it.
+func open_saves_only() -> void:
+	if not saves_only:
+		return
+
+	_paused = true
+	visible = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_show_view("saves", true, false)
+	_apply_saves_only_layout()
+	_refresh_save_list()
+	_set_hover(null)
+
+
+func close_saves_only() -> void:
+	if not saves_only:
+		return
+
+	_paused = false
+	visible = false
+	_reset_sway()
+	_deactivate_all_panels()
+	get_tree().paused = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	saves_closed.emit()
+
+
+func _deactivate_all_panels() -> void:
+	for panel: Node3D in [
+		_main_panel,
+		_settings_panel,
+		_water_panel,
+		_graphics_panel,
+		_gameplay_panel,
+		_audio_panel,
+		_controls_panel,
+		_stats_panel,
+		_saves_panel,
+	]:
+		if panel != null:
+			_set_panel_buttons_active(panel, false)
+
+
+## Hide the actions that only make sense while a live world is loaded. Rename,
+## Duplicate and Delete operate on save folders and remain available.
+func _apply_saves_only_layout() -> void:
+	if _saves_panel == null:
+		return
+
+	for path: String in [
+		"LeftActions/Save",
+		"LeftActions/SaveAs",
+		"WorldType",
+	]:
+		var node := _saves_panel.get_node_or_null(path)
+
+		if node != null:
+			node.set("visible", false)
+			if node is Area3D:
+				(node as Area3D).collision_layer = 0
 
 
 func _setup_ui_audio() -> void:
@@ -203,6 +284,12 @@ func _input(event: InputEvent) -> void:
 	if not is_inside_tree():
 		return
 
+	if saves_only:
+		if event.is_action_pressed("ui_cancel"):
+			close_saves_only()
+			get_viewport().set_input_as_handled()
+			return
+
 	if _keybind_layer != null and _keybind_layer.visible:
 		_handle_keybind_input(event)
 		return
@@ -230,7 +317,9 @@ func _input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventMouseMotion:
+		_set_cursor_sway(event.position)
 		_set_hover(_button_at(event.position), true)
+		_sway_to(_hovered)
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_click_at(event.position)
@@ -274,7 +363,10 @@ func set_paused(value: bool) -> void:
 		_play_open_intro()
 		_play_ui(UI_SOUND_TRANSITION, -9.0)
 		get_tree().paused = true
-		_set_hover(_button_at(get_viewport().get_mouse_position()))
+		var mouse_position := get_viewport().get_mouse_position()
+		_set_cursor_sway(mouse_position)
+		_set_hover(_button_at(mouse_position))
+		_sway_to(_hovered)
 	else:
 		_play_ui(UI_SOUND_TRANSITION, -11.0)
 		_reset_sway()
@@ -393,6 +485,8 @@ func _build_title_letters() -> void:
 	_title_root.position = _main_title.position
 	_title_root.rotation = _main_title.rotation
 	_title_root.scale = _main_title.scale
+	_title_rest_position = _title_root.position
+	_title_rest_rotation = _title_root.rotation
 	_panel.add_child(_title_root)
 
 	var cursor: float = -total * 0.5
@@ -516,7 +610,8 @@ func _ensure_settings_ui() -> void:
 		gameplay_left, "ViewRoll", "view_roll", "View Roll", 0.05
 	)
 
-	_move_settings_button("Volume", audio_left, 0.15)
+	_move_settings_button("Volume", audio_left, 0.10)
+	_ensure_water_button(audio_left, "Music", "music", "Music", 0.40)
 	_ensure_water_button(
 		controls_left, "Keybinds", "keybinds", "Keybinds", 0.15
 	)
@@ -1276,9 +1371,29 @@ func _play_preview_intro() -> void:
 
 ## Subtle parallax: the panel leans toward the hovered entry and the camera
 ## offsets a hair, so the whole menu feels alive without moving much.
-func _sway_to(button: Area3D) -> void:
+func _set_cursor_sway(position: Vector2) -> void:
+	var viewport_size := get_viewport().get_visible_rect().size
+
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+
+	_cursor_nx = clampf((position.x / viewport_size.x) * 2.0 - 1.0, -1.0, 1.0)
+	_cursor_ny = clampf((position.y / viewport_size.y) * 2.0 - 1.0, -1.0, 1.0)
+
+
+## `button` is intentionally untyped: it can be a hovered entry that the Saves
+## or Settings rebuild just freed, and a typed Area3D parameter would throw a
+## "previously freed" type error before the validity check below could run.
+func _sway_to(button: Variant) -> void:
 	if not _paused:
 		return
+
+	if not is_instance_valid(button):
+		button = null
+
+		if _hovered != null and not is_instance_valid(_hovered):
+			_hovered = null
+
 	if is_instance_valid(_sway_tween):
 		_sway_tween.kill()
 
@@ -1287,7 +1402,16 @@ func _sway_to(button: Area3D) -> void:
 	var target_h: float = _camera_h_rest
 	var target_v: float = _camera_v_rest
 
-	if is_instance_valid(button):
+	target_position += Vector3(-_cursor_nx * 0.016, -_cursor_ny * 0.013, 0.0)
+	target_rotation += Vector3(
+		deg_to_rad(_cursor_ny * 0.35),
+		deg_to_rad(_cursor_nx * 0.45),
+		0.0
+	)
+	target_h += -_cursor_nx * 0.03
+	target_v += -_cursor_ny * 0.026
+
+	if is_instance_valid(button) and button is Node3D:
 		var local: Vector3 = _panel.to_local(button.global_position)
 		var nx: float = clampf(local.x / 1.1, -1.0, 1.0)
 		var ny: float = clampf(local.y / 0.9, -1.0, 1.0)
@@ -1308,6 +1432,27 @@ func _sway_to(button: Area3D) -> void:
 		_sway_tween.tween_property(_camera, "h_offset", target_h, 0.4)
 		_sway_tween.tween_property(_camera, "v_offset", target_v, 0.4)
 
+	if _title_root != null:
+		# The title is a child of the panel, so it already travels with every
+		# button. Keep its anchor pinned and only add a small cursor tilt, which
+		# reads as the title following the mouse without sliding out of sync.
+		_sway_tween.tween_property(
+			_title_root,
+			"position",
+			_title_rest_position,
+			0.4
+		)
+		_sway_tween.tween_property(
+			_title_root,
+			"rotation",
+			_title_rest_rotation + Vector3(
+				deg_to_rad(-_cursor_ny * 1.4),
+				deg_to_rad(-_cursor_nx * 2.2),
+				0.0
+			),
+			0.4
+		)
+
 
 func _reset_sway() -> void:
 	if is_instance_valid(_sway_tween):
@@ -1317,6 +1462,9 @@ func _reset_sway() -> void:
 	if _camera != null:
 		_camera.h_offset = _camera_h_rest
 		_camera.v_offset = _camera_v_rest
+	if _title_root != null:
+		_title_root.position = _title_rest_position
+		_title_root.rotation = _title_rest_rotation
 
 
 func _refresh_labels() -> void:
@@ -1373,6 +1521,8 @@ func _dynamic_caption(action: String) -> String:
 			)
 		"volume":
 			return "Volume: " + PerformanceSettings.volume_name()
+		"music":
+			return "Music: " + PerformanceSettings.music_volume_name()
 		"fps":
 			return "FPS Cap: " + PerformanceSettings.fps_name()
 		"view_roll":
@@ -1418,7 +1568,12 @@ func _button_at(position: Vector2) -> Area3D:
 	return null
 
 
-func _set_hover(button: Area3D, audible: bool = false) -> void:
+## Untyped for the same reason as `_sway_to`: the ray can report a collider that
+## a list rebuild freed a frame earlier.
+func _set_hover(button: Variant, audible: bool = false) -> void:
+	if not is_instance_valid(button):
+		button = null
+
 	if _hovered == button:
 		return
 	if is_instance_valid(_hovered):
@@ -1465,7 +1620,10 @@ func _click_at(position: Vector2) -> void:
 		"saves":
 			_show_view("saves")
 		"back_main":
-			_show_view("main")
+			if saves_only:
+				close_saves_only()
+			else:
+				_show_view("main")
 		"back_settings":
 			_show_view("settings")
 		"water_tuning":
@@ -1554,6 +1712,9 @@ func _click_at(position: Vector2) -> void:
 		"volume":
 			PerformanceSettings.cycle_volume()
 			_refresh_labels()
+		"music":
+			PerformanceSettings.cycle_music_volume()
+			_refresh_labels()
 		"fps":
 			PerformanceSettings.cycle_fps()
 			_refresh_labels()
@@ -1625,6 +1786,10 @@ func _display_name(slug: String) -> String:
 func _refresh_save_list() -> void:
 	for child in _save_list.get_children():
 		child.free()
+
+	# Rows are freed immediately, so any hover reference to them is dead now.
+	if _hovered != null and not is_instance_valid(_hovered):
+		_hovered = null
 
 	if _save_manager == null:
 		_page_label.text = "Save system unavailable"
@@ -1815,7 +1980,11 @@ func _finish_new_map() -> void:
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
 		return
 
-	set_paused(false)
+	if saves_only:
+		close_saves_only()
+	else:
+		set_paused(false)
+	save_loaded.emit()
 	_save_manager.new_blank_map(
 		_pending_new_map_name,
 		{
@@ -1865,7 +2034,11 @@ func _on_load() -> void:
 		_set_status("Save system unavailable")
 		return
 	_play_ui(UI_SOUND_ACCEPT, -7.0)
-	set_paused(false)
+	save_loaded.emit()
+	if saves_only:
+		close_saves_only()
+	else:
+		set_paused(false)
 	_save_manager.load_save(_selected_slug)
 
 

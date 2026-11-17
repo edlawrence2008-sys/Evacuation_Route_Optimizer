@@ -308,6 +308,55 @@ aggregated as `peak_contact_force` in the run summary. This is a **force in
 newtons**, not a pressure: no contact area is available in the soft-contact
 model, so it must not be labelled as pressure.
 
+### 5.6 Exit admission and receiving areas
+
+The trigger is the admission point, and all admission policy lives on the
+`EvacPoint`, not in the chosen-route model. Defaults reproduce the original
+behaviour: an agent that enters the trigger is recorded and removed from the
+active simulation immediately.
+
+Two independent limits can be configured per exit:
+
+- **Exit throughput** — `exit_service_rate` (people/s). `0` means unlimited.
+  A non-zero rate puts arrivals in a FIFO queue and admits one agent every
+  `1 / rate` seconds of simulation time (`GlobalData.sim_now()`). This is a
+  single-server constant interval, not parallel doors.
+  `max_queue_length` bounds the queue; `0` is unlimited. An over-limit arrival
+  is rejected and re-enters exit choice with that exit on cooldown.
+- **Receiving-area capacity** — `receiving_capacity` (simultaneous occupants
+  past the exit). `0` means unlimited. It only binds when agents are retained,
+  because a despawned agent leaves the safe area on the same frame. When full,
+  `receiving_full_behavior` either holds the agent (`QUEUE`, capacity wait) or
+  rejects it (`REJECT`, cooldown + re-choice).
+
+Retention is opt-in (`retain_evacuated`). A retained agent is marked with the
+`evacuated` metadata, removed from the `npc` **and `Members`** groups (the
+latter is the spawner's live-agent cap group), has physics/process/collision
+disabled, and is reparented to a separate `EvacuatedAgents` container at a
+slot owned by its exit. `retained_hold_time` releases the slot after a fixed
+time (`0` = forever); expiry is scanned at most every 0.25 s, and a released
+slot lets a queued agent advance. Retained agents are therefore
+visible-in-the-world but absent from density, contact force, navigation, PATH
+requests, spawn caps and the live-agent count. Deleting the exit frees its
+retained agents, and a full crowd kill (`GlobalData.kill_all_npcs()`) clears
+them as well.
+
+Admission is counted once per agent. `GlobalData.register_evacuation()` always
+advances at completion; the per-agent `_evacuations` record and per-exit
+aggregate are written when `track_evacuation` is on (the point writes the
+global counter itself if no `EvacuationManager` is present). Queue wait is
+measured from enqueue to service start for admitted agents; rejected agents are
+counted as capacity/queue events instead of entering the wait average.
+`max_exit_hold_time` (120 s) is an agent-side fail-safe: a queued agent that
+waits longer gives up, cancels its queue entry and re-routes, so a permanently
+full receiving area cannot strand the crowd.
+
+Because throughput and capacity are independent, a run can measure a service
+limit with instant despawn (`retain_evacuated = false`), or a receiving-area
+limit with unlimited service, or both. Turning capacity on does not implicitly
+retain agents, and retaining agents does not implicitly cap the exit. The
+exported settings and invariants are listed in `docs/EVACUATION_POINTS.md`.
+
 ---
 
 ## 6. Performance budget
@@ -428,10 +477,14 @@ These are deliberate trade-offs, not hidden behaviour.
 5. **Flow-field cost is baked.** `d_j` is the cost field at bake time. Congestion
    heat is included when the field is baked, but a field is not re-baked every
    tick; `navigation_changed` invalidates it.
-6. **Exit trigger, not a door.** An exit is a 1 m radius, 2 m tall cylinder, and
-   the body is removed on entry. Measured throughput is therefore not a
-   door-flow measurement. The 1 m trigger was reduced from 3 m to stop agents
-   being removed far from the marker.
+6. **Exit trigger, not door geometry.** An exit is a 1 m radius, 2 m tall
+   cylinder. By default the body is removed on entry; with `exit_service_rate`
+   it is queued at the trigger for a modelled service interval. Either way the
+   trigger is an area, not a physical opening, so walking speed and body width
+   inside a doorway are not modelled. The optional service rate can impose a
+   published flow value, but it does not reproduce the door's local geometry.
+   The 1 m trigger was reduced from 3 m to stop agents being removed far from
+   the marker.
 7. **Density probe.** "Density" is the count of agents within 1.4 m on the same
    floor (vertical band 0.9 m) divided by `pi * 1.4^2`. It is a local crowding
    measure, not a Voronoi or door-specific density. Agents on the floor above
@@ -443,10 +496,15 @@ These are deliberate trade-offs, not hidden behaviour.
    the published pedestrian values; k, kappa, and tau are the 2000 paper's
    values. The pre-movement and exit-choice weights are behavioural priors and
    should be fitted to a specific scenario before quantitative claims are made.
-10. **Exact throughput is optimistic.** With no door geometry and instant
-    removal on entering a 1 m radius, the measured 100–150 persons/min per exit
-    is higher than empirical specific-flow values for a 1 m opening. Treat it
-    as a relative comparison between layouts, not an absolute prediction.
+10. **Default throughput is optimistic; a configured rate is a model, not a
+    measurement.** With no door geometry and instant removal on entering a
+    1 m radius, the default measured 100–150 persons/min per exit is higher
+    than empirical specific-flow values for a 1 m opening. Setting
+    `exit_service_rate` replaces that emergent trigger rate with an imposed
+    admission schedule, which is a modelling assumption rather than a simulated
+    door. Receiving capacity is likewise a policy limit on retained occupants,
+    not a spatial capacity computed from geometry. Treat both as relative
+    comparison tools between layouts unless calibrated to a specific scenario.
 
 ---
 

@@ -269,7 +269,7 @@ func new_blank_map(name: String, world_options: Dictionary = {}) -> String:
 	var slug := String(pair[1])
 
 	var map_path := String(tree.current_scene.scene_file_path)
-	if map_path.is_empty():
+	if map_path.is_empty() or map_path.begins_with("res://scenes/menu/"):
 		map_path = "res://Maps/test.tscn"
 
 	var streamer := tree.get_first_node_in_group("chunk_streamer")

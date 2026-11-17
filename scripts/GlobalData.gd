@@ -299,6 +299,13 @@ func kill_all_npcs() -> int:
 		npc.queue_free()
 		killed += 1
 
+	# Retained evacuated agents are outside the npc group by design, but a full
+	# kill must still remove them and free their receiving slots.
+	var manager := get_node_or_null("/root/EvacuationManager")
+
+	if manager != null and manager.has_method("clear_retained_agents"):
+		manager.clear_retained_agents(true)
+
 	return killed
 
 

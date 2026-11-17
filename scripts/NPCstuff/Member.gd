@@ -119,6 +119,10 @@ extends CharacterBody3D
 @export var evac_confirm_timeout: float = 3.0
 @export var max_evacuation_failures: int = 3
 @export var failed_evac_point_cooldown: float = 5.0
+## Maximum time an agent will wait at an exit that is processing a queue. When
+## the wait expires the agent gives up on that exit and re-routes. This is a
+## fail-safe against a permanently full receiving area.
+@export var max_exit_hold_time: float = 120.0
 
 @export_group("Movement & Physics")
 ## Only used on the engine-collision path. Kinematic agents climb one-block
@@ -372,6 +376,9 @@ const FLOW_STUCK_SAMPLE: int = -2
 var _failed_evac_points: Dictionary = {}
 var _last_evac_target: Vector3 = Vector3.ZERO
 var _awaiting_evac_confirmation: bool = false
+var _exit_hold_active: bool = false
+var _exit_hold_exit: Node = null
+var _exit_hold_deadline: float = 0.0
 var has_evacuation_target: bool = false
 var _evacuation_failures: int = 0
 
@@ -1502,6 +1509,142 @@ func _complete_flow_arrival() -> void:
 
 
 # ============================================================
+# EXIT QUEUE / EVACUATION LIFECYCLE
+# ============================================================
+
+## Called by an EvacPoint when this agent has to wait for an exit service slot
+## or for room in the receiving area. The agent stops navigating and keeps its
+## place in the Active crowd so it still contributes to density and contact
+## force while queueing.
+func begin_exit_hold(exit_point: Node) -> void:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return
+
+	_exit_hold_active = true
+	_exit_hold_exit = exit_point
+	_exit_hold_deadline = (
+		_now_seconds() + maxf(1.0, max_exit_hold_time)
+	)
+
+	has_evacuation_target = true
+	current_state = State.ARRIVED
+	_flow_active = false
+	_flow_wait = 0.0
+	is_awaiting_path = false
+	_repath_pending = false
+	current_path.clear()
+	path_index = 0
+	wait_timer = evac_confirm_timeout
+
+
+## The area was left, or the exit was deleted, before service completed. Clear
+## the hold without treating it as an evacuation failure so the agent can pick
+## a route again.
+func on_exit_area_exited() -> void:
+	if not _exit_hold_active or has_meta("evacuated"):
+		return
+
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+
+	if current_state == State.DEAD:
+		return
+
+	has_evacuation_target = false
+	current_state = State.IDLE
+	wait_timer = 0.35
+
+
+## The exit rejected this agent (full receiving area or full queue). Put that
+## specific exit on cooldown so the next choice goes elsewhere, but do not count
+## it as a path failure.
+func reject_evacuation(_reason: String = "capacity") -> void:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return
+
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+
+	if _last_evac_target != Vector3.ZERO:
+		_mark_evacuation_point_failed(_last_evac_target)
+
+	has_evacuation_target = false
+	current_state = State.IDLE
+	current_path.clear()
+	path_index = 0
+	is_awaiting_path = false
+	_flow_active = false
+	_flow_wait = 0.0
+	wait_timer = _rng.randf_range(0.2, 0.8)
+
+
+## Fail-safe used when a queued agent waits longer than max_exit_hold_time.
+## Removes the agent from the exit queue and asks the normal failure path to
+## choose a different exit.
+func resume_evacuation() -> void:
+	if (
+		_exit_hold_exit != null
+		and is_instance_valid(_exit_hold_exit)
+		and _exit_hold_exit.has_method("cancel_agent")
+	):
+		_exit_hold_exit.cancel_agent(self)
+
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	_fail_evacuation()
+
+
+## Marks the agent as successfully evacuated and removes it from every active
+## agent system. The node can stay alive (and visible) afterwards without
+## influencing navigation, crowd density, contact force or run completion.
+func mark_evacuated() -> void:
+	if has_meta("evacuated"):
+		return
+
+	set_meta("evacuated", true)
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	is_evacuee = false
+	has_evacuation_target = false
+	_awaiting_evac_confirmation = false
+	_flow_active = false
+	_flow_wait = 0.0
+	is_awaiting_path = false
+	_repath_pending = false
+	current_path.clear()
+	path_index = 0
+	velocity = Vector3.ZERO
+
+	if is_instance_valid(gridmap):
+		gridmap.cancel_path_requests(self)
+
+	remove_from_group("npc")
+	# The spawner uses the Members group for its live-agent cap; a retained
+	# evacuated agent must not count against future spawns.
+	remove_from_group("Members")
+	collision_layer = 0
+	collision_mask = 0
+	set_physics_process(false)
+	set_process(false)
+
+	if animator != null:
+		animator.set_physics_process(false)
+		animator.set_process(false)
+
+	if _sprite_visual != null:
+		_sprite_visual.set_physics_process(false)
+		_sprite_visual.set_process(false)
+
+
+func is_evacuated() -> bool:
+	return has_meta("evacuated")
+
+
+# ============================================================
 # OBSTACLE HOPPING
 # ============================================================
 
@@ -2090,6 +2233,9 @@ func set_evacuation_mode(enabled: bool) -> void:
 	is_evacuee = enabled
 	has_evacuation_target = false
 	_awaiting_evac_confirmation = false
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
 	_flow_active = false
 	_flow_wait = 0.0
 	is_awaiting_path = false
@@ -2121,6 +2267,18 @@ func _process_npc_brain(elapsed_time: float) -> void:
 	_update_crowd_health(elapsed_time)
 
 	if current_state == State.ARRIVED:
+		# A finite exit holds the agent while it waits for a service slot or
+		# receiving-area capacity. The hold must outlive the normal arrival
+		# confirmation timeout, otherwise the agent would abandon its place in
+		# the queue and walk away.
+		if _exit_hold_active:
+			if (
+				_exit_hold_deadline > 0.0
+				and _now_seconds() >= _exit_hold_deadline
+			):
+				resume_evacuation()
+			return
+
 		wait_timer -= elapsed_time
 
 		if wait_timer <= 0.0:
@@ -2254,6 +2412,9 @@ func _on_damaged(_amount: float) -> void:
 func _on_health_depleted() -> void:
 	current_state = State.DEAD
 	velocity = Vector3.ZERO
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
 
 	if evacuation_manager and evacuation_manager.has_method("notify_npc_died"):
 		evacuation_manager.notify_npc_died(self)
@@ -2305,7 +2466,7 @@ func _get_gridmap() -> NavGridMap:
 
 
 func choose_next_action() -> void:
-	if is_awaiting_path or current_state == State.DEAD:
+	if is_awaiting_path or current_state == State.DEAD or has_meta("evacuated"):
 		return
 
 	_has_started_moving = true
@@ -2327,7 +2488,7 @@ func _should_evacuate() -> bool:
 
 
 func request_evacuation_target(target: Vector3) -> void:
-	if current_state == State.DEAD:
+	if current_state == State.DEAD or has_meta("evacuated"):
 		return
 
 	has_evacuation_target = true
@@ -2615,6 +2776,11 @@ func _request_random_wander_path() -> void:
 
 
 func _on_path_received(new_path: PackedVector3Array) -> void:
+	# A path request can complete after the agent was admitted through an exit.
+	# Do not let the late callback revive an inactive, retained agent.
+	if has_meta("evacuated"):
+		return
+
 	is_awaiting_path = false
 
 	var previous_length: float = _detour_previous_length
@@ -2746,6 +2912,7 @@ func _repath() -> void:
 
 	if (
 		current_state == State.DEAD
+		or has_meta("evacuated")
 		or is_awaiting_path
 		or not is_inside_tree()
 	):

@@ -8,8 +8,13 @@ visible = false
 [node name="LeftColumn" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
 
+[node name="Music" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.4, 0)
+action = &"music"
+caption = "Music"
+
 [node name="Volume" parent="LeftColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, 0.15, 0)
+position = Vector3(0, 0.1, 0)
 action = &"volume"
 caption = "Volume"
 

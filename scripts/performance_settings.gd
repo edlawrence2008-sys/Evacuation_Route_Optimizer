@@ -14,6 +14,7 @@ const RENDER_SCALES: Array[float] = [0.5, 0.65, 0.8, 1.0]
 const MESH_RADII: Array[int] = [4, 6, 8, 12, 16, 24, 32, 48, 64]
 const AGENT_CAPS: Array[int] = [40, 80, 120, 200, 300, 500, 600, 700, 1000]
 const VOLUMES: Array[float] = [0.0, 0.25, 0.5, 0.75, 1.0]
+const MUSIC_VOLUMES: Array[float] = [0.0, 0.25, 0.5, 0.75, 1.0]
 const FPS_CAPS: Array[int] = [30, 60, 0]
 const VIEW_ROLLS: Array[float] = [0.0, 0.75, 1.5, 2.5]
 const VIEW_ROLL_NAMES: Array[String] = ["Off", "Low", "Medium", "High"]
@@ -39,6 +40,8 @@ var agent_cap: int = 120
 var clouds: bool = true
 var water_effects: bool = true
 var master_volume: float = 0.8
+## Background-music level, applied by MusicManager on top of its base volume.
+var music_volume: float = 0.75
 var max_fps: int = 60
 ## Camera view-roll strength, stored as an index into VIEW_ROLLS.
 var view_roll_index: int = 1
@@ -278,6 +281,11 @@ func cycle_volume() -> void:
 	_commit()
 
 
+func cycle_music_volume() -> void:
+	music_volume = _next_float(MUSIC_VOLUMES, music_volume)
+	_commit()
+
+
 func cycle_fps() -> void:
 	max_fps = _next_int(FPS_CAPS, max_fps)
 	_commit()
@@ -394,6 +402,10 @@ func volume_name() -> String:
 	return "%d%%" % roundi(master_volume * 100.0)
 
 
+func music_volume_name() -> String:
+	return "%d%%" % roundi(music_volume * 100.0)
+
+
 func fps_name() -> String:
 	return "Unlimited" if max_fps <= 0 else str(max_fps)
 
@@ -477,6 +489,7 @@ func save_settings() -> void:
 	config.set_value("water", "splashes", water_splashes)
 	config.set_value("water", "surface_particles", water_surface_particles)
 	config.set_value("audio", "master_volume", master_volume)
+	config.set_value("audio", "music_volume", music_volume)
 	config.set_value("system", "agent_cap", agent_cap)
 	config.set_value("system", "max_fps", max_fps)
 	config.set_value("camera", "view_roll", view_roll_index)
@@ -514,6 +527,7 @@ func load_settings() -> void:
 	if not has_water_settings:
 		_apply_water_preset(quality)
 	master_volume = float(config.get_value("audio", "master_volume", 0.8))
+	music_volume = float(config.get_value("audio", "music_volume", 0.75))
 	agent_cap = int(config.get_value("system", "agent_cap", 120))
 	max_fps = int(config.get_value("system", "max_fps", 60))
 	view_roll_index = int(config.get_value("camera", "view_roll", 1))

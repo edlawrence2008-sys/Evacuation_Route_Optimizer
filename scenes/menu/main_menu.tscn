@@ -1,9 +1,250 @@
 [gd_scene format=3 uid="uid://mi5utpab26t0"]
 
-[ext_resource type="Texture2D" uid="uid://bpowfbx6oabhc" path="res://textures/menu/logo.png" id="1_nl8w3"]
+[ext_resource type="Script" uid="uid://41hj4y84trya" path="res://scenes/menu/main_menu.gd" id="1_menu"]
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="2_btn"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/graphics_menu.tscn" id="3_graphics"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/gameplay_menu.tscn" id="4_gameplay"]
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/audio_menu.tscn" id="5_audio"]
+[ext_resource type="FontFile" uid="uid://bncul3w2dl6p" path="res://font/Pixelta.ttf" id="6_pixel"]
+[ext_resource type="FontFile" uid="uid://ck7sm3xakovrl" path="res://font/dogicapixel.ttf" id="7_dogi"]
+[ext_resource type="PackedScene" uid="uid://qitsetuv8wla" path="res://scenes/ui/bgm_popup.tscn" id="8_bgm"]
+[ext_resource type="Script" uid="uid://renbv5dbvfff" path="res://scenes/menu/menu_backdrop.gd" id="9_backdrop"]
+[ext_resource type="PackedScene" uid="uid://crksyxvtcbhx6" path="res://scenes/menu/pause_menu.tscn" id="10_pause"]
 
-[node name="main_menu" type="Node2D" unique_id=477905076]
+[sub_resource type="Environment" id="Env_menu"]
+background_mode = 1
+background_color = Color(0.008, 0.01, 0.016, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.18, 0.22, 0.3, 1)
+ambient_light_energy = 0.35
 
-[node name="Sprite2D" type="Sprite2D" parent="." unique_id=2110851890]
-position = Vector2(398, 54)
-texture = ExtResource("1_nl8w3")
+[sub_resource type="StandardMaterial3D" id="Mat_dim"]
+render_priority = 3
+transparency = 1
+cull_mode = 2
+no_depth_test = true
+shading_mode = 0
+albedo_color = Color(0, 0, 0, 0.9)
+
+[sub_resource type="QuadMesh" id="QuadMesh_dim"]
+size = Vector2(32, 32)
+
+[node name="MainMenu" type="Node3D" unique_id=729158264]
+script = ExtResource("1_menu")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=230171913]
+environment = SubResource("Env_menu")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=596574633]
+current = true
+
+[node name="SavesOverlay" parent="Camera3D" unique_id=2100000001 instance=ExtResource("10_pause")]
+visible = false
+saves_only = true
+
+[node name="Backdrop" type="Node3D" parent="." unique_id=97508434]
+script = ExtResource("9_backdrop")
+
+[node name="Dim" type="MeshInstance3D" parent="." unique_id=1055503148]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.6)
+material_override = SubResource("Mat_dim")
+cast_shadow = 0
+mesh = SubResource("QuadMesh_dim")
+
+[node name="Panel" type="Node3D" parent="." unique_id=887788381]
+transform = Transform3D(0.9961947, 0.0030416911, -0.087102644, 0, 0.99939084, 0.034899496, 0.08715574, -0.034766693, 0.9955879, 0, 0, -1.9)
+
+[node name="MainTitle" type="Label3D" parent="Panel" unique_id=1302049972]
+transform = Transform3D(1, 2.3283064e-10, -7.450581e-09, 0, 1.0000007, 7.450581e-09, 0, 7.450581e-09, 1.0000007, 0.6330809, 1.0367739, -0.06565094)
+pixel_size = 0.0013
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.96, 0.97, 1, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "EVACUATION"
+font = ExtResource("6_pixel")
+font_size = 200
+outline_size = 8
+
+[node name="Subtitle" type="Label3D" parent="Panel" unique_id=2019042003]
+transform = Transform3D(1, 2.3283064e-10, -7.450581e-09, 0, 1.0000007, 7.450581e-09, 0, 7.450581e-09, 1.0000007, 0.6330803, 0.7767734, -0.06565118)
+pixel_size = 0.0013
+no_depth_test = true
+render_priority = 5
+modulate = Color(1, 0.88, 0.25, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "ROUTE OPTIMIZER"
+font = ExtResource("6_pixel")
+font_size = 64
+outline_size = 6
+
+[node name="Tagline" type="Label3D" parent="Panel" unique_id=751928296]
+transform = Transform3D(1, 2.3283064e-10, -7.450581e-09, 0, 1.0000007, 7.450581e-09, 0, 7.450581e-09, 1.0000007, 0.63308036, 0.5767734, -0.06565106)
+pixel_size = 0.0017
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.7, 0.75, 0.84, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "SHS FINAL CAPSTONE PROJECT"
+font = ExtResource("7_dogi")
+font_size = 30
+outline_size = 4
+
+[node name="SectionTitle" type="Label3D" parent="Panel" unique_id=1818291700]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0.05)
+visible = false
+pixel_size = 0.0026
+no_depth_test = true
+render_priority = 5
+modulate = Color(1, 0.88, 0.25, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "EXTRAS"
+font = ExtResource("6_pixel")
+font_size = 48
+outline_size = 6
+
+[node name="Hint" type="Label3D" parent="Panel" unique_id=2056398348]
+transform = Transform3D(1, 0, 0, 0, 1.0000001, 3.7252903e-09, 0, 0, 1.0000001, 0, -0.95690364, 0.045219183)
+pixel_size = 0.002
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.66, 0.72, 0.8, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "MOVE MOUSE TO SELECT  |  CLICK TO CONFIRM"
+font = ExtResource("7_dogi")
+outline_size = 4
+
+[node name="MainPanel" type="Node3D" parent="Panel" unique_id=1250906741]
+transform = Transform3D(0.59060603, -0.2061347, 0.78018826, 0, 0.9668239, 0.25544584, -0.80696076, -0.1508678, 0.5710115, -0.943347, -0.25740904, 1.2254702)
+
+[node name="Saves" parent="Panel/MainPanel" unique_id=1789313694 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 1.4901161e-08, -2.9802322e-08, 0, 1.4999996, 1.4901161e-08, -2.9802322e-08, -7.4505806e-08, 0.9999999, 0.55061436, 0.7298933, -0.36195064)
+action = &"saves"
+caption = "SAVES"
+label_font = ExtResource("6_pixel")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Extras" parent="Panel/MainPanel" unique_id=1346971389 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 1.4901161e-08, -2.9802322e-08, 0, 1.4999996, 1.4901161e-08, -2.9802322e-08, -7.4505806e-08, 0.9999999, 0.5506144, 0.4498933, -0.36195064)
+action = &"extras"
+caption = "EXTRAS"
+label_font = ExtResource("6_pixel")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Settings" parent="Panel/MainPanel" unique_id=504894813 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 1.4901161e-08, -2.9802322e-08, 0, 1.4999996, 1.4901161e-08, -2.9802322e-08, -7.4505806e-08, 0.9999999, 0.55061436, 0.16989332, -0.36195064)
+action = &"settings"
+caption = "SETTINGS"
+label_font = ExtResource("6_pixel")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Quit" parent="Panel/MainPanel" unique_id=467919076 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 1.4901161e-08, -2.9802322e-08, 0, 1.4999996, 1.4901161e-08, -2.9802322e-08, -7.4505806e-08, 0.9999999, 0.5506144, -0.11010654, -0.3619504)
+action = &"quit"
+caption = "QUIT"
+label_font = ExtResource("6_pixel")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="ExtrasPanel" type="Node3D" parent="Panel" unique_id=492531899]
+
+[node name="Credits" parent="Panel/ExtrasPanel" unique_id=1884124352 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.34, 0.035)
+action = &"credits"
+caption = "CREDITS"
+label_font = ExtResource("6_pixel")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="Back" parent="Panel/ExtrasPanel" unique_id=1119715087 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.22, 0.035)
+action = &"back_main"
+caption = "BACK"
+label_font = ExtResource("6_pixel")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="SettingsPanel" type="Node3D" parent="Panel" unique_id=1899266393]
+visible = false
+
+[node name="Graphics" parent="Panel/SettingsPanel" unique_id=844712596 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0.35, 0.035)
+action = &"settings_graphics"
+caption = "GRAPHICS"
+label_font = ExtResource("6_pixel")
+label_size = 48
+label_pixel = 0.0024
+dim_unselected = true
+
+[node name="Gameplay" parent="Panel/SettingsPanel" unique_id=1463691225 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0.05, 0.035)
+action = &"settings_gameplay"
+caption = "GAMEPLAY"
+label_font = ExtResource("6_pixel")
+label_size = 48
+label_pixel = 0.0024
+dim_unselected = true
+
+[node name="Audio" parent="Panel/SettingsPanel" unique_id=671497291 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0.35, 0.035)
+action = &"settings_audio"
+caption = "AUDIO"
+label_font = ExtResource("6_pixel")
+label_size = 48
+label_pixel = 0.0024
+dim_unselected = true
+
+[node name="Back" parent="Panel/SettingsPanel" unique_id=496122335 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0.05, 0.035)
+action = &"back_main"
+caption = "BACK"
+label_font = ExtResource("6_pixel")
+label_size = 48
+label_pixel = 0.0024
+dim_unselected = true
+
+[node name="GraphicsPanel" parent="Panel" unique_id=1331367996 instance=ExtResource("3_graphics")]
+visible = false
+
+[node name="GameplayPanel" parent="Panel" unique_id=1665189672 instance=ExtResource("4_gameplay")]
+
+[node name="AudioPanel" parent="Panel" unique_id=50517000 instance=ExtResource("5_audio")]
+
+[node name="BgmLayer" type="CanvasLayer" parent="." unique_id=1840776362]
+layer = 100
+
+[node name="BgmPopup" parent="BgmLayer" unique_id=1383872154 instance=ExtResource("8_bgm")]
+z_index = 20
