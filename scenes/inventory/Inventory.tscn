@@ -5,6 +5,7 @@
 [ext_resource type="PackedScene" uid="uid://crrnl504kgocm" path="res://scenes/inventory/SimulationPanel.tscn" id="3_simulation"]
 [ext_resource type="PackedScene" uid="uid://bdv73usdpdgrg" path="res://scenes/inventory/AgentPanel.tscn" id="4_agents"]
 [ext_resource type="PackedScene" uid="uid://bwtqhe6oj7lyp" path="res://scenes/inventory/property_tab.tscn" id="5_mmgv4"]
+[ext_resource type="PackedScene" path="res://scenes/inventory/OptimizerPanel.tscn" id="6_optimizer"]
 
 [sub_resource type="Theme" id="Theme_ect3m"]
 
@@ -141,6 +142,14 @@ columns = 5
 
 [node name="Property_tab" parent="." unique_id=888378270 instance=ExtResource("5_mmgv4")]
 layout_mode = 1
+offset_left = 449.0
+offset_top = -16.0
+offset_right = 695.0
+offset_bottom = 280.0
+
+[node name="OptimizerPanel" parent="." unique_id=1442000003 instance=ExtResource("6_optimizer")]
+layout_mode = 1
+visible = false
 offset_left = 449.0
 offset_top = -16.0
 offset_right = 695.0

@@ -12,6 +12,16 @@ var is_spawning_enabled: bool = false # Default to false so they don't spawn dir
 ## intact, but spawners stop emitting until resumed.
 var is_spawning_paused: bool = false
 
+## Run mode for the optimizer. False is the baseline: agents choose exits with
+## the local logit model. The bridge sets this; Member instances only honour an
+## explicit per-agent assignment.
+var optimizer_enabled: bool = false
+
+## Bumped whenever the world or an exit changes in a way that invalidates an
+## optimizer result. A result whose source version differs is applied only after
+## re-solving. Chunk streaming does not bump it.
+var environment_version: int = 0
+
 ## Exported Agent/Member properties applied to every new spawn and, on Apply,
 ## to every live agent. Owned by the Agents category in the inventory.
 var agent_overrides: Dictionary = {}
@@ -113,7 +123,20 @@ func report_environment_change(
 	change_type: String,
 	detail: Dictionary = {}
 ) -> void:
+	bump_environment_version()
 	environment_changed.emit(location, change_type, detail)
+
+
+## Invalidates any optimizer result that was computed against the previous
+## world state. Exit availability changes call this too.
+func bump_environment_version() -> void:
+	environment_version += 1
+
+
+## Sets the run's assignment mode. The optimizer bridge owns the decision; this
+## flag makes the mode visible to the recorder and the panels.
+func set_optimizer_enabled(enabled: bool) -> void:
+	optimizer_enabled = enabled
 
 
 ## Cross-spawner spawn-slot reservation. Physics bodies spawned in the same
@@ -369,6 +392,7 @@ func stop_spawning() -> void:
 func reset_spawning() -> void:
 	# A reset is a new run: stop spawning, remove every live NPC, and reset
 	# counters. Quotas and section registrations stay intact.
+	bump_environment_version()
 	kill_all_npcs()
 	_section_spawn_counts.clear()
 	clear_spawn_reservations()

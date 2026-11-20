@@ -461,6 +461,11 @@ func set_operational(value: bool) -> void:
 
 
 func _notify_availability_changed() -> void:
+	# An optimizer result that assigned this exit must not be applied after it
+	# was disabled (or re-enabled) mid-solve.
+	if is_instance_valid(GlobalData):
+		GlobalData.bump_environment_version()
+
 	availability_changed.emit(self, is_available())
 
 	if operational:
@@ -561,6 +566,10 @@ func _reset_state() -> void:
 
 
 func _exit_tree() -> void:
+	# A deleted exit invalidates any optimizer result that still references it.
+	if is_instance_valid(GlobalData):
+		GlobalData.bump_environment_version()
+
 	# Occupancy belongs to this point. Zero it before notifying so the manager's
 	# incremental total does not keep a stale value after the node is freed.
 	_occupancy = 0

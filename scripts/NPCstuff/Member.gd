@@ -352,6 +352,15 @@ var route_id: int = 0
 var destination_exit_id: String = ""
 var destination_exit_name: String = ""
 var last_route_reason: String = ""
+
+## External assignment override. When active, the agent keeps this exit instead
+## of re-running the local logit choice. Set only through
+## set_optimizer_assignment(); cleared on rejection, failure, unavailability,
+## admission or an evacuation-mode change. A pre-movement agent stores the
+## assignment and uses it when its pre-movement delay expires.
+var _optimizer_assignment_active: bool = false
+var _optimizer_assigned_exit_id: String = ""
+var _optimizer_assigned_target: Vector3 = Vector3.ZERO
 var last_path_usec: int = 0
 ## Finite-difference acceleration over one physics tick, m/s^2.
 var acceleration: Vector3 = Vector3.ZERO
@@ -1610,6 +1619,7 @@ func reject_evacuation(_reason: String = "capacity") -> void:
 	_exit_hold_active = false
 	_exit_hold_exit = null
 	_exit_hold_deadline = 0.0
+	clear_optimizer_assignment()
 
 	if _last_evac_target != Vector3.ZERO:
 		_mark_evacuation_point_failed(_last_evac_target)
@@ -1653,6 +1663,7 @@ func mark_evacuated() -> void:
 	_exit_hold_active = false
 	_exit_hold_exit = null
 	_exit_hold_deadline = 0.0
+	clear_optimizer_assignment()
 	is_evacuee = false
 	has_evacuation_target = false
 	_awaiting_evac_confirmation = false
@@ -2278,6 +2289,7 @@ func set_evacuation_mode(enabled: bool) -> void:
 	is_evacuee = enabled
 	has_evacuation_target = false
 	_awaiting_evac_confirmation = false
+	clear_optimizer_assignment()
 	_exit_hold_active = false
 	_exit_hold_exit = null
 	_exit_hold_deadline = 0.0
@@ -2582,7 +2594,58 @@ func _should_evacuate() -> bool:
 	return is_evacuee and not has_evacuation_target
 
 
-func request_evacuation_target(target: Vector3) -> void:
+## Applies a global assignment from the optimizer bridge. Returns false when the
+## agent cannot take one (dead, admitted, already in the exit queue).
+##
+## Pre-movement is preserved: the assignment is stored, but the agent keeps its
+## IDLE wait and picks the assigned exit when the delay expires. That lets the
+## optimizer cover the whole population without bypassing the behavioural model.
+func set_optimizer_assignment(exit_id: String, target: Vector3) -> bool:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return false
+
+	if current_state == State.ARRIVED:
+		return false
+
+	if exit_id.is_empty() or target == Vector3.ZERO:
+		return false
+
+	_optimizer_assignment_active = true
+	_optimizer_assigned_exit_id = exit_id
+	_optimizer_assigned_target = target
+
+	if current_state == State.IDLE and not _has_started_moving:
+		return true
+
+	if is_instance_valid(gridmap):
+		gridmap.cancel_path_requests(self)
+
+	request_evacuation_target(target, "optimizer")
+	return true
+
+
+func clear_optimizer_assignment() -> void:
+	_optimizer_assignment_active = false
+	_optimizer_assigned_exit_id = ""
+	_optimizer_assigned_target = Vector3.ZERO
+
+
+func has_optimizer_assignment() -> bool:
+	return _optimizer_assignment_active
+
+
+func get_optimizer_exit_id() -> String:
+	return _optimizer_assigned_exit_id
+
+
+func get_optimizer_target() -> Vector3:
+	return _optimizer_assigned_target
+
+
+func request_evacuation_target(
+	target: Vector3,
+	reason: String = "destination"
+) -> void:
 	if current_state == State.DEAD or has_meta("evacuated"):
 		return
 
@@ -2592,7 +2655,7 @@ func request_evacuation_target(target: Vector3) -> void:
 	current_path.clear()
 	path_index = 0
 	_flow_wait = 0.0
-	_pending_route_reason = "destination"
+	_pending_route_reason = reason
 	_pending_route_started_usec = Time.get_ticks_usec()
 	_emit_destination_changed(target)
 
@@ -2611,7 +2674,7 @@ func request_evacuation_target(target: Vector3) -> void:
 			gridmap.ensure_flow_field_cell(_flow_target_cell)
 			is_awaiting_path = false
 			_reset_stuck()
-			_assign_route("destination", PackedVector3Array(), "flow")
+			_assign_route(reason, PackedVector3Array(), "flow")
 		else:
 			_flow_active = false
 			is_awaiting_path = true
@@ -2633,6 +2696,8 @@ func request_evacuation_target(target: Vector3) -> void:
 
 
 func _fail_evacuation() -> void:
+	clear_optimizer_assignment()
+
 	if _last_evac_target != Vector3.ZERO:
 		_mark_evacuation_point_failed(_last_evac_target)
 
@@ -2687,6 +2752,13 @@ func _now_seconds() -> float:
 
 func _route_to_closest_evac_point() -> void:
 	if is_awaiting_path or _flow_active or current_state == State.DEAD:
+		return
+
+	# The optimizer bridge owns this agent's choice. Keep the assigned exit
+	# instead of re-running the local logit model; the override is cleared by
+	# rejection, failure, unavailability or admission.
+	if _optimizer_assignment_active and _optimizer_assigned_target != Vector3.ZERO:
+		request_evacuation_target(_optimizer_assigned_target, "optimizer")
 		return
 
 	var grid: NavGridMap = _get_gridmap()
@@ -3289,6 +3361,8 @@ func on_exit_unavailable(exit_point: Node3D) -> void:
 	if distance > 1.5:
 		return
 
+	clear_optimizer_assignment()
+
 	if _last_evac_target != Vector3.ZERO:
 		_mark_evacuation_point_failed(_last_evac_target)
 
@@ -3385,6 +3459,8 @@ func get_measurement_state() -> Dictionary:
 		"spawned_at": _spawned_at_sim,
 		"desired_speed": desired_speed,
 		"pre_movement_delay": _pre_movement_delay,
+		"optimizer_assigned": _optimizer_assignment_active,
+		"optimizer_exit_id": _optimizer_assigned_exit_id,
 	}
 
 

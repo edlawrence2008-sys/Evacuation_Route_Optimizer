@@ -2,6 +2,9 @@ extends VBoxContainer
 
 ## Simulation controls: start/reset the run, tune the run limits, switch every
 ## member between evacuation and wandering, and populate the level randomly.
+##
+## The optimizer has its own side panel (OptimizerPanel) to the right of the
+## inventory; this panel only exposes the button that opens it.
 
 @onready var start_button: Button = $Actions/Start
 @onready var reset_button: Button = $Actions/Reset
@@ -20,6 +23,7 @@ extends VBoxContainer
 @onready var populator = $RandomPopulator
 
 var _status_accum: float = 0.0
+var _optimizer_button: Button = null
 
 
 func _ready() -> void:
@@ -44,6 +48,7 @@ func _ready() -> void:
 	GlobalData.npc_spawned.connect(_on_npc_count_changed)
 	GlobalData.npc_evacuated.connect(_on_npc_count_changed)
 
+	_ensure_optimizer_button()
 	_sync_from_state()
 
 
@@ -189,3 +194,56 @@ func _update_status(keep_message: bool = false) -> void:
 		"Spawned %d / %s | Alive %d / %d | %s"
 		% [GlobalData.npcs_spawned, quota_text, alive, GlobalData.global_unit_cap, state]
 	)
+
+
+# ---------------------------------------------------------------------------
+# Optimizer side panel
+# ---------------------------------------------------------------------------
+
+## Adds a compact button to the Simulation title row. The panel itself lives to
+## the right of the inventory, alongside the block/placeable property tab.
+func _ensure_optimizer_button() -> void:
+	if _optimizer_button != null:
+		return
+
+	var title := get_node_or_null("Title") as Label
+
+	if title == null:
+		return
+
+	var row := HBoxContainer.new()
+	row.name = "TitleRow"
+	row.add_theme_constant_override("separation", 8)
+	add_child(row)
+	move_child(row, 0)
+	remove_child(title)
+	row.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	_optimizer_button = Button.new()
+	_optimizer_button.name = "OptimizerButton"
+	_optimizer_button.text = "Optimizer"
+	_optimizer_button.tooltip_text = (
+		"Open the optimizer panel: global exit assignment, method descriptions, "
+		+ "cohort settings and Run once."
+	)
+	_optimizer_button.pressed.connect(_on_optimizer_button_pressed)
+	row.add_child(_optimizer_button)
+
+
+func _on_optimizer_button_pressed() -> void:
+	var panel := _get_optimizer_panel()
+
+	if panel == null:
+		return
+
+	panel.call("toggle")
+
+
+func _get_optimizer_panel() -> Node:
+	var parent := get_parent()
+
+	if parent == null:
+		return null
+
+	return parent.get_node_or_null("OptimizerPanel")

@@ -1533,6 +1533,104 @@ func estimate_path_distance(start_world: Vector3, end_world: Vector3) -> float:
 	return total
 
 
+## Read-only, synchronous cost field to a destination, for the evacuation
+## optimizer (docs/OPTIMIZER.md). One bake gives every cohort its distance to
+## this exit, instead of one A* query per cohort per exit.
+##
+## Step cost is real distance times the weight of the cell being entered, which
+## is what AStar3D and the flow-field bake use, so the optimizer and the agents
+## agree about walls, gaps and surface classes. This does NOT touch the flow
+## field cache, returns even when `enable_flow_fields` is false, and is not
+## capped by `flow_field_max_cells` unless a positive `cell_limit` is passed.
+##
+## Returns { Vector3i: float } in weighted metres, or {} when the target is not
+## a navigation cell. The caller owns the dictionary and should cache it for the
+## duration of one optimization. Keep it off the physics tick: a full-map bake
+## costs one pass over the nav graph.
+func build_cost_field_to(target_world: Vector3, cell_limit: int = 0) -> Dictionary:
+	var target_cell: Vector3i = _resolve_nav_cell(target_world)
+
+	if target_cell == NO_CELL:
+		return {}
+
+	if _step_lengths.size() != NEIGHBOR_OFFSETS.size():
+		_build_step_lengths()
+
+	var costs: Dictionary = {target_cell: 0.0}
+	var queue: Array[Vector3i] = [target_cell]
+	var head: int = 0
+
+	# Label-correcting flood, the same scheme as _step_bake_job but without a
+	# frame budget. Re-expansion is allowed when a cheaper route is found.
+	while head < queue.size():
+		var current: Vector3i = queue[head]
+		head += 1
+
+		var current_id: int = cell_to_id_map.get(current, -1)
+
+		if current_id == -1:
+			continue
+
+		var current_cost: float = float(costs[current])
+		var enter_weight: float = astar.get_point_weight_scale(current_id)
+
+		for index: int in range(NEIGHBOR_OFFSETS.size()):
+			var step: Vector3i = NEIGHBOR_OFFSETS[index]
+			var neighbor: Vector3i = current + step
+
+			if not cell_to_id_map.has(neighbor):
+				continue
+
+			if not _can_move_between(current, step):
+				continue
+
+			var neighbor_cost: float = current_cost + _step_lengths[index] * enter_weight
+			var known: bool = costs.has(neighbor)
+
+			if known and neighbor_cost >= float(costs[neighbor]):
+				continue
+
+			if not known and cell_limit > 0 and costs.size() >= cell_limit:
+				continue
+
+			costs[neighbor] = neighbor_cost
+			queue.append(neighbor)
+
+	return costs
+
+
+## Cell-by-cell route through the navigation graph, for congestion prediction.
+## Returns the nav cells the cheapest path occupies, start first. Unlike
+## `_calculate_path`, it does not smooth or shift the route, because the
+## optimizer needs the cells the agents will actually occupy.
+func get_path_cells(from_world: Vector3, to_world: Vector3) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+
+	if astar.get_point_count() == 0:
+		return result
+
+	var start_id: int = _find_nav_id(to_local(from_world))
+	var end_id: int = _find_nav_id(to_local(to_world))
+
+	if start_id == -1 or end_id == -1:
+		return result
+
+	var ids: PackedInt64Array = astar.get_id_path(start_id, end_id)
+
+	for point_id: int in ids:
+		var cell: Vector3i = _id_to_cell.get(point_id, NO_CELL)
+
+		if cell != NO_CELL:
+			result.append(cell)
+
+	return result
+
+
+## Number of registered navigation points. Diagnostics only.
+func get_nav_point_count() -> int:
+	return astar.get_point_count()
+
+
 func request_path_immediate(start: Vector3, end: Vector3) -> PackedVector3Array:
 	return _calculate_path(start, end)
 

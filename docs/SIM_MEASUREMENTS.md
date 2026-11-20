@@ -1,12 +1,14 @@
 # Simulation measurements and the run recorder
 
-> **Status:** 2026-11-18 · **Applies to:** `scripts/sim_recorder.gd` (autoload
+> **Status:** 2026-11-20 (schema unchanged since 2026-11-18; optimizer fields now
+> populated by phase 2) · **Applies to:** `scripts/sim_recorder.gd` (autoload
 > `SimRecorder`), `scripts/demo_store.gd`, `scripts/demo_player.gd`,
 > `scripts/demo_comparer.gd`, `scripts/NPCstuff/Member.gd`,
 > `scripts/CrowdManager.gd`, `scripts/gridmap.gd`, `scenes/evac_point.gd`,
 > `evacuation_manager.gd`, `scripts/GlobalData.gd`,
 > `scripts/BuildController.gd` · **Related:** this file defines the data the
-> **Demo Player** and **Demo Comparer** read (`DEMOS.md`).
+> **Demo Player** and **Demo Comparer** read (`DEMOS.md`), and the optimizer
+> fields planned in [`OPTIMIZER.md`](OPTIMIZER.md) §11.
 
 Every run started from the Simulation panel is recorded automatically into the
 active map save's demo library:
@@ -56,7 +58,7 @@ treat a run as evidence:
 | `agent_parameters` | `Member.get_behavior_parameters()`: speeds, SFM, pre-movement, exit-choice weights, kinematic/step settings, crowd damage. |
 | `crowd_parameters` | `CrowdManager` hash/solver constants (A, B, λ, k, κ, τ, cutoffs, density bands). |
 | `navigation_parameters` | `NavGridMap.get_navigation_parameters()`: cell size, path costs, wall/gap weights, flow/congestion settings, smoothing. |
-| `optimizer` | `{available: false, configuration: {}}` until an optimizer exists. |
+| `optimizer` | Optimization configuration for the run. `available` is true when the run is in optimized mode; `configuration` holds algorithm, mode, weights, parameters, cohort size, max cohorts, auto-solve and environment version. Written under `manifest.metadata.optimizer`. |
 | `exit_configuration` | Exit ids/names/locations, `exit_service_rate`, `max_queue_length`, `receiving_capacity`, `receiving_full_behavior`, retention. |
 | `physics_ticks_per_second` / `physics_timestep` | Engine tick rate and `1/tick`. |
 | `sampling_interval` | Snapshot interval. |
@@ -151,7 +153,7 @@ is accepted ÷ total evacuated.
 
 Navigation time includes refreshes caused by chunk streaming and block edits,
 not only path requests; it is run-relative (captured after the recorder starts).
-| Optimizer execution time | ms/µs | **no optimizer exists** | `summary.optimizer.available = false`, `execution_usec = 0` |
+| Optimizer execution time | ms/µs | `SimRecorder.record_optimizer_execution()` | `summary.optimizer.execution_usec`, `summary.optimizer_executions`; last solve only. 0 when the optimizer is disabled. Contract: [`OPTIMIZER.md`](OPTIMIZER.md) §11 |
 
 **Definitions used here**
 
@@ -204,7 +206,7 @@ with affected agents being those currently assigned to that exit.
 | `queue` | `exit_id`, `agent`, `event` (`entered`, `service_started`, `admitted`, `left`, `cancelled`, `rejected:*`), `queue_length` |
 | `contact` | `agent`, `force`, `threshold`, `rising` (threshold crossing, 0.5/1/2/3 kN) |
 | `nav` | `duration_usec`, `changed_cells` (navigation refresh completion) |
-| `optimizer` | `name`, `duration_usec`, `detail` (API ready; no optimizer emits yet) |
+| `optimizer` | `name`, `duration_usec`, `detail` (`detail` carries algorithm/mode/environment version/cohorts/estimate/convergence/applied/skipped/adopted spawns/rejection and method-specific solver metadata such as ACO ants/iterations/seed/timed_out; see [`OPTIMIZER.md`](OPTIMIZER.md) §11) |
 | `agent_death` | `agent`, `position` |
 | `exit_added` / `exit_removed` / `exit_state` | exit id/name, availability, location |
 | `environment` | `id`, `kind`, `location`, `cells`, `item`, `item_name`, `nav_usec`, `changed_cells`, `connectivity`, `detail` |
@@ -243,7 +245,7 @@ distance to the flow target. `route.mode` is `path`, `flow`, or `failed`.
 
 ## Missing mechanisms (reported honestly, not fabricated)
 
-- **Optimizer:** absent. `optimizer.available = false` and execution time is 0.
+- **Optimizer:** present when the run is configured for optimized assignment. `optimizer.available` is true, `optimizer_execution_usec` is the last solve, and `manifest.metadata.optimizer` carries the configuration. An optimized run also records `optimizer` events and route rows with `reason = "optimizer"`. Predicted costs stay in the optimizer event; measured outcomes stay in the summary fields. Baseline runs report `available = false` and execution time 0. Contract and field details: [`OPTIMIZER.md`](OPTIMIZER.md) §11.
 - **Hazard/smoke/fire fields:** absent. `hazard_level` is null and
   `summary.hazard.available = false`.
 - **Trapped status:** no trapping mechanic; use `stuck_strikes` / `stuck_time`.

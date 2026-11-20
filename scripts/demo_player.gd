@@ -1134,7 +1134,7 @@ func _build_ui() -> void:
 	_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_panel.offset_left = 12
 	_panel.offset_right = -12
-	_panel.offset_top = -116
+	_panel.offset_top = -132
 	_panel.offset_bottom = -10
 	_panel.add_theme_stylebox_override("panel", _style(BG))
 	_ui.add_child(_panel)
@@ -1143,9 +1143,19 @@ func _build_ui() -> void:
 	root.add_theme_constant_override("separation", 4)
 	_panel.add_child(root)
 
+	# Controls can exceed the width at high agent/demo counts. Keep them in a
+	# horizontal scroller so the right-hand buttons remain reachable.
+	var controls_scroll := ScrollContainer.new()
+	controls_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	controls_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	controls_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	controls_scroll.custom_minimum_size = Vector2(0, 44)
+	root.add_child(controls_scroll)
+
 	var controls := HBoxContainer.new()
 	controls.add_theme_constant_override("separation", 8)
-	root.add_child(controls)
+	controls.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	controls_scroll.add_child(controls)
 
 	_play_button = _button("Pause", _toggle_play)
 	controls.add_child(_play_button)

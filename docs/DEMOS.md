@@ -1,6 +1,8 @@
 # Demos: recorded experiments, library, player and comparer
 
-> **Status:** 2026-11-18 · **Applies to:** `scripts/demo_store.gd` (autoload
+> **Status:** 2026-11-20 (library/player/comparer unchanged since 2026-11-18;
+> optimizer experiment workflow cross-referenced) · **Applies to:**
+> `scripts/demo_store.gd` (autoload
 > `DemoStore`), `scripts/demo_player.gd` (autoload `DemoPlayer`),
 > `scripts/demo_comparer.gd` (autoload `DemoComparer`),
 > `scripts/sim_recorder.gd`, the pause menu **Demos** tab, and
@@ -77,6 +79,9 @@ Controls:
 | View: Exit assignment | Colour by the agent's assigned exit id. |
 | Route | Toggle the selected agent's route polyline at the current time. |
 
+The bottom transport bar scrolls horizontally when the controls exceed the
+viewport, so no button is cut off on narrow windows.
+
 The right panel shows the selected agent's current position/status/exit/route,
 speed, density, contact force, distance, route-change and destination-switch
 counts, plus its **history**: every route assignment (with reason and
@@ -119,25 +124,23 @@ through:
 
 - **Recordings** — colour/letter, name, description, and a scenario line (seed,
   agent count, sampling interval, congestion routing, exit retries).
-- **Synchronized metrics** — six stacked charts with a shared cursor:
-  evacuated agents, active agents, global (mean local) density, exit throughput
-  over a 5 s window, cumulative peak contact force, and route changes. The first
-  demo's line is drawn on top when runs overlap exactly.
-- **Current values** — per-demo values at the cursor and deltas against demo A.
-- **Differences** — per-pair trajectory divergence for shared agent serials
-  (count, mean/max distance, number over 2 m, worst serials), exit assignments
-  and per-agent assignment mismatches, disruption responses (kind/time/affected/
-  rerouted plus paired responses within 2 s), **environment edits** (cells placed
-  and broken per demo, with the most recent block edits and item names),
-  configuration differences between the experiment metadata (seed, initial/planned
-  agent count, sampling interval, agent, crowd, navigation, exits, scenario
-  knobs), and final summaries. In-progress recordings show `recording in
-  progress` with derived totals instead of final-summary zeros; if a legacy
-  `demo.json` has no experiment block, the comparer falls back to the run header.
+- **At cursor** — a compact table with one column per recording (coloured
+  letter) and rows for evacuated agents, active agents, global density, exit
+  throughput, peak contact force and route changes. This replaces the old
+  free-form value block, so 3–6 recordings stay comparable at a glance.
+- **Deltas vs A** — the same rows expressed as differences from recording A.
+- **Synchronized metrics** — six stacked charts with a shared cursor.
+- **Show detailed differences** — collapsed by default. When enabled, it shows
+  trajectory divergence, exit assignments, disruption responses, environment
+  edits, configuration differences and final summaries as text.
 
-Cumulative counters use step samples rather than interpolation; positions and
-density/throughput are interpolated between snapshots. `Esc` or **Close**
-restores the pause menu and camera.
+The first demo's line is drawn on top when runs overlap exactly. Current values
+are per-demo table cells; positions and density/throughput are interpolated
+between snapshots.
+
+The bottom transport bar is wrapped in a **horizontal scroll container**, so
+every control remains reachable when the viewport is narrow or several demos are
+selected. The Demo Player uses the same treatment.
 
 The camera uses the same free-flight `noclip` controls as the Demo Player: tap
 `V` or the **Noclip** button to toggle (WASD, mouse look, `Space`/`Ctrl` for
@@ -147,6 +150,18 @@ position and angle without toggling.
 The comparer reports differences; it does not optimize. There is no automatic
 baseline selection, no layout-geometry diff, no export, and no per-agent
 side-by-side timeline beyond the divergence summary.
+
+**Optimizer experiments.** The comparison workflow is the evaluation harness for
+the decision layer. [`OPTIMIZER.md`](OPTIMIZER.md) §11 maps the six intended
+experiments onto recordings the comparer can already align:
+baseline versus optimized, distance-only versus congestion-aware, fixed versus
+dynamic reassignment, time-only versus multi-objective, equal-split versus
+capacity-aware, and hazard-unaware versus hazard-aware. An optimized run's
+manifest records the algorithm, mode, weights and cohort settings, and its
+recording carries `optimizer` events and route rows with `reason = "optimizer"`,
+so the comparer's configuration diff and exit-assignment diff show which
+objective produced which outcome. Predicted costs remain in the optimizer event,
+separate from the measured summary.
 
 ## What the player and comparer read
 

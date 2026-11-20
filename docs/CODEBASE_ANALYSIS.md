@@ -1,9 +1,9 @@
 # Codebase Analysis — Evacuation Route Optimizer
 
-> **Snapshot:** 2026-11-18 · Godot **4.7.2.stable.steam** · `mobile` renderer · source baseline `6e72ca2`.
+> **Snapshot:** 2026-11-20 · Godot **4.7.2.stable.steam** · `mobile` renderer · source baseline `0df7d6a` (working tree: optimizer phases 1–3).
 > **Scope:** what the code *is now* — topology, systems, data flow, findings, and recommendations.
 > **Not here:** dated change history lives in [`archive/CHANGELOG.md`](archive/CHANGELOG.md); the full dated verification table lives in [`archive/VERIFICATION_LOG.md`](archive/VERIFICATION_LOG.md).
-> **Subsystem docs:** [`SIMULATION_MODEL.md`](SIMULATION_MODEL.md) (crowd model) · [`EVACUATION_POINTS.md`](EVACUATION_POINTS.md) (exit throughput/capacity) · [`FALSE_BOIDS.md`](FALSE_BOIDS.md) (ambient birds) · [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) (recorder and metrics) · [`MAIN_MENU_AND_CREDITS.md`](MAIN_MENU_AND_CREDITS.md) (boot menu, saves, music, credits). Start at [`README.md`](README.md).
+> **Subsystem docs:** [`SIMULATION_MODEL.md`](SIMULATION_MODEL.md) (crowd model) · [`EVACUATION_POINTS.md`](EVACUATION_POINTS.md) (exit throughput/capacity) · [`FALSE_BOIDS.md`](FALSE_BOIDS.md) (ambient birds) · [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) (recorder and metrics) · [`OPTIMIZER.md`](OPTIMIZER.md) (planned decision layer: contracts, objective, roadmap) · [`MAIN_MENU_AND_CREDITS.md`](MAIN_MENU_AND_CREDITS.md) (boot menu, saves, music, credits). Start at [`README.md`](README.md).
 >
 > Current content state: MeshLibrary **316 items** referencing **51 block textures** (`textures/autoblocks/`), `scenes/grid_map.tscn` embeds no cells, and `Maps/test.tscn` is a **bare 80-cell starter platform** plus three false-boid emitters and four perches — no spawners or evac point. The demo layout lives in the save slot `user://saves/testing_testing_things_just_got_interesting/`; the recorded active slot `verity` is a blank map; the last recorded live store was **8 chunk columns / 1,100 cells**. The boot scene is the 3D `scenes/menu/main_menu.tscn`; `MusicManager` drives the top-left BGM credit pop-up; Extras opens the 3D credits screen.
 >
@@ -42,13 +42,31 @@ Simulation/Agents panel → spawn NPCs → choose an exit → path/flow to it �
 
 The game scene starts with a bare **80-cell platform** (10 × 8 at x = −5…4, z = −3…4) and three false-boid emitters with four perches. Flat-floor generation is **disabled**: `ChunkStreamer` loads only chunks that already exist in `user://world/chunks`, out to a 20-chunk script radius (Low/Medium/High presets use 12/20/40). The last recorded live store was **8 chunk columns / 1,100 cells**; a fresh store leaves empty space. The nine spawners and the evac point exist only in the save slot `testing_testing_things_just_got_interesting` (10 placeables); the active `verity` slot is a blank 8-chunk map. The **placeable catalogue** now contains **15 placeable scenes** (Sim 4, Device 2, Foliage 9), but the generated-icon manifest still has **13** entries, so the two false-boid placeables show scene-preview fallbacks until `VoxelItemGenerator.generate_all()` is re-run.
 
-**What is measured.** `EvacuationManager` records per-NPC spawn/arrival times, chosen exit, distance travelled, stuck time, failed paths, and peak local density. It derives average, median, p95, min/max evacuation time, per-exit arrivals, share, average time, and throughput per minute. Finite exits additionally report queue length/peak, average and maximum wait, service rate, receiving occupancy/peak/capacity, capacity waits and rejections, queue-full rejections, retained-agent count, and a per-agent evacuation record (spawn/evacuation timestamps, exit id, wait, desired speed). `SimRecorder` turns that into per-run files: 0.5 s agent/exit/simulation samples, route assignments, evacuation events, environment/disruption events with before/after routes, initial layout and navigation snapshots. See `docs/SIM_MEASUREMENTS.md`. The archived 2026-11-02 run (60 NPCs, 42 evacuated by ~26 s, average 22.5 s, p95 24.8 s) was measured on the old 4,674-cell map; the demo save restores a comparable spawner/exit layout.
+**What is measured.** `EvacuationManager` records per-NPC spawn/arrival times, chosen exit, distance travelled, stuck time, failed paths, and peak local density. It derives average, median, p95, min/max evacuation time, per-exit arrivals, share, average time, and throughput per minute. Finite exits additionally report queue length/peak, average and maximum wait, service rate, receiving occupancy/peak/capacity, capacity waits and rejections, queue-full rejections, retained-agent count, and a per-agent evacuation record (spawn/evacuation timestamps, exit id, wait, desired speed). `SimRecorder` turns that into per-run files: 0.25 s agent/exit/simulation samples, route assignments, evacuation events, environment/disruption events with before/after routes, initial layout and navigation snapshots. See `docs/SIM_MEASUREMENTS.md`. The archived 2026-11-02 run (60 NPCs, 42 evacuated by ~26 s, average 22.5 s, p95 24.8 s) was measured on the old 4,674-cell map; the demo save restores a comparable spawner/exit layout.
 
-**What is still missing.** The “optimizer” half of the title: no automatic baseline selection or layout-geometry comparison, no obstacle-rich authored level, and no tests. `SimRecorder` captures replay-ready runs, the pause menu has a Demo Player and a synchronized **Demo Comparer** (metrics, trajectories, exit assignments, disruption responses and configuration deltas), but nothing ranks or chooses a layout. The Statistics subview renders congestion heat and ideal A* routes, but there is no per-cell measured bottleneck heatmap.
+**What is still missing.** The optimizer's later phases: ACO, the multi-objective
+terms and modes, disruption-driven re-solve, and the hazard layer. There is also
+no automatic layout ranking, no obstacle-rich authored level, and no general test
+suite beyond the optimizer harnesses. `SimRecorder` captures replay-ready runs,
+the pause menu has a Demo Player and a synchronized **Demo Comparer** (metrics,
+trajectories, exit assignments, disruption responses and configuration deltas),
+but nothing ranks or chooses a layout. The Statistics subview renders congestion
+heat and ideal A* routes, but there is no per-cell measured bottleneck heatmap.
+
+The decision layer is **implemented through phase 3** ([`OPTIMIZER.md`](OPTIMIZER.md)): `optimization/` contains the snapshot/request/result contracts, a spatial cohort builder, per-exit path analysis, a deterministic FIFO queue model, a demand-to-capacity congestion predictor, the objective function, `nearest` / `equal_split` / `greedy` / `exhaustive` / `local_search` / `aco`, and a pure manager. `OptimizerBridge` captures a live snapshot, validates the result, applies it through `Member.set_optimizer_assignment()`, and adopts late spawns from the last result. The right-side **Optimizer** panel (beside the inventory, like the property tab) owns the bridge and describes every method and objective. The recorder writes the optimizer configuration, event and measured summary into the demo. Six harnesses pass **175 assertions**; a 600-agent scale test solves 28 cohorts in 73–86 ms and applies 600/600 assignments (`tests/README.md`).
+
+What remains: the multi-objective terms and modes (contact force, switching, hazard), automatic disruption re-solve with hysteresis, hazard routing, Pareto/robustness analysis, and a measured predicted-congestion-vs-actual-density study. ACO is a hybrid (local-search seed + ants + polish) and must be reported as such. Until phase 5, a disabled exit invalidates stale results and releases its agents, but the operator must press **Run once**.
 
 **Overall health.** The simulation core is intact and runs a defensible crowd model: a reciprocal Social Force Model in `CrowdManager`, kinematic ground-probe locomotion in `Member`, deterministic seeding, lognormal pre-movement, and logit exit choice over route length, queue density, and visibility. A 600-agent, 4-exit run evacuated all 600 with 0 deaths and 0 failed paths in 80 s, peaking at 1.95 persons/m²; the solver costs 3.8–4.4 ms per 30 Hz tick, and the optimized build holds 60 FPS at peak packing. The game scene still does not ship a runnable scenario: Start does nothing until the player places `sim_spawner`/`sim_evac_point` or loads the demo save. **64-chunk full terrain generation** is not achievable with the current per-cell GridMap (9,150 chunks / 2.34 M cells / 2.3 GB, then a crash with 600 agents), so generation is disabled. Remaining debts: `/reset_all` bypasses spawner bookkeeping (**N4**), the shipped map has no authored scenario (**N11**), the icon manifest lags the placeable catalogue (**N17**), flow fields are off so exit choice falls back to straight-line estimates (**N3**), and results are not compared across layouts. The test scene no longer overrides congestion values; it inherits the tuned `2.0 / 0.5 / 0.35` defaults (**N15 resolved**).
 
 **Changes since the 2026-11-15 snapshot.** Full dated entries are in [`archive/CHANGELOG.md`](archive/CHANGELOG.md).
+
+- **2026-11-20 — optimizer phase 3, side panel, comparer readability.** ACO (`aco_optimizer.gd`) uses a local-search seed, ACS construction (16 ants / 40 iterations), pheromone updates and a short polish; it never returns worse than its seed, matched exact in 3/5 seeded 6-cohort instances, is deterministic per seed and respects a 250 ms default budget. The optimizer UI moved from a runtime popup to a **right-side panel** beside the inventory, modelled on the property tab, with descriptions for every method and objective and ACO parameters. Late spawns are adopted by the nearest cohort of the last result within 8 m. The Demo Comparer gained per-demo cursor/delta tables and collapsed detail differences; the player and comparer transport bars now scroll horizontally. Tests: 27 ACO assertions, 23 demo-UI assertions, 52 phase-2 assertions.
+
+- **2026-11-20 — optimizer phase 2.** `OptimizerBridge` captures a live snapshot, validates and applies assignments through the new `Member.set_optimizer_assignment()` override; `GlobalData` gains `optimizer_enabled` and `environment_version`; `EvacPoint` and `GlobalData.report_environment_change()` invalidate stale results. The optimizer panel exposes enable, algorithm, objective, cohort size, auto-solve, Run once and status. `SimRecorder` now writes the optimizer configuration into `manifest.metadata.optimizer`, an `optimizer` event per solve and an optimizer summary block; route rows carry reason `optimizer`. Tests: 52 phase-2 assertions (real agents/exits, adoption, recorded run, side panel) and a 600-agent scale test (28 cohorts, 73–86 ms solve, 600/600 applied).
+- **2026-11-20 — optimizer phase 1.** `optimization/` contains the pure analysis layer: `SimulationSnapshot`/`OptimizationRequest`/`OptimizationResult`, `CohortBuilder`, `PathAnalyzer`, `CongestionEstimator`, `ExitCostAnalyzer`, `ObjectiveFunction`, five algorithms (`nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`) and `OptimizerManager`. `NavGridMap` gained read-only `build_cost_field_to()`, `get_path_cells()` and `get_nav_point_count()`. Headless tests: 48 pure assertions + 18 real-nav assertions, all passing; benchmark at 600 agents / 40 cohorts: nearest 15 ms, greedy 185 ms, local search ~0.95 s.
+
+- **2026-11-20 — optimizer design and doc refresh.** `docs/OPTIMIZER.md` records the gap analysis against the proposed feature set, the simulation/optimization boundary, the data contracts, the objective function, the algorithm order (baselines before ACO), the dynamic-reoptimization guards, the roadmap and the risks. No runtime behaviour changed by the design pass.
 
 - **2026-11-18 - simulation recorder and measurement.** `SimRecorder` records per-save demos (`user://saves/<slug>/demos`) and the pause menu **Demos** page/player inspects them; `Member`/`EvacPoint`/`NavGridMap`/`CrowdManager`/`EvacuationManager`/`GlobalData`/`BuildController` gained route, availability, navigation, contact and environment instrumentation. See `DEMOS.md` and `SIM_MEASUREMENTS.md`.
 
@@ -92,7 +110,7 @@ The evidence still points to a **spatial evacuation sandbox**, not a Minecraft-l
 - The player has creative building tools and can place `Spawner` and `EvacPoint` as objects.
 - A first-run Consul dialogue greets the player and explains the console/statistics/results keys, so onboarding is now part of the intended experience.
 
-The implied loop is: **build a floor plan → place crowd sources and exits → run the evacuation → measure how it went → change the layout**. All five steps exist in code, but the shipped map's ground depends on an external saved-chunk store and has no authored floor plan. Comparison is available through the Demo Comparer; the loop still has no optimizer that chooses or improves a layout.
+The implied loop is: **build a floor plan → place crowd sources and exits → run the evacuation → measure how it went → change the layout**. All five steps exist in code, but the shipped map's ground depends on an external saved-chunk store and has no authored floor plan. Comparison is available through the Demo Comparer, and optimized runs are available through the Simulation panel's optimizer; choosing and ranking *layouts* is still manual.
 
 A second layer of intent is visible in the assets: a 1970s/PSX aesthetic (CRT addon, pixel shader, posterisation shader, PSX shader globals, serif pixel font, day/night plugin). Almost none of it is wired into a scene. The new Consul character is the first substantial piece of authored 2D presentation actually used at runtime.
 
@@ -247,6 +265,8 @@ A `GridMap` subclass that fuses block storage, navigation graph, flow-field cach
   - gap penalty 1.0 → 3.0 as sides lose both wall and floor.
 - `_refresh_point_weights_around` now updates the changed cell and the cells whose wall/gap tests depend on it. The old “weights lag an edit” finding is resolved.
 
+**Optimizer cost fields.** `build_cost_field_to(target_world, cell_limit)` runs one synchronous label-correcting flood from a destination over the weighted graph and returns `{Vector3i: cost}`. Step cost is real distance × the entered cell's weight, matching AStar3D and the flow bake, so the optimizer's predictions agree with the routes agents walk. It does not touch `_flow_fields`/`_flow_costs`, works with `enable_flow_fields = false`, and is uncapped unless `cell_limit` is passed. `get_path_cells(from, to)` returns the unsmoothed cell route via `AStar3D.get_id_path()` for congestion prediction, and `get_nav_point_count()` is a diagnostic. These three methods are the only simulation-side API the optimizer needs; see [`OPTIMIZER.md`](OPTIMIZER.md) §4.3.
+
 **Surface-aware navigation.** `_rebuild_surface_profiles()` caches, per MeshLibrary item, whether it is a low walking surface and which path-cost class it belongs to:
 - Normal stairs and bottom slabs are low surfaces: their A* point sits at the half-height top (cell centre height). Top slabs, side slabs, upside-down stairs, and full blocks use the full cell top.
 - Path-cost classes: stairs use `stair_path_cost = 0.75`, top/bottom slabs use `slab_path_cost = 0.9`, and full blocks/vertical side slabs use `full_block_path_cost = 1.0` (all exported under **Navigation Costs**). The surface multiplier is applied together with the wall/gap weight and congestion multiplier in `_point_weight_scale`.
@@ -368,6 +388,8 @@ dv/dt = (v⁰ − v)/τ + a_social + a_wall
    `d_j` is the baked flow-field route length in metres (`NavGridMap.get_path_distance()`) when a cost field exists, otherwise `1.2 ×` straight-line distance; `ρ_j` is `CrowdManager.get_density_per_m2(exit, 2.0)`; `visible_j` is 1 when a head-height ray reaches the exit; `fam_j` is a stable uniform value in `[0, exit_choice_familiarity]` derived from `(agent_serial, quantised exit position)`.
 4. Draw the exit with Gumbel-max noise (`U_j / temperature + Gumbel`), i.e. a multinomial-logit sample. Agents in the same place therefore split across exits of similar quality without an assignment rule, and queues push agents to other exits. This addresses **N3** (path distance, not straight-line) and **N2** (no single-file convergence).
 5. Request an A* path or start/steer a flow field; after `max_evacuation_failures = 3` failures, give up and return to `IDLE`.
+
+**Optimizer override.** `set_optimizer_assignment(exit_id, target)` stores an external assignment and suppresses the per-cycle logit choice while it is valid. It cancels pending path requests and calls `request_evacuation_target(target, "optimizer")`, so the route row's `reason` is `optimizer`. Pre-movement agents store the assignment and keep their delay; the assignment is used when the delay expires. The override clears on rejection, path failure, exit unavailability, admission and `set_evacuation_mode()`. With the optimizer disabled this path is never taken and the logit model above is unchanged.
 
 **Arrival.** `_finish_path` / `_complete_flow_arrival` set `ARRIVED`, wait `evac_confirm_timeout = 3 s`, and notify `EvacuationManager`. Actual admission is done by the `EvacPoint` area. If the exit has a finite service rate or is at receiving capacity, the point calls `begin_exit_hold()`: the agent stays `ARRIVED` with `_exit_hold_active` and keeps its queue position instead of timing out, so the normal 3 s confirmation cannot make it abandon a valid queue. `on_exit_area_exited()` clears the hold if the agent leaves the trigger, `reject_evacuation()` puts the exit on cooldown and retries elsewhere, and `max_exit_hold_time` (120 s) expires the hold through `resume_evacuation()`. If the area misses the body entirely, the `ARRIVED` timeout clears `has_evacuation_target` so the NPC can try again instead of wandering forever.
 
@@ -721,7 +743,7 @@ Because the voxel scale is 1.0 m per 16 px, the generated heights are exact: the
 | Mesh radius | 4 chunks | 8 chunks | 16 chunks |
 | Load radius | 12 chunks | 20 chunks | 40 chunks |
 | Nav radius | 3 chunks | 4 chunks | 8 chunks |
-| Agent cap | 40 | 120 | 250 |
+| Agent cap | 40 | 120 | 600 |
 | Cloud layers | Off | On | On |
 | Water waves / surface particles | Off | On | On |
 | FPS cap | 30 | 60 | Unlimited |
@@ -730,7 +752,7 @@ Because the voxel scale is 1.0 m per 16 px, the generated heights are exact: the
 
 The preset drives `Viewport.scaling_3d_scale`, `Engine.max_fps`, the master bus volume, `GlobalData.global_unit_cap`, `NavGridMap.baked_ao_enabled`, `ChunkMesher.build_budget_usec`, `ChunkStreamer` radii/budgets, the sun's `shadow_enabled`/`directional_shadow_max_distance`, `MinecraftClouds.visible`, and the water system's wave toggles/intervals. Groups `chunk_streamer`, `minecraft_clouds` and `sun_light` are registered in `_ready` so the autoload can find the scene nodes without hard paths. `scenes/Statistics_hud.gd` now refreshes its text at 4 Hz instead of every frame.
 
-The pause menu’s **Draw Distance** cycles `4/6/8/12/16/24/32/48/64` chunks. When the chosen draw distance exceeds the preset load radius, the streamer loads out to `draw + 2` chunks, its unload ring and `max_loaded_chunks` grow with it, and the player camera’s far plane grows to `draw * 16 + 64` m. **Agent Limit** cycles `40/80/120/200/300/500/700/1000`. The mesher reuses each chunk’s `ArrayMesh` across rebuilds instead of allocating a new mesh resource, and each chunk stays a separate `MeshInstance3D` so Godot frustum-culls it independently.
+The pause menu’s **Draw Distance** cycles `4/6/8/12/16/24/32/48/64` chunks. When the chosen draw distance exceeds the preset load radius, the streamer loads out to `draw + 2` chunks, its unload ring and `max_loaded_chunks` grow with it, and the player camera’s far plane grows to `draw * 16 + 64` m. **Agent Limit** cycles `40/80/120/200/300/500/600/700/1000`. The mesher reuses each chunk’s `ArrayMesh` across rebuilds instead of allocating a new mesh resource, and each chunk stays a separate `MeshInstance3D` so Godot frustum-culls it independently.
 
 The pause menu is a fully authored 3D scene (`scenes/menu/pause_menu.tscn` + `pause_menu.gd`) parented to `head/CameraSmooth/Camera3D` in `player.tscn`. It now follows the reference layout: a large `MENU` title on the left, a vertical entry list on the right, and a full-screen dark dim. Unselected entries are dim gray; the hovered/selected entry is yellow. Entries: **Resume, Settings, Statistics, Demos, Saves, Quit**.
 
@@ -833,6 +855,14 @@ The recorder is a consumer of instrumentation added to `Member`
 `docs/SIM_MEASUREMENTS.md`. The **player** and **comparer** are implemented
 (4.19); `manifest.capabilities` marks `replay` and `comparison` true.
 
+The optimizer contract is now live. `OptimizerBridge` calls
+`SimRecorder.set_optimizer_configuration()` before a run and
+`record_optimizer_execution()` after each solve, so `manifest.metadata.optimizer`,
+the summary optimizer block, `capabilities.optimizer` and the `optimizer` event
+carry the algorithm, mode, weights, environment version, estimate, convergence
+and applied/skipped counts. Predicted costs stay out of the measured summary
+fields. Field details are in [`OPTIMIZER.md`](OPTIMIZER.md) §11.
+
 ### 4.19 Demo library, player and comparer — `DemoStore`, `DemoPlayer`, `DemoComparer`
 
 Demos are per-save experiments: `user://saves/<slug>/demos/<id>/` containing
@@ -863,6 +893,82 @@ written when a run starts, and the comparer falls back to the run header for
 files whose `demo.json` predates that. Cumulative metrics use step samples. The
 comparer reports differences only; it does not optimize, diff grid geometry, or
 export. See `docs/DEMOS.md` and `docs/SIM_MEASUREMENTS.md`.
+
+The read-only panel now leads with **per-demo tables**: an *At cursor* grid (one
+column per recording, rows for evacuated/active/density/throughput/peak
+contact/routes) and a *Deltas vs A* grid. Detailed differences (trajectory
+divergence, exit assignments, disruptions, environment edits, configuration and
+summaries) are collapsed behind **Show detailed differences**, which keeps the
+panel readable at 3–6 recordings. Both the comparer and the Demo Player wrap
+their bottom transport bars in a horizontal `ScrollContainer`, so controls are
+never cut off on the right.
+
+### 4.20 Optimizer bridge and panel - `OptimizerBridge`, `OptimizerPanel`
+
+The optimizer's analysis layer lives in `optimization/` and is documented in
+[`OPTIMIZER.md`](OPTIMIZER.md). This section records the simulation-side
+integration added in phase 2.
+
+- **Ownership.** `OptimizerBridge` (`scripts/optimization/optimizer_bridge.gd`)
+  is a `Node` created by `OptimizerPanel`, not an autoload. The panel is a
+  right-side sibling of the inventory (the old runtime popup is gone), so a
+  project without it and with the optimizer disabled runs the baseline with no
+  dependency on the optimizer.
+- **Capture.** On **Run once**, or automatically 1 s after Start when enabled, it
+  builds a `SimulationSnapshot` from the `npc` group, the deduplicated
+  `EvacPoint` group, the live `NavGridMap` and `GlobalData`. It skips
+  non-evacuees, pre-movement agents are included, and `arrived`/`queued`/
+  `evacuated`/`dead` agents are excluded. One `build_cost_field_to()` per
+  available exit supplies all distances.
+- **Solve.** It calls `OptimizerManager.solve()` in a deferred idle frame. The
+  solve is synchronous; a 600-agent / 28-cohort greedy solve measured **73–86 ms**
+  (~309–417 ms wall including capture, two idle frames and applying 600
+  assignments). ACO uses the same path with a 250 ms default budget. It never
+  runs inside `_physics_process`.
+- **Validation.** It rejects the whole result when the `environment_version`
+  changed, an assigned exit is no longer available, or the result is infeasible.
+  Individual agents are skipped rather than invalidating the plan if they were
+  admitted, are queued, or are within the 4 m commitment radius of their current
+  exit.
+- **Application.** Accepted assignments go through
+  `Member.set_optimizer_assignment()`, which cancels the pending path, requests
+  a route with reason `"optimizer"`, and suppresses the local logit choice until
+  rejection, path failure, exit unavailability, admission or an evacuation-mode
+  change. Pre-movement agents store the assignment and keep their delay.
+- **Late spawns.** `GlobalData.agent_spawned` is adopted by the nearest cohort of
+  the last feasible result when the new agent appears within **8 m** of that
+  cohort and the environment version still matches. Farther spawns keep the local
+  choice. This is a point-in-time plan plus adoption, not a per-spawn re-solve;
+  see [`OPTIMIZER.md`](OPTIMIZER.md) §4.4.
+- **Invalidation.** `GlobalData.environment_version` is bumped by
+  `report_environment_change()` (placeables/water), exit availability changes and
+  resets, and the bridge bumps it on `block_placed`/`block_removed`. Chunk
+  streaming does not bump it.
+- **Recording.** The manifest metadata optimizer block is filled from
+  `SimRecorder.set_optimizer_configuration()`; each solve writes an `optimizer`
+  event with the estimate, convergence, method-specific detail, applied/skipped
+  counts, adopted spawns and rejection reason. Predicted costs stay out of the
+  measured summary fields.
+- **UI.** The Simulation title row has an **Optimizer** button that opens the
+  right-side panel. It exposes enable, method, objective, cohort size/max,
+  ACO ants/iterations/budget, auto-solve, **Run once**, status and the last
+  result, with a plain description of each method and objective. See
+  [`OPTIMIZER.md`](OPTIMIZER.md) §12.
+- **Limits.** Phase 3 does not re-solve on disruptions automatically (press
+  **Run once**), does not expose weight sliders, and has no convergence chart or
+  assignment visualisation yet.
+
+### 4.21 Optimizer algorithm order
+
+`nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search` and `aco` are
+implemented. The exact reference is bounded by `max_combinations` and a time
+budget and reports `exact = false` when it stops. ACO is a hybrid: a
+local-search seed, ACS ant construction (16 ants / 40 iterations by default) and
+a short polish, budgeted at 250 ms. It is never worse than its local seed and
+matched exact in 3/5 seeded 6-cohort instances; it should be reported as a hybrid,
+not as pure pheromone search. At 600 agents / 40 cohorts `nearest` takes ~15 ms,
+`greedy` ~185 ms and `local_search` ~0.95 s; see [`OPTIMIZER.md`](OPTIMIZER.md)
+§8.4.
 
 ---
 
@@ -1117,7 +1223,10 @@ Later bell presses skip the intro and play a short recall line. Closing the inve
 | `ChunkStreamer` | `NavGridMap`, `ChunkMesher`, player | exported node paths + chunk APIs | drives load/mesh/nav LOD |
 | `ChunkStreamer` | `ChunkFileStore` | `user://world/chunks/*.chunk` | saves dirty unloaded chunks; loads saved chunks |
 | `ChunkFileStore` | `FileAccess` / `DirAccess` | Variant dictionaries | simple, versioned by the grid's chunk format |
-| `EvacPoint` | `GlobalData`, `EvacuationManager` | direct singleton calls | simple and fine |
+| `EvacPoint` | `GlobalData`, `EvacuationManager` | direct singleton calls | simple and fine; also bumps `environment_version` on availability changes |
+| `OptimizerBridge` | `NavGridMap`, `EvacPoint` group, `Member`, `GlobalData`, `SimRecorder` | group lookups + duck-typed `call()/get()` | the only scene-aware optimizer file; the simulation core never references it |
+| `OptimizerPanel` | `OptimizerBridge` | child node + signals | right-side panel owns the bridge; not an autoload |
+| `Member` | assignment override | public `set_optimizer_assignment()` | generic simulation capability; no optimizer dependency |
 | `NPCSpawner` | `GlobalData`, `EvacuationManager` | direct calls | quota bookkeeping fixed; reset semantics still weak |
 | `player` | `NavGridMap` | group lookup | fine |
 | `BuildController` | `HUDManager`, `NavGridMap` | node path + group lookup | clean ownership split from `player` |
@@ -1136,6 +1245,8 @@ Later bell presses skip the intro and play a short recall line. Closing the inve
 | `CycleController` | `WorldEnvironment`, `DirectionalLight3D` | exported node paths | clean |
 
 **General pattern:** direct singleton access and group lookups dominate; signals are used for `navigation_changed`, `npc_evacuated`, `npc_spawned`, `spawning_started/stopped/reset`, `metrics_changed`, health, flow-field baked, and every dialogue step. There is no event bus or dependency injection. For this size that is workable, but almost every system knows about `GlobalData`, and the dialogue view additionally depends on being a named sibling of `Inventory`.
+
+**Optimizer boundary (implemented).** [`OPTIMIZER.md`](OPTIMIZER.md) defines the one new dependency direction: the optimization layer reads a `SimulationSnapshot` and returns an `OptimizationResult`, and `OptimizerBridge` — owned by the Simulation panel — validates and applies it through `Member.set_optimizer_assignment()`. No file in `optimization/` references the scene tree, and no simulation core file references the optimizer; `Member` only knows a generic assignment override. The bridge is not an autoload, so removing it leaves the baseline run unchanged.
 
 **Two NPC identity groups** (`npc` and `Members`) and two player groups (`player` and `Player`) remain a recurring source of near-misses. `EvacPoint`’s two group members per exit are also a trap for selection code.
 
@@ -1207,15 +1318,41 @@ The experimental `SeparationRayShape3D` (`stepper`, 0.5 m, `(0, 0.5, −1)`, hor
 **N17 — Generated item icons lag the placeable catalogue.** (Low)
 `resources/voxel_items.json` lists **13** icons for **15** placeable scenes: `sim_false_boid_emitter` and `sim_false_boid_perch` were added after the last `VoxelItemGenerator.generate_all()` run, so they fall back to scene previews instead of generated 64×64 icons. The block pipeline is current (51 textures / 316 MeshLibrary items after the 2026-11-17 regeneration). Re-run `VoxelItemGenerator.generate_all()` after adding placeables, or document the regeneration step next to the placeable folders.
 
-**N18 — Measurement, playback and comparison exist; no optimizer.** (Known gap)
+**N18 — The optimizer is implemented through phase 3; later phases remain.** (Known gap)
 `SimRecorder` records replay-ready per-save demos, the **Demos** page plays them
 in the map (timeline, speed, stepping, agent history, route/exit/density/contact
-views), and **Compare** runs 2–6 recordings on one timeline with metric charts
-and trajectory/exit/disruption/config differences. There is still no automatic
-baseline selection, grid-geometry diff, layout ranking or optimizer, and no
+views), and **Compare** runs 2–6 recordings on one timeline with metric charts,
+per-demo cursor tables and collapsed detail differences. There is still no
+automatic baseline selection, grid-geometry diff or layout ranking, and no
 hazard/smoke model or `trapped` state (those fields stay explicitly
 unavailable/null). See `docs/DEMOS.md` and `docs/SIM_MEASUREMENTS.md`.
 
+The optimizer now captures a live snapshot, solves a cohort→exit assignment,
+applies it through `Member.set_optimizer_assignment()`, adopts late spawns from
+the last result, records the estimate and writes the measured summary into the
+same demo. ACO is implemented on top of the exact/local baselines. The remaining
+phases are the contact/switching/hazard objective terms, disruption-driven
+re-solve with hysteresis, and Pareto/robustness analysis; a measured
+predicted-vs-actual density study is also outstanding.
+
+Three design constraints that were resolved in phases 2–3 still govern later
+work:
+
+- **Assignment persistence** is an explicit override. It clears on rejection,
+  path failure, unavailability, admission and mode changes.
+- **The cost field** is `NavGridMap.build_cost_field_to()`, a read-only weighted
+  flood that works with `enable_flow_fields = false` and does not touch the flow
+  cache.
+- **The existing congestion signal is still reactive.** Cell heat comes from
+  stuck reports and decays; the optimizer's demand-to-capacity term is the
+  prediction, and its accuracy is an experimental output.
+
+The baselines and the exact reference remain the comparison set for ACO. ACO is
+seeded by local search and polished, so it is never worse than that seed; report
+it as a hybrid. Measured cost at 600 agents / 40 cohorts: 15 ms `nearest`, 185 ms
+`greedy`, ~0.95 s `local_search`; the bridge's 600-agent / 28-cohort solve took
+73–86 ms and applied 600/600 assignments. See [`OPTIMIZER.md`](OPTIMIZER.md)
+§8.4.
 ### 9.2 Carried over from the 2026-10-31 audit
 
 **Resolved:** F1 (`EvacuationManager` missing), F3 (no simulation controls), F5 (property editor corrupting resources), F6 (immutable quotas), F9 (chunk save/load now used by `ChunkStreamer`), F10 (crowd hash every frame), F14 (incomplete weight refresh), F15 (`has_evacuation_target` never cleared), F21 (collision/mesh divergence; every library collider now fits its cell), F37 (`hand_item.gd` now drives the first-person hand and held item). The P2 items “instrument the run” and “results panel” are also done.
@@ -1239,8 +1376,9 @@ unavailable/null). See `docs/DEMOS.md` and `docs/SIM_MEASUREMENTS.md`.
 | Route quality (avoid walls/drops) | **Yes** | Wall/gap cost weights, A* smoothing, anisotropic SFM lanes (emergent; per-agent lane offsets default to 0) |
 | Shared-destination performance | **Optional** | Baked flow fields exist and are time-sliced, but are disabled in the shipped map |
 | Evacuation success accounting | **Yes** | `EvacuationManager` + `EvacPoint` + results panel |
-| Simulation controls | **Yes** | Simulation panel: start/reset/quota/cap/mode/populate |
+| Simulation controls | **Yes** | Simulation panel: start/reset/quota/cap/mode/populate, plus an Optimizer popup (enable, algorithm, objective, cohort size, Run once) |
 | Agent configuration | **Yes** | Agents category edits Member exports for live and future NPCs; bool rows are checkboxes |
+| Exit-assignment optimization | **Yes, optional** | Optimized runs capture a snapshot, solve cohort→exit assignments (`nearest` / `equal_split` / `greedy` / `exhaustive` / `local_search` / `aco`), apply them through a Member override, adopt late spawns and record the estimate; baseline runs keep the local logit choice. Multi-objective terms and disruption re-solve are pending |
 | NPC visual mode | **Yes** | Per-agent 3D model or one of up to six baked `AnimatedSprite3D` variants; sprite mode is the default (`realistic_sprites_mode = true`, `realistic_sprite = random`) and disables LeanAnimator |
 | Sprite rim/bounce lighting | **Yes** | `DirectionalLight3D` → global shader params → 3D mix overlay (unshaded rim + complementary bounce) |
 | Foliage placeables | **Yes** | Billboard or crossed-plane `Sprite3D` placeables, selected by the texture `_billboard` suffix |
@@ -1253,9 +1391,9 @@ unavailable/null). See `docs/DEMOS.md` and `docs/SIM_MEASUREMENTS.md`.
 | Map save/load | **Yes** | `SaveManager` slots persist chunks, placeables, player transform, cycle time, sim seed, and a world descriptor; no full-run replay or baseline comparison |
 | Run measurement / recording | **Yes** | `SimRecorder` writes per-save demos with timed agent/exit/simulation rows, route/queue/contact/nav events, environment/disruptions, layout/nav snapshots |
 | Demo library and player | **Yes** | Pause menu Demos tab: rename, description, folders/filter, duplicate, delete, compare; in-map player with timeline, speed, stepping, noclip camera, agent history, routes/exits/density/contact |
-| Demo comparer | **Yes** | Compare 2–6 demos on one timeline: overlaid agents, six metric charts, trajectory divergence, exit-assignment/disruption/config differences; no optimizer or grid-geometry diff |
+| Demo comparer | **Yes** | Compare 2–6 demos on one timeline: overlaid agents, six metric charts, per-demo cursor/delta tables, collapsed detail differences, exit-assignment/disruption/config differences; no optimizer ranking or grid-geometry diff |
 | Boot menu, saves browser, music, credits | **Yes** | 3D `main_menu.tscn` boot scene, `saves_only` pause-menu overlay, `MusicManager` autoload with `credits.json`, BGM pop-up, 3D credits/search |
-| Comparison / optimization loop | **Partial** | Demo Comparer reports per-run differences; no baseline selection, layout ranking or optimizer |
+| Comparison / optimization loop | **Partial** | Demo Comparer reports per-run differences; no baseline selection or layout ranking. The decision layer is documented in `docs/OPTIMIZER.md` and implemented through phase 2 |
 | NPC audio/personality | **Abandoned** | `SoundManager` targets removed systems |
 | Minecraft-style clouds | **Yes** | Two merged, face-shaded cloud layers at y = 128 and 256, drifting in opposite directions and tinted by the day/night sun |
 | PSX/CRT art direction | **Partial** | Shaders and addon installed but unused; Consul is the first authored runtime presentation layer |
@@ -1285,7 +1423,7 @@ The gap is still clearest in the name: routing is optimised locally (per-path co
 10. Budget or defer `RandomPopulator` path queries; make Populate set a target population.
 11. Derive `COMPLETE` from spawned/evacuated/alive and a “spawning finished” flag.
 12. Add one real floor plan (classrooms, corridors, two stairwells, a blocked alternative); map save/load now exists, so use it to ship the plan as a starter slot.
-13. Add a **layout ranking** pass on top of the comparer: freeze a baseline, edit, re-run, and score deltas from summaries, trajectories, exit use and disruption responses.
+13. Add a **layout ranking** pass on top of the comparer: freeze a baseline, edit, re-run, and score deltas from summaries, trajectories, exit use and disruption responses. **Then continue the optimizer in the order described in [`OPTIMIZER.md`](OPTIMIZER.md).** Phases 1–3 are done: cohort→exit assignment, five baselines + ACO, the bridge, Member overrides, late-spawn adoption, recording and the right-side panel, with 175 assertions across six harnesses. Phase 4 adds contact/switching terms and modes; phase 5 adds disruption-driven reoptimization with hysteresis; phase 6 adds a hazard input. Do not add RL/GA/PSO or a voxel hazard layer first.
 14. Finish decoupling Consul: mark `consul_intro_seen` only after `finished`, persist `dialogue_flags` to `user://`, and remove the duplicate `_build_intro()` copy. (The inventory now only rings the bell; pressing it summons him.)
 15. Re-run `VoxelItemGenerator.generate_all()` after adding placeables; the false-boid pair is the only missing icon entry.
 16. ~~Build the demo player: read a `recording.jsonl`, interpolate agent transforms between ticks, and overlay exits/events from the same file.~~ **Done:** `DemoPlayer` (in-map playback) and `DemoComparer` (synchronized multi-run comparison).
@@ -1312,11 +1450,17 @@ The gap is still clearest in the name: routing is optimised locally (per-path co
 
 ## 12. Verification log
 
-Current-revision checks, condensed. The complete table (2026-11-06 → 2026-11-17, 189 rows) is in [`archive/VERIFICATION_LOG.md`](archive/VERIFICATION_LOG.md). Rows were produced with Godot 4.7.2.stable.steam through the Godot MCP bridge; no runtime check modifies project source.
+Current-revision checks, condensed. The complete table (2026-11-06 → 2026-11-20) is in [`archive/VERIFICATION_LOG.md`](archive/VERIFICATION_LOG.md). Rows were produced with Godot 4.7.2.stable.steam through the Godot MCP bridge or the same binary in headless `--script` / scene mode; no runtime check modifies project source.
 
 | Check | Result |
 |---|---|
-| Source audit (2026-11-17) | 52 project scenes / 97 scripts (excluding `addons/`); 10 autoloads; 15 placeable scenes (Sim 4, Device 2, Foliage 9); MeshLibrary **316 items / 7,720,939 bytes** referencing all **51** `textures/autoblocks/` PNGs; 13 voxel-icon entries; boot scene `scenes/menu/main_menu.tscn`; `Maps/test.tscn` has 80 cells + 3 emitters + 4 perches and no congestion override. |
+| Optimizer phase 2 (2026-11-20) | `optimizer_phase2_test.tscn`, real scene: **52/52 PASS**. A real `NavGridMap`, two `EvacPoint`s and 25 `Member`s went through bridge capture → greedy solve → apply; applied+skipped covered every assignment; override routes were labelled `optimizer`; a late spawn was adopted by the nearest cohort; exit B disabled mid-run was never assigned in the next solve; a pre-movement agent stored the assignment, stayed `pre_movement`, and used it after the delay; a block edit bumped `environment_version`; a recorded run wrote `manifest.metadata.optimizer`, an `optimizer` event, optimizer route rows and measured admissions, then the demo was deleted; the right-side Optimizer panel found its bridge, exposed the controls and descriptions, and opened/closed. 0 script errors. |
+| Optimizer 600-agent scale (2026-11-20) | `optimizer_scale_test.tscn`, 600 real agents, 40 × 20 m floor, 4 exits: **7/7 PASS**. 28 cohorts, solve **73–86 ms**, **600/600** assignments applied, wall time **309–417 ms** including capture, two idle frames and application. |
+| Optimizer phase 3 — ACO (2026-11-20) | `optimizer_phase3_test.gd`: **27/27 PASS**. Fixed 3-cohort instance: ACO equals the exact optimum and beats nearest. Five seeded 6-cohort instances: ACO is never worse than local search, never better than exact, and **matched exact in 3/5**. Same seed → same cost and assignments. A 50 ms budget stops before all iterations and still returns a feasible plan. A 28-cohort instance with the default 250 ms budget solved within the planning bound. 0 script errors. |
+| Demo UI — scroll + comparer tables (2026-11-20) | `demo_ui_test.gd`: **23/23 PASS**. Both the Demo Player and Demo Comparer transport bars contain a horizontal auto-scroll container; the player's bottom panel reserves the extra height; the comparer has values/deltas table boxes, a collapsed details section, a 3-column values grid (21 cells) and a 2-column delta grid (14 cells); the table shows A=10, B=12 and Δ=+2 for a synthetic pair. 0 script errors. |
+| Optimizer phase 1 (2026-11-20) | Headless, no scene, no autoloads. `optimizer_phase1_test.gd`: **48/48 PASS** (3 cohorts × 20 agents; exhaustive = analytic minimum and ≤ nearest/equal/greedy; local search between exhaustive and greedy; queue wait 190 s at 1/s; rate 0 → 0 wait; congestion delay > 0 for 60 agents on one exit; unreachable cohort leaves 40 assigned and reports `unreachable`; unavailable exit never assigned; deterministic cost/assignments; cohort cap merges 3 → 2; exhaustive refuses a capped search space; weight presets merge overrides). `optimizer_nav_api_test.gd`: **18/18 PASS** on a real `NavGridMap` (50-cell cost field, zero-cost target, weighted distance matches A* at 2.00 m, `cell_limit = 5`, 4-cell disconnected island, unreachable point returns empty field/path). Benchmark, 600 agents / 40 cohorts / 4 exits: `nearest` 15 ms / 1 eval, `greedy` 185 ms / 200 evals, `local_search` 953 ms / 709 evals, exhaustive refused 4^40. 0 script errors. |
+| Optimizer design audit (2026-11-20) | Source-checked only; no runtime change. Confirmed the contracts the design relies on: `EvacPoint.get_exit_status()` exposes id/availability/service rate/queue/capacity/occupancy; `Member.request_evacuation_target()` is public while `_choose_evacuation_point()` and `choose_next_action()` re-choose each cycle; `NavGridMap.estimate_path_distance()` is synchronous A* while `get_path_distance()` requires a baked flow field and `ensure_flow_field_cell()` returns false while `enable_flow_fields = false`; `CrowdManager.get_density_per_m2()` is a 1.4 m same-floor probe; `SimRecorder.record_optimizer_execution()` and the manifest `optimizer` block exist but nothing emits them. |
+| Source audit (2026-11-17) | 52 project scenes / 97 scripts (excluding `addons/`); 11 autoloads; 15 placeable scenes (Sim 4, Device 2, Foliage 9); MeshLibrary **316 items / 7,720,939 bytes** referencing all **51** `textures/autoblocks/` PNGs; 13 voxel-icon entries; boot scene `scenes/menu/main_menu.tscn`; `Maps/test.tscn` has 80 cells + 3 emitters + 4 perches and no congestion override. |
 | Simulation recorder + demos (2026-11-18) | Live 1–6 agent runs wrote per-save `demo.json`, `recording.jsonl`, `manifest.json`, and `summary.json` under `user://saves/<slug>/demos/`; ticks carried agent/exit/simulation rows; event streams included route/queue/contact/nav/environment records, and route changes carried before/after paths and disruption ids. Rename, description, folder, duplicate, and delete persisted in metadata; the Demos tab listed them and the in-map player played/closed the recording. |
 | 3D main menu + saves + music + 3D credits (2026-11-17) | Booted into `MainMenu`; **SAVES** opened the pause menu's Saves page as a `saves_only` overlay (Save/Save As/World Type hidden, 4 rows); **Load Selected** loaded `Maps/test.tscn`; the BGM pop-up appeared in the menu and again in the HUD and slid out after its dwell; credits search for `kemp` returned 1 track and wheel scrolling worked; **Back/Esc** returned to `MainMenu`; 0 script errors. |
 | BGM pop-up / audio / title (2026-11-17) | Pop-up 268 × 66 at `(0, 0)`, 16 px title/artist, alpha 0.78, 38 × 38 icon, 203 px clipped text columns; long titles scrolled and restarted per track; re-requesting the playing file stayed hidden. Audio page Music 75% → 100% moved the player −20.5 → −18 dB live. Loading a save stopped the menu playlist. |

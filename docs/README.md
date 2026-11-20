@@ -14,19 +14,21 @@ and links to the code it describes.
 | [`FALSE_BOIDS.md`](FALSE_BOIDS.md) | The hybrid ambient-bird system: particle clouds, boid leaders, promoted/perched birds, migration, tuning. |
 | [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) | Every measurement the simulator records, the `SimRecorder` file format, disruption attribution, and what is not modelled. |
 | [`DEMOS.md`](DEMOS.md) | Per-save demo library, naming/descriptions/folders/duplication, the in-map Demo Player, and the synchronized Demo Comparer. |
+| [`OPTIMIZER.md`](OPTIMIZER.md) | The decision layer: gap analysis, boundary, data contracts, objective, measured cost, roadmap and risks. **Phases 1–3 implemented** (analysis layer, bridge, ACO, side panel); multi-objective terms, disruption re-solve and hazards pending. |
 | [`MAIN_MENU_AND_CREDITS.md`](MAIN_MENU_AND_CREDITS.md) | Boot menu, save browser, `MusicManager`, BGM pop-up, 3D credits and their data files. |
 
 ## Archive
 
 | Page | Contents |
 |---|---|
-| [`archive/CHANGELOG.md`](archive/CHANGELOG.md) | Dated change history (2026-11-06 → 2026-11-18), newest first, including superseded entries. |
+| [`archive/CHANGELOG.md`](archive/CHANGELOG.md) | Dated change history (2026-11-06 → 2026-11-20), newest first, including superseded entries. |
 | [`archive/VERIFICATION_LOG.md`](archive/VERIFICATION_LOG.md) | Full dated verification table from the Godot MCP runtime bridge, newest first. |
 | [`archive/CODEBASE_ANALYSIS_2026-11-06.md`](archive/CODEBASE_ANALYSIS_2026-11-06.md) · [`2026-11-02`](archive/CODEBASE_ANALYSIS_2026-11-02.md) · [`2026-10-31`](archive/CODEBASE_ANALYSIS_2026-10-31.md) | Earlier full analyses, kept for the metrics and structures they describe. |
 
-## Current snapshot (2026-11-18)
+## Current snapshot (2026-11-20)
 
-- Godot **4.7.2**, `mobile` renderer, 30 Hz physics, source baseline `6e72ca2`.
+- Godot **4.7.2**, `mobile` renderer, 30 Hz physics, source baseline `0df7d6a`
+  (working tree also contains optimizer phases 1–3).
 - Boot scene: `scenes/menu/main_menu.tscn`. Game scene: `Maps/test.tscn`.
 - Simulation: reciprocal Social Force Model, kinematic locomotion, deterministic
   per-agent RNG, lognormal pre-movement, logit exit choice; High preset 600 agents.
@@ -43,8 +45,14 @@ and links to the code it describes.
 - Scene content: bare 80-cell platform, three false-boid emitters, four perches;
   **no spawners or evac point**. The demo layout is the save slot
   `testing_testing_things_just_got_interesting`.
-- The “optimizer” half of the title is **not implemented**: there is no baseline
-  selection, layout ranking, or automatic optimization yet.
+- The “optimizer” half of the title is **implemented through phase 3**: spatial
+  cohorts, per-exit cost fields, the objective, five baselines plus ACO, the
+  `OptimizerBridge` (snapshot → solve → validate → apply → late-spawn adoption),
+  Member assignments, manifest/event/summary recording and a right-side Optimizer
+  panel beside the inventory. Optimized runs assign exits globally; baseline runs
+  still use the local logit choice. Multi-objective terms, disruption-driven
+  re-solve and hazards are not implemented. Contracts, measured cost and the
+  phased roadmap are in [`OPTIMIZER.md`](OPTIMIZER.md).
 
 ## Conventions
 

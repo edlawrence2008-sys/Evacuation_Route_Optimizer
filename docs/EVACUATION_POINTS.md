@@ -1,10 +1,12 @@
 # Evacuation points: finite throughput and receiving areas
 
-> **Status:** 2026-11-18 · **Applies to:** `scenes/evac_point.gd`,
+> **Status:** 2026-11-20 (policy unchanged since 2026-11-18; optimizer-facing
+> contract added) · **Applies to:** `scenes/evac_point.gd`,
 > `evacuation_manager.gd`, `scripts/NPCstuff/Member.gd`,
 > `scenes/EvacuationResults_hud.gd`, `scripts/map_renderer.gd` ·
 > **Companions:** [`SIMULATION_MODEL.md`](SIMULATION_MODEL.md) §5.6,
-> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.5.
+> [`OPTIMIZER.md`](OPTIMIZER.md) §7.2 (how the planned optimizer models this
+> policy), [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.5.
 
 `scenes/placeables/sim/sim_evac_point.tscn` still works exactly as before: an
 NPC that enters the 1 m radius, 2 m tall trigger is recorded and removed from
@@ -93,6 +95,28 @@ forever.
   pending path requests, and ignores late path callbacks. `EvacuationManager`
   then reparents the node to an `EvacuatedAgents` container at the exit-owned
   slot.
+
+## Optimizer-facing contract
+
+The global assignment layer ([`OPTIMIZER.md`](OPTIMIZER.md), phases 1–3) treats
+the fields above as its **capacity model**, not as door geometry:
+
+- `exit_id` is the stable key. Two exits sharing an explicit id merge their
+  aggregates, so an optimizer must not use one id for two distinct exits.
+- `operational` / `is_available()` is a **hard** assignment constraint. Agents
+  already assigned to a disabled exit are released by `on_exit_unavailable()`.
+- `exit_service_rate` is a single-server interval (`1 / rate`). A predicted wait
+  is `queue / rate` plus `1 / rate` per additional arrival. `0` means unlimited,
+  so the optimizer must score a **zero** queue penalty, not an infinite one.
+- `max_queue_length` rejects over-limit arrivals. It is better modelled as a
+  steep penalty than a hard constraint, because a large crowd can make a hard
+  limit infeasible.
+- `receiving_capacity` only binds when `retain_evacuated = true`; with the
+  default (`false`) the safe area is vacated on the admission frame. The
+  optimizer must not treat it as an always-active cap.
+- `get_exit_status()` supplies the snapshot fields (`current_queue`, `accepted`,
+  `average_wait`, `receiving_occupancy`, `service_rate`, `max_queue_length`,
+  `receiving_capacity`) without the optimizer reading the `Area3D` directly.
 
 ## Invariants and limitations
 

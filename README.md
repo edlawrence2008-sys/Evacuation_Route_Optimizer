@@ -6,9 +6,13 @@ how the evacuation went.
 
 > **Status: simulation prototype.** Building, crowd simulation, exits, metrics,
 > per-run recording, demo playback and synchronized demo comparison work
-> end-to-end. The *optimizer* itself — choosing and improving a baseline layout —
-> is not implemented; the recorder, player and comparer provide the experiment
-> data and inspection. See
+> end-to-end. The *optimizer* is **implemented through phase 3**: spatial
+> cohorts, per-exit cost fields, the objective, five baselines plus ACO, a bridge
+> that applies assignments and adopts late spawns, run recording and a
+> right-side Optimizer panel. Optimized runs assign exits globally; baseline runs
+> keep the local exit choice. Multi-objective terms, disruption re-solve and
+> hazards are still pending. The contracts, objective, measured cost and phased
+> roadmap are in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md). See
 > [`docs/CODEBASE_ANALYSIS.md`](docs/CODEBASE_ANALYSIS.md),
 > [`docs/DEMOS.md`](docs/DEMOS.md), and
 > [`docs/SIM_MEASUREMENTS.md`](docs/SIM_MEASUREMENTS.md).
@@ -82,6 +86,24 @@ a configuration diff. See
 [`docs/DEMOS.md`](docs/DEMOS.md) and
 [`docs/SIM_MEASUREMENTS.md`](docs/SIM_MEASUREMENTS.md).
 
+## Tests
+
+The optimizer is covered by headless checks. The pure and navigation harnesses
+need no scene; the bridge tests run as scenes because they use autoloads:
+
+```
+godot --headless --path . --script res://tests/optimizer_phase1_test.gd
+godot --headless --path . --script res://tests/optimizer_nav_api_test.gd
+godot --headless --path . --script res://tests/optimizer_phase3_test.gd
+godot --headless --path . res://tests/optimizer_phase2_test.tscn
+godot --headless --path . res://tests/optimizer_scale_test.tscn
+godot --headless --path . --script res://tests/demo_ui_test.gd
+```
+
+Expected: `48`, `18`, `27`, `52`, `7` and `23` checks with `failures=0` — 175
+assertions in total. The phase-2 test records and deletes its own demo. Details
+in [`tests/README.md`](tests/README.md).
+
 ## Documentation
 
 - [`docs/README.md`](docs/README.md) — documentation index and conventions.
@@ -91,6 +113,7 @@ a configuration diff. See
 - [`docs/FALSE_BOIDS.md`](docs/FALSE_BOIDS.md) — ambient birds.
 - [`docs/SIM_MEASUREMENTS.md`](docs/SIM_MEASUREMENTS.md) — recorded measurements and run files.
 - [`docs/DEMOS.md`](docs/DEMOS.md) — per-save demo library, in-map player and comparer.
+- [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md) — design for the missing decision layer: contracts, objective, algorithm order, roadmap.
 - [`docs/MAIN_MENU_AND_CREDITS.md`](docs/MAIN_MENU_AND_CREDITS.md) — menu, saves, music, credits.
 - [`docs/archive/`](docs/archive/) — dated changelog, verification log, earlier analyses.
 
@@ -103,13 +126,16 @@ a configuration diff. See
 | `resources/` | MeshLibrary, block materials, palettes, icons, credits, dialogue |
 | `textures/`, `models/`, `shaders/`, `sounds/` | Art and audio |
 | `addons/` | Day/night cycle, CRT |
+| `tests/` | Headless checks: optimizer analysis layer, nav API, bridge/recording/UI, 600-agent scale (see [`tests/README.md`](tests/README.md)) |
 | `docs/` | Documentation (see above) |
 
 ## Known limitations
 
 - No authored level or shipped scenario; the game scene is a starter platform.
-- No optimizer loop or automated tests; the comparer reports differences but
-  does not choose a layout.
+- The optimizer is implemented through phase 3 (assignment, ACO, recording,
+  side panel, late-spawn adoption). Multi-objective terms, automatic disruption
+  re-solve and hazards are not implemented; a full 600-agent recorded evacuation
+  is still a manual run. Phased plan in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md).
 - Kinematic agents do not collide with the world; contact is a soft force.
 - Exit throughput/capacity are policy models, not door geometry.
 - Full 64-chunk world generation is memory-bound and disabled.

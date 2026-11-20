@@ -5,6 +5,8 @@
 > `scripts/GlobalData.gd`, `evacuation_manager.gd` · **Companions:**
 > [`EVACUATION_POINTS.md`](EVACUATION_POINTS.md) (admission policy),
 > [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) (recorded metrics and run files),
+> [`OPTIMIZER.md`](OPTIMIZER.md) (planned decision layer that consumes these
+> measurements),
 > [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.3–4.5 (system context).
 > **Target:** **600 live agents at 30 Hz physics** on the test map, with an
 > explicit, defensible Social Force Model rather than the previous ad-hoc
@@ -284,6 +286,13 @@ which is a multinomial logit draw. Agents in the same place therefore do not
 all choose the same exit, and two exits of equal quality split the crowd
 without an explicit assignment rule.
 
+When the optimizer is enabled, `Member.set_optimizer_assignment()` bypasses this
+draw for that agent and keeps the assigned exit until the override is cleared
+(rejection, path failure, exit unavailability, admission or a mode change).
+That changes the decision, not the crowd model: the same A\*/flow steering and
+Social Force interactions apply. With the optimizer disabled the logit model
+above is unchanged.
+
 ### 5.4 Stuck handling and right-of-way
 
 Stuck detection is unchanged in shape: insufficient progress toward the current
@@ -543,7 +552,9 @@ Recommended next checks:
    stair and slab variant in the level, and that descending agents do not clip
    through landings.
 4. **Dynamic obstacles.** Block and unblock a corridor during a run and check
-   that flow-field invalidation and repathing recover.
+   that flow-field invalidation and repathing recover. The planned optimizer
+   consumes the same `navigation_changed` / `environment_changed` signals for
+   disruption-driven reassignment; see [`OPTIMIZER.md`](OPTIMIZER.md) §9.
 5. **Determinism check.** Run the same seed twice with the same agent count and
    compare arrival order and exit shares.
 

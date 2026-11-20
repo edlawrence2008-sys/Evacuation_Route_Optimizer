@@ -125,6 +125,21 @@ var _summary: Dictionary = {}
 ## exists; this is metadata for reproducible experiments.
 var _scheduled_events: Array[Dictionary] = []
 
+## Optimizer configuration for this run. Written into the manifest/run header so
+## a demo records which objective produced it. Empty until a bridge (or a test)
+## registers a configuration; the default describes the local logit baseline.
+var _optimizer_configuration: Dictionary = {
+	"available": false,
+	"algorithm": "",
+	"mode": "",
+	"weights": {},
+	"parameters": {},
+	"cohort_size": 0.0,
+	"max_cohorts": 0,
+}
+var _optimizer_last_usec: int = 0
+var _optimizer_executions: int = 0
+
 
 func _ready() -> void:
 	process_priority = 50
@@ -224,8 +239,23 @@ func schedule_environment_event(
 	})
 
 
-## Record an optimizer execution step. No optimizer exists yet, but the API and
-## event stream are ready for one.
+## Register the optimizer configuration for the next/current run. The bridge
+## calls this whenever the algorithm, mode, weights or enable flag changes, so
+## the manifest can describe the run even before the first solve.
+func set_optimizer_configuration(configuration: Dictionary) -> void:
+	_optimizer_configuration = configuration.duplicate(true)
+
+	if not _optimizer_configuration.has("available"):
+		_optimizer_configuration["available"] = false
+
+
+func get_optimizer_configuration() -> Dictionary:
+	return _optimizer_configuration.duplicate(true)
+
+
+## Record an optimizer execution step. The detail dictionary is the optimizer's
+## estimate and the application outcome; measured outcomes stay in the run
+## summary, never in this event.
 func record_optimizer_execution(
 	name: String,
 	duration_usec: int,
@@ -233,6 +263,9 @@ func record_optimizer_execution(
 ) -> void:
 	if not _recording:
 		return
+
+	_optimizer_last_usec = maxi(0, duration_usec)
+	_optimizer_executions += 1
 
 	_write({
 		"type": "optimizer",
@@ -466,6 +499,8 @@ func _reset_run_state() -> void:
 	_last_nav_cells = 0
 	_sample_count = 0
 	_flush_accum = 0.0
+	_optimizer_last_usec = 0
+	_optimizer_executions = 0
 
 
 func _clear_run_state() -> void:
@@ -916,8 +951,8 @@ func _sample_sim_stats(
 		"contact_solves": int(contact.get("solves", 0)),
 		"nav_total_usec": nav_total,
 		"nav_last_usec": nav_last,
-		"optimizer_available": false,
-		"optimizer_usec": 0,
+		"optimizer_available": bool(_optimizer_configuration.get("available", false)),
+		"optimizer_usec": _optimizer_last_usec,
 		"hazard_level": null,
 	}
 
@@ -1547,13 +1582,17 @@ func _build_summary(reason: String) -> Dictionary:
 			"total_usec": nav_total + path_total,
 		},
 		"navigation_computation_usec": nav_total + path_total,
-		"optimizer_available": false,
-		"optimizer_execution_usec": 0,
+		"optimizer_available": bool(_optimizer_configuration.get("available", false)),
+		"optimizer_execution_usec": _optimizer_last_usec,
 		"hazard_level": null,
 		"optimizer": {
-			"available": false,
-			"execution_usec": 0,
-			"note": "No optimizer is implemented yet; route assignment is local logit choice.",
+			"available": bool(_optimizer_configuration.get("available", false)),
+			"execution_usec": _optimizer_last_usec,
+			"executions": _optimizer_executions,
+			"algorithm": String(_optimizer_configuration.get("algorithm", "")),
+			"mode": String(_optimizer_configuration.get("mode", "")),
+			"configuration": _optimizer_configuration.duplicate(true),
+			"note": "Predicted costs are optimizer estimates; measured outcomes are in the summary fields.",
 		},
 		"hazard": {
 			"available": false,
@@ -1596,9 +1635,9 @@ func _collect_experiment_metadata(exit_catalog: Array) -> Dictionary:
 		"crowd_parameters": _collect_crowd_parameters(),
 		"navigation_parameters": _collect_navigation_parameters(),
 		"optimizer": {
-			"available": false,
-			"configuration": {},
-			"note": "Local logit exit choice; no optimizer is implemented yet.",
+			"available": bool(_optimizer_configuration.get("available", false)),
+			"configuration": _optimizer_configuration.duplicate(true),
+			"note": "Baseline runs use local logit exit choice; optimized runs apply cohort assignments from OptimizerManager.",
 		},
 		"exit_configuration": exit_catalog,
 		"physics_ticks_per_second": Engine.physics_ticks_per_second,
@@ -1827,7 +1866,7 @@ func _write_layout() -> void:
 
 func _capabilities() -> Dictionary:
 	return {
-		"optimizer": false,
+		"optimizer": bool(_optimizer_configuration.get("available", false)),
 		"hazard_model": false,
 		"replay": true, # DemoPlayer plays recordings in the map
 		"comparison": true, # DemoComparer compares recordings in sync

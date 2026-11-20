@@ -66,9 +66,12 @@ var _noclip_button: Button = null
 var _timeline: HSlider = null
 var _time_label: Label = null
 var _recordings_box: VBoxContainer = null
-var _legend: RichTextLabel = null
 var _chart: ChartBoard = null
-var _values: RichTextLabel = null
+var _values_box: VBoxContainer = null
+var _deltas_box: VBoxContainer = null
+var _value_labels: Array = []
+var _delta_labels: Array = []
+var _differences_toggle: CheckButton = null
 var _differences: RichTextLabel = null
 
 var _ui_accum: float = 0.0
@@ -182,7 +185,6 @@ func play(demo_ids: Array) -> bool:
 	_build_world()
 	_setup_camera()
 	_build_recordings_ui()
-	_build_legend()
 	_build_charts()
 	_update_scene()
 	_update_text(true)
@@ -928,40 +930,13 @@ func _update_text(force: bool) -> void:
 			NOCLIP_BASE_SPEED * _noclip_speed_mult
 		)
 
-	var lines: Array[String] = []
-	var base := _sample_values(_demos[0], _time)
+	var values_list: Array = []
+	var base: Dictionary = _sample_values(_demos[0], _time)
 
-	for index in _demos.size():
-		var demo: Dictionary = _demos[index]
-		var values := _sample_values(demo, _time)
-		var prefix := "[color=#%s]%s[/color] %s" % [
-			Color(demo["color"]).to_html(false),
-			String(demo["letter"]),
-			String(demo["name"]),
-		]
-		var line := "%s\n  evac %d · active %d · dens %.2f · thru %.1f/s · peak %.1f kN · routes %d" % [
-			prefix,
-			int(round(float(values["evacuated"]))),
-			int(round(float(values["active"]))),
-			float(values["density"]),
-			float(values["throughput"]),
-			float(values["contact"]),
-			int(round(float(values["routes"]))),
-		]
+	for demo: Dictionary in _demos:
+		values_list.append(_sample_values(demo, _time))
 
-		if index > 0:
-			line += "\n  Δ evac %+d · active %+d · dens %+.2f · thru %+.1f · peak %+.1f kN · routes %+d" % [
-				int(round(float(values["evacuated"]) - float(base["evacuated"]))),
-				int(round(float(values["active"]) - float(base["active"]))),
-				float(values["density"]) - float(base["density"]),
-				float(values["throughput"]) - float(base["throughput"]),
-				float(values["contact"]) - float(base["contact"]),
-				int(round(float(values["routes"]) - float(base["routes"]))),
-			]
-
-		lines.append(line)
-
-	_values.text = "\n".join(PackedStringArray(lines))
+	_update_metric_tables(values_list, base)
 	_differences.text = _build_differences()
 
 
@@ -1510,16 +1485,19 @@ func _build_ui() -> void:
 	_recordings_box.add_theme_constant_override("separation", 4)
 	column.add_child(_recordings_box)
 
-	column.add_child(_section_label("SYNCHRONIZED METRICS"))
+	column.add_child(_section_label("AT CURSOR"))
 
-	_legend = RichTextLabel.new()
-	_legend.bbcode_enabled = true
-	_legend.fit_content = true
-	_legend.scroll_active = false
-	_legend.add_theme_font_override("normal_font", FONT)
-	_legend.add_theme_font_size_override("normal_font_size", 11)
-	_legend.add_theme_constant_override("line_separation", 6)
-	column.add_child(_legend)
+	_values_box = VBoxContainer.new()
+	_values_box.add_theme_constant_override("separation", 4)
+	column.add_child(_values_box)
+
+	column.add_child(_section_label("DELTAS VS A"))
+
+	_deltas_box = VBoxContainer.new()
+	_deltas_box.add_theme_constant_override("separation", 4)
+	column.add_child(_deltas_box)
+
+	column.add_child(_section_label("SYNCHRONIZED METRICS"))
 
 	_chart = ChartBoard.new()
 	_chart.custom_minimum_size = Vector2(0, 286)
@@ -1527,20 +1505,15 @@ func _build_ui() -> void:
 	_chart.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_chart)
 
-	column.add_child(_section_label("CURRENT VALUES"))
-
-	_values = RichTextLabel.new()
-	_values.bbcode_enabled = true
-	_values.fit_content = true
-	_values.scroll_active = false
-	_values.add_theme_font_override("normal_font", FONT)
-	_values.add_theme_font_size_override("normal_font_size", 11)
-	_values.add_theme_constant_override("line_separation", 6)
-	column.add_child(_values)
-
-	column.add_child(_section_label("DIFFERENCES"))
+	_differences_toggle = CheckButton.new()
+	_differences_toggle.text = "Show detailed differences"
+	_differences_toggle.button_pressed = false
+	_differences_toggle.add_theme_font_size_override("font_size", 11)
+	_differences_toggle.toggled.connect(_on_differences_toggled)
+	column.add_child(_differences_toggle)
 
 	_differences = RichTextLabel.new()
+	_differences.visible = false
 	_differences.bbcode_enabled = true
 	_differences.fit_content = true
 	_differences.scroll_active = false
@@ -1553,7 +1526,7 @@ func _build_ui() -> void:
 	bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	bottom.offset_left = 12
 	bottom.offset_right = -12
-	bottom.offset_top = -106
+	bottom.offset_top = -122
 	bottom.offset_bottom = -10
 	bottom.add_theme_stylebox_override("panel", _style(BG))
 	_ui.add_child(bottom)
@@ -1562,9 +1535,19 @@ func _build_ui() -> void:
 	root.add_theme_constant_override("separation", 4)
 	bottom.add_child(root)
 
+	# Transport controls can exceed the width with several demos. A horizontal
+	# scroller keeps every button reachable.
+	var controls_scroll := ScrollContainer.new()
+	controls_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	controls_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	controls_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	controls_scroll.custom_minimum_size = Vector2(0, 44)
+	root.add_child(controls_scroll)
+
 	var controls := HBoxContainer.new()
 	controls.add_theme_constant_override("separation", 8)
-	root.add_child(controls)
+	controls.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	controls_scroll.add_child(controls)
 
 	_play_button = _button("Pause", _toggle_play)
 	controls.add_child(_play_button)
@@ -1675,6 +1658,8 @@ func _build_recordings_ui() -> void:
 		box.add_child(_small_label(_scenario_line(demo)))
 		_recordings_box.add_child(box)
 
+	_build_metrics_tables()
+
 
 func _small_label(text: String) -> Label:
 	var label := Label.new()
@@ -1683,6 +1668,166 @@ func _small_label(text: String) -> Label:
 	label.add_theme_color_override("font_color", MUTED)
 	label.add_theme_font_size_override("font_size", 10)
 	return label
+
+
+## The six metrics shown by the charts, reused by the tables so the numbers and
+## the lines cannot drift apart.
+func _metric_rows() -> Array:
+	return [
+		{"key": "evacuated", "label": "Evacuated", "digits": 0},
+		{"key": "active", "label": "Active", "digits": 0},
+		{"key": "density", "label": "Density", "digits": 2},
+		{"key": "throughput", "label": "Throughput", "digits": 1},
+		{"key": "contact", "label": "Peak kN", "digits": 2},
+		{"key": "routes", "label": "Routes", "digits": 0},
+	]
+
+
+## Compact per-demo table at the cursor. Values and deltas are separate grids so
+## the deltas can start at B (A is the reference).
+func _build_metrics_tables() -> void:
+	_value_labels = []
+	_delta_labels = []
+
+	for container_value: Variant in [_values_box, _deltas_box]:
+		if not container_value is VBoxContainer:
+			continue
+
+		var container := container_value as VBoxContainer
+
+		for child: Node in container.get_children():
+			child.free()
+
+	if _demos.is_empty():
+		return
+
+	var metrics: Array = _metric_rows()
+	var values_grid := _metric_grid(metrics, true, false)
+	_values_box.add_child(values_grid)
+
+	if _demos.size() > 1:
+		_deltas_box.add_child(_metric_grid(metrics, false, true))
+	else:
+		_deltas_box.add_child(_small_label(
+			"Select at least two recordings to compare deltas against A."
+		))
+
+
+func _metric_grid(
+	metrics: Array,
+	include_base: bool,
+	deltas: bool
+) -> GridContainer:
+	var demo_count: int = _demos.size()
+	var columns: int = 1 + (demo_count if include_base else demo_count - 1)
+	var grid := GridContainer.new()
+	grid.columns = columns
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 2)
+
+	var header := Label.new()
+	header.text = "Δ vs A" if deltas else "Metric"
+	header.add_theme_color_override("font_color", MUTED)
+	header.add_theme_font_size_override("font_size", 10)
+	header.custom_minimum_size = Vector2(88, 0)
+	grid.add_child(header)
+
+	var first_demo: int = 0 if include_base else 1
+
+	for demo_index: int in range(first_demo, demo_count):
+		var demo: Dictionary = _demos[demo_index]
+		var chip := Label.new()
+		chip.text = String(demo.get("letter"))
+		chip.tooltip_text = String(demo.get("name"))
+		chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		chip.add_theme_color_override("font_color", demo["color"])
+		chip.add_theme_font_size_override("font_size", 11)
+		grid.add_child(chip)
+
+	var row_labels: Array = []
+
+	for metric: Dictionary in metrics:
+		var name_label := Label.new()
+		name_label.text = String(metric.get("label", ""))
+		name_label.add_theme_color_override("font_color", MUTED)
+		name_label.add_theme_font_size_override("font_size", 10)
+		name_label.custom_minimum_size = Vector2(88, 0)
+		grid.add_child(name_label)
+
+		var cells: Array = []
+
+		for _column: int in range(first_demo, demo_count):
+			var cell := Label.new()
+			cell.text = "—"
+			cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			cell.add_theme_font_size_override("font_size", 10)
+			grid.add_child(cell)
+			cells.append(cell)
+
+		row_labels.append(cells)
+
+	if deltas:
+		_delta_labels = row_labels
+	else:
+		_value_labels = row_labels
+
+	return grid
+
+
+func _format_metric(value: float, digits: int) -> String:
+	match digits:
+		0:
+			return str(roundi(value))
+		1:
+			return "%.1f" % value
+		_:
+			return "%.2f" % value
+
+
+func _format_delta(value: float, digits: int) -> String:
+	if absf(value) < 0.000001:
+		return "—"
+
+	var sign_text := "+" if value > 0.0 else "−"
+	return sign_text + _format_metric(absf(value), digits)
+
+
+func _update_metric_tables(values_list: Array, base: Dictionary) -> void:
+	var metrics: Array = _metric_rows()
+
+	for metric_index: int in range(metrics.size()):
+		var metric: Dictionary = metrics[metric_index]
+		var key: String = String(metric["key"])
+		var digits: int = int(metric["digits"])
+
+		if metric_index < _value_labels.size():
+			var value_row: Array = _value_labels[metric_index]
+
+			for demo_index: int in range(mini(value_row.size(), values_list.size())):
+				var value: float = float(values_list[demo_index].get(key, 0.0))
+				(value_row[demo_index] as Label).text = _format_metric(value, digits)
+
+		if metric_index < _delta_labels.size():
+			var delta_row: Array = _delta_labels[metric_index]
+
+			for column: int in range(delta_row.size()):
+				var demo_index: int = column + 1
+
+				if demo_index >= values_list.size():
+					break
+
+				var value: float = float(values_list[demo_index].get(key, 0.0))
+				var base_value: float = float(base.get(key, 0.0))
+				(delta_row[column] as Label).text = _format_delta(
+					value - base_value, digits
+				)
+
+
+func _on_differences_toggled(show_details: bool) -> void:
+	if _differences != null:
+		_differences.visible = show_details
 
 
 func _scenario_line(demo: Dictionary) -> String:
@@ -1717,22 +1862,6 @@ func _set_demo_visible(letter: String, visible: bool) -> void:
 			break
 
 	_update_scene()
-	_build_legend()
-
-
-func _build_legend() -> void:
-	var lines: Array[String] = []
-
-	for demo: Dictionary in _demos:
-		var suffix := "" if bool(demo.get("visible", true)) else "  (hidden)"
-		lines.append("[color=#%s]%s[/color] %s%s" % [
-			Color(demo["color"]).to_html(false),
-			String(demo["letter"]),
-			String(demo["name"]),
-			suffix,
-		])
-
-	_legend.text = "\n".join(PackedStringArray(lines))
 
 
 func _build_charts() -> void:
