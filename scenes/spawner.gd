@@ -135,7 +135,7 @@ func _spawn_one(spawn_pos: Vector3) -> void:
 	else:
 		GlobalData.increment_section_spawn_count(spawn_section)
 
-	GlobalData.register_npc_spawned()
+	GlobalData.register_npc_spawned(npc)
 
 	if _evacuation_manager:
 		_evacuation_manager.register_npc(npc)

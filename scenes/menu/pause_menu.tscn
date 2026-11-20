@@ -84,7 +84,7 @@ outline_size = 6
 [node name="MainPanel" type="Node3D" parent="Panel" unique_id=1082222124]
 
 [node name="Resume" parent="Panel/MainPanel" unique_id=388853646 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.55, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.69, 0.035)
 action = &"resume"
 caption = "RESUME"
 label_font = ExtResource("3_menu_font")
@@ -97,7 +97,7 @@ hover_color = Color(0.35, 0.26, 0.04, 0.28)
 selected_color = Color(0.55, 0.42, 0.06, 0.35)
 
 [node name="Settings" parent="Panel/MainPanel" unique_id=2114392593 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.27, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.41, 0.035)
 action = &"settings"
 caption = "SETTINGS"
 label_font = ExtResource("3_menu_font")
@@ -110,7 +110,7 @@ hover_color = Color(0.35, 0.26, 0.04, 0.28)
 selected_color = Color(0.55, 0.42, 0.06, 0.35)
 
 [node name="Statistics" parent="Panel/MainPanel" unique_id=855235010 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.01, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, 0.13, 0.035)
 action = &"stats"
 caption = "STATISTICS"
 label_font = ExtResource("3_menu_font")
@@ -122,8 +122,21 @@ base_color = Color(0.14, 0.11, 0.06, 0)
 hover_color = Color(0.35, 0.26, 0.04, 0.28)
 selected_color = Color(0.55, 0.42, 0.06, 0.35)
 
+[node name="Demos" parent="Panel/MainPanel" unique_id=2051563544 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.15, 0.035)
+action = &"demos"
+caption = "DEMOS"
+label_font = ExtResource("3_menu_font")
+label_size = 72
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
 [node name="Maps" parent="Panel/MainPanel" unique_id=1171150350 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.29, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.43, 0.035)
 action = &"saves"
 caption = "SAVES"
 label_font = ExtResource("3_menu_font")
@@ -136,7 +149,7 @@ hover_color = Color(0.35, 0.26, 0.04, 0.28)
 selected_color = Color(0.55, 0.42, 0.06, 0.35)
 
 [node name="Quit" parent="Panel/MainPanel" unique_id=917628256 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.57, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.71, 0.035)
 action = &"quit"
 caption = "QUIT"
 label_font = ExtResource("3_menu_font")
@@ -149,8 +162,10 @@ hover_color = Color(0.58, 0.13, 0.13, 0.35)
 selected_color = Color(0.58, 0.13, 0.13, 0.7)
 
 [node name="SettingsPanel" parent="Panel" unique_id=1827545814 instance=ExtResource("5_settings")]
+visible = false
 
 [node name="GraphicsPanel" parent="Panel" unique_id=457177108 instance=ExtResource("6_graphics")]
+visible = false
 
 [node name="GameplayPanel" parent="Panel" unique_id=1273769368 instance=ExtResource("7_gameplay")]
 
@@ -309,3 +324,6 @@ hover_color = Color(0.58, 0.13, 0.13, 1)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.82, 0)
 action = &"back_main"
 caption = "Back"
+
+[node name="DemosPanel" type="Node3D" parent="Panel" unique_id=126307516]
+visible = false

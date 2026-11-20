@@ -85,15 +85,35 @@ var _section_quotas: Dictionary = {}
 
 signal npc_evacuated(total_count: int)
 signal npc_spawned(total_count: int)
+## Emitted with the spawned node so measurement/replay tooling can attach to it.
+signal agent_spawned(npc: Node)
+## Any runtime environment edit that can change navigation or the scenario.
+## `change_type` is one of: block_added, block_removed, placeable_added,
+## placeable_removed, water_placed, exit_added, exit_removed, exit_enabled,
+## exit_disabled. `detail` carries recorder-specific fields (cells, scene, item).
+signal environment_changed(location: Vector3, change_type: String, detail: Dictionary)
 signal spawning_reset() # Signal to reset local spawner states
 signal spawning_started()
 signal spawning_stopped()
 signal spawning_paused()
 signal spawning_resumed()
 
-func register_npc_spawned() -> void:
+func register_npc_spawned(npc: Node = null) -> void:
 	npcs_spawned += 1
 	npc_spawned.emit(npcs_spawned)
+
+	if npc != null and is_instance_valid(npc):
+		agent_spawned.emit(npc)
+
+
+## Public entry point for systems that modify the world after load. The recorder
+## listens to this; gameplay code may ignore it.
+func report_environment_change(
+	location: Vector3,
+	change_type: String,
+	detail: Dictionary = {}
+) -> void:
+	environment_changed.emit(location, change_type, detail)
 
 
 ## Cross-spawner spawn-slot reservation. Physics bodies spawned in the same

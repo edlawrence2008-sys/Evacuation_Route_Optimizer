@@ -1,9 +1,9 @@
 # False boids
 
-> Status: **2026-11-16**. Hybrid ambient-bird system in
+> **Status:** 2026-11-17 (system unchanged since 2026-11-16) · **Applies to:**
 > `scripts/world/false_boid_emitter.gd`, `false_boid_director.gd`,
-> `false_boid_flock.gd`, `false_boid.gd`, and `false_boid_perch.gd`;
-> demo placement in `Maps/test.tscn`.
+> `false_boid_flock.gd`, `false_boid.gd`, `false_boid_perch.gd` · **Companions:**
+> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.17.
 
 ## Why a hybrid
 

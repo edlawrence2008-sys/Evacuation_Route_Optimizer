@@ -82,6 +82,21 @@ var _binding_button: Button = null
 @onready var _save_list: Node3D = $Panel/SavesPanel/SaveList
 @onready var _page_label: Label3D = $Panel/SavesPanel/PageLabel
 @onready var _status_label: Label3D = $Panel/SavesPanel/StatusLabel
+
+# Demos tab (built at runtime in _ensure_demos_ui).
+var _demos_panel: Node3D = null
+var _demo_list: Node3D = null
+var _demo_page_label: Label3D = null
+var _demo_details: Label3D = null
+var _demo_status_label: Label3D = null
+var _demo_folder_button: Node = null
+var _demo_compare_button: Node = null
+var _demos: Array = []
+var _demo_start: int = 0
+var _selected_demo_id: String = ""
+var _demo_folder_filter: String = ""
+var _demo_compare_mode: bool = false
+var _demo_compare_ids: Array[String] = []
 @onready var _stats_map: MeshInstance3D = $Panel/StatisticsPanel/StatsMap
 @onready var _stats_text: Label3D = $Panel/StatisticsPanel/StatsText
 @onready var _thumbnail: MeshInstance3D = $Panel/SavesPanel/Thumbnail
@@ -152,6 +167,7 @@ func _ready() -> void:
 		_dim_alpha = _dim_material.albedo_color.a
 	_build_title_letters()
 	_ensure_saves_ui()
+	_ensure_demos_ui()
 	_bind_keybind_ui()
 	_load_input_bindings()
 
@@ -213,6 +229,7 @@ func _deactivate_all_panels() -> void:
 		_controls_panel,
 		_stats_panel,
 		_saves_panel,
+		_demos_panel,
 	]:
 		if panel != null:
 			_set_panel_buttons_active(panel, false)
@@ -368,6 +385,8 @@ func set_paused(value: bool) -> void:
 		_set_hover(_button_at(mouse_position))
 		_sway_to(_hovered)
 	else:
+		if _demo_compare_mode:
+			_cancel_demo_compare(false)
 		_play_ui(UI_SOUND_TRANSITION, -11.0)
 		_reset_sway()
 		get_tree().paused = false
@@ -392,6 +411,9 @@ func _fit_to_camera() -> void:
 
 
 func _show_view(view: String, refresh: bool = true, animate: bool = true) -> void:
+	if view != "demos" and _demo_compare_mode:
+		_cancel_demo_compare(false)
+
 	var previous_view := _view
 	_view = view
 	_main_panel.visible = view == "main"
@@ -403,6 +425,7 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 	_controls_panel.visible = view == "controls"
 	_stats_panel.visible = view == "statistics"
 	_saves_panel.visible = view == "saves"
+	_demos_panel.visible = view == "demos"
 	if _title_root != null:
 		_title_root.visible = view == "main"
 	_main_title.visible = false
@@ -425,6 +448,8 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 			_section_title.text = "STATISTICS"
 		"saves":
 			_section_title.text = "SAVES"
+		"demos":
+			_section_title.text = "DEMOS"
 
 	_set_panel_buttons_active(_main_panel, view == "main")
 	_set_panel_buttons_active(_settings_panel, view == "settings")
@@ -435,6 +460,7 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 	_set_panel_buttons_active(_controls_panel, view == "controls")
 	_set_panel_buttons_active(_stats_panel, view == "statistics")
 	_set_panel_buttons_active(_saves_panel, view == "saves")
+	_set_panel_buttons_active(_demos_panel, view == "demos")
 	_set_hover(null)
 
 	if refresh:
@@ -452,6 +478,9 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 		elif view == "saves":
 			_refresh_labels()
 			_refresh_save_list()
+		elif view == "demos":
+			_refresh_labels()
+			_refresh_demo_list()
 
 	if animate:
 		_animate_view(view)
@@ -1178,6 +1207,530 @@ func _place_saves_button(parent: Node3D, node_name: String, local_y: float) -> v
 	button.set("_rest_position", button.position)
 
 
+# ============================================================
+# DEMOS LIBRARY
+# ============================================================
+
+func _ensure_demos_ui() -> void:
+	_demos_panel = get_node_or_null("Panel/DemosPanel") as Node3D
+
+	if _demos_panel == null:
+		return
+
+	if _demo_list != null and is_instance_valid(_demo_list):
+		return
+
+	_demo_list = Node3D.new()
+	_demo_list.name = "DemoList"
+	_demo_list.position = Vector3(-0.55, 0.40, 0.035)
+	_demos_panel.add_child(_demo_list)
+
+	_demo_page_label = Label3D.new()
+	_demo_page_label.name = "PageLabel"
+	_demo_page_label.position = Vector3(-0.55, -0.20, 0.04)
+	_demo_page_label.font = UI_FONT
+	_demo_page_label.font_size = 20
+	_demo_page_label.pixel_size = 0.0018
+	_demo_page_label.modulate = Color(0.85, 0.84, 0.76, 1)
+	_demos_panel.add_child(_demo_page_label)
+
+	_demo_details = Label3D.new()
+	_demo_details.name = "DemoDetails"
+	_demo_details.position = Vector3(0.62, 0.66, 0.04)
+	_demo_details.font = UI_FONT
+	_demo_details.font_size = 16
+	_demo_details.pixel_size = 0.0022
+	_demo_details.line_spacing = 26.0
+	_demo_details.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_demo_details.modulate = Color(0.92, 0.92, 0.86, 1)
+	_demo_details.width = 320.0
+	_demo_details.no_depth_test = true
+	_demo_details.render_priority = 5
+	_demo_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_demos_panel.add_child(_demo_details)
+
+	_demo_status_label = Label3D.new()
+	_demo_status_label.name = "StatusLabel"
+	_demo_status_label.position = Vector3(-0.55, -0.97, 0.04)
+	_demo_status_label.font = UI_FONT
+	_demo_status_label.font_size = 18
+	_demo_status_label.pixel_size = 0.0016
+	_demo_status_label.modulate = Color(1.0, 0.84, 0.34, 1)
+	_demo_status_label.no_depth_test = true
+	_demo_status_label.render_priority = 5
+	_demos_panel.add_child(_demo_status_label)
+
+	var left := Node3D.new()
+	left.name = "LeftActions"
+	left.position = Vector3(-0.68, 0, 0)
+	_demos_panel.add_child(left)
+
+	var right := Node3D.new()
+	right.name = "RightActions"
+	right.position = Vector3(0.68, 0, 0)
+	_demos_panel.add_child(right)
+
+	_ensure_water_button(left, "Play", "play_demo", "Play", -0.34, Vector3.ONE, 22)
+	_ensure_water_button(left, "Rename", "rename_demo", "Rename", -0.50, Vector3.ONE, 22)
+	_ensure_water_button(left, "Description", "describe_demo", "Description", -0.66, Vector3.ONE, 22)
+	_ensure_water_button(left, "Folder", "folder_demo", "Move to Folder", -0.82, Vector3.ONE, 20)
+	_ensure_water_button(right, "Compare", "compare_demo", "Compare", -0.34, Vector3.ONE, 22)
+	_ensure_water_button(right, "Duplicate", "duplicate_demo", "Duplicate", -0.50, Vector3.ONE, 22)
+	_ensure_water_button(right, "Delete", "delete_demo", "Delete", -0.66, Vector3.ONE, 22)
+	_ensure_water_button(right, "Back", "back_demos", "Back", -0.82, Vector3.ONE, 22)
+
+	_ensure_water_button(
+		_demos_panel,
+		"FolderFilter",
+		"demo_folder_filter",
+		"Folder: All",
+		0.62,
+		Vector3.ONE,
+		18,
+		-0.55
+	)
+	_demo_folder_button = _demos_panel.get_node_or_null("FolderFilter")
+	_demo_compare_button = _demos_panel.get_node_or_null("RightActions/Compare")
+	_sync_compare_button()
+
+
+func _refresh_demo_list() -> void:
+	if _demo_list == null or not is_instance_valid(_demo_list):
+		return
+
+	for child in _demo_list.get_children():
+		child.free()
+
+	if _hovered != null and not is_instance_valid(_hovered):
+		_hovered = null
+
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		_demo_page_label.text = "Demo library unavailable"
+		_demo_details.text = ""
+		return
+
+	if not bool(store.call("has_active_save")):
+		# Direct scene runs have no save; they are grouped under "_unsaved" so
+		# the demos are still inspectable, but they are not attached to a map.
+		pass
+
+	_demos = store.call("list_demos")
+
+	var filtered: Array = []
+
+	for demo: Dictionary in _demos:
+		if _demo_folder_filter.is_empty() or String(demo.get("folder", "")) == _demo_folder_filter:
+			filtered.append(demo)
+
+	if filtered.is_empty():
+		_selected_demo_id = ""
+		_demo_page_label.text = (
+			"No demos in this folder"
+			if _demos.size() > 0
+			else "No demos recorded for this save"
+		)
+		_demo_details.text = ""
+		_update_demo_folder_caption()
+		return
+
+	var found := false
+
+	for demo: Dictionary in filtered:
+		if String(demo.get("id", "")) == _selected_demo_id:
+			found = true
+			break
+
+	if not found:
+		_selected_demo_id = String(filtered[0].get("id", ""))
+
+	_demo_start = clampi(_demo_start, 0, maxi(0, filtered.size() - 1))
+	var last := mini(_demo_start + save_rows_per_page, filtered.size())
+
+	for index in range(_demo_start, last):
+		var demo: Dictionary = filtered[index]
+		var demo_id := String(demo.get("id", ""))
+		var compare_index := _demo_compare_ids.find(demo_id)
+		var button := _button_scene.instantiate()
+		button.action = &"select_demo"
+		button.payload = demo_id
+		var folder := String(demo.get("folder", ""))
+		var caption := (
+			("%s / %s" % [folder, String(demo.get("name", "Demo"))])
+			if not folder.is_empty()
+			else String(demo.get("name", "Demo"))
+		)
+		if _demo_compare_mode and compare_index >= 0:
+			caption = "%s · %s" % [char(65 + compare_index), caption]
+		button.caption = caption
+		button.position = Vector3(0, -save_row_step * (index - _demo_start), 0)
+		button.label_size = 20
+		button.label_pixel = 0.0019
+		_demo_list.add_child(button)
+
+		if _demo_compare_mode:
+			if compare_index >= 0:
+				button.set_selected(true)
+		elif demo_id == _selected_demo_id:
+			button.set_selected(true)
+
+	var page := int(_demo_start / save_rows_per_page) + 1
+	var pages := int(ceil(float(filtered.size()) / float(save_rows_per_page)))
+	_demo_page_label.text = "Page %d/%d  ·  wheel to scroll" % [page, pages]
+	_update_demo_details()
+	_update_demo_folder_caption()
+
+
+func _update_demo_details() -> void:
+	if _demo_details == null:
+		return
+
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		_demo_details.text = ""
+		return
+
+	var created := _format_modified(float(demo.get("created", 0.0)))
+	var duration := _format_duration(float(demo.get("duration", 0.0)))
+	var status := String(demo.get("status", "unknown"))
+	var summary: Dictionary = demo.get("summary", {})
+	var description := String(demo.get("description", ""))
+
+	if description.is_empty():
+		description = "(no description)"
+
+	_demo_details.text = "\n".join(PackedStringArray([
+		String(demo.get("name", "Demo")),
+		"Folder: " + (String(demo.get("folder", "")) if not String(demo.get("folder", "")).is_empty() else "—"),
+		created + "  ·  " + duration + "  ·  " + status,
+		"Agents %d  ·  Seed %d" % [
+			int(demo.get("agents", 0)),
+			int(demo.get("seed", 0)),
+		],
+		"Evacuated %d  ·  Avg %.1fs  ·  Max density %.2f/m²" % [
+			int(summary.get("agents_evacuated", 0)),
+			float(summary.get("average_evacuation_time", 0.0)),
+			float(summary.get("global_max_density", 0.0)),
+		],
+		description,
+	]))
+
+
+func _update_demo_folder_caption() -> void:
+	if _demo_folder_button != null and is_instance_valid(_demo_folder_button):
+		_demo_folder_button.set_caption(
+			"Folder: " + (_demo_folder_filter if not _demo_folder_filter.is_empty() else "All")
+		)
+
+
+func _selected_demo_meta() -> Dictionary:
+	for demo: Dictionary in _demos:
+		if String(demo.get("id", "")) == _selected_demo_id:
+			return demo
+	return {}
+
+
+func _select_demo(demo_id: String) -> void:
+	if _demo_compare_mode:
+		_toggle_demo_compare_id(demo_id)
+		return
+
+	_selected_demo_id = demo_id
+	_refresh_demo_list()
+	_set_demo_status("Selected: " + String(_selected_demo_meta().get("name", demo_id)))
+
+
+func _toggle_demo_compare_id(demo_id: String) -> void:
+	var index := _demo_compare_ids.find(demo_id)
+
+	if index >= 0:
+		_demo_compare_ids.remove_at(index)
+	elif _demo_compare_ids.size() >= 6:
+		_set_demo_status("Compare supports up to 6 demos")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+	else:
+		_demo_compare_ids.append(demo_id)
+
+	_selected_demo_id = demo_id
+	_refresh_demo_list()
+	_sync_compare_button()
+	_set_demo_status("Compare: %d selected (need 2+)" % _demo_compare_ids.size())
+
+
+func _sync_compare_button() -> void:
+	if _demo_compare_button == null or not is_instance_valid(_demo_compare_button):
+		return
+
+	_demo_compare_button.set_caption(
+		("Start (%d)" % _demo_compare_ids.size()) if _demo_compare_mode else "Compare"
+	)
+
+
+func _toggle_demo_compare() -> void:
+	if not _demo_compare_mode:
+		_demo_compare_mode = true
+		_demo_compare_ids.clear()
+		_sync_compare_button()
+		_refresh_demo_list()
+		_set_demo_status("Compare: select 2+ demos, then press Start")
+		return
+
+	if _demo_compare_ids.size() < 2:
+		_set_demo_status("Select at least two demos to compare")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	_start_demo_compare()
+
+
+func _cancel_demo_compare(refresh: bool = true) -> void:
+	_demo_compare_mode = false
+	_demo_compare_ids.clear()
+	_sync_compare_button()
+
+	if refresh:
+		_refresh_demo_list()
+		_set_demo_status("")
+
+
+func _start_demo_compare() -> void:
+	var comparer := get_node_or_null("/root/DemoComparer")
+
+	if comparer == null:
+		_set_demo_status("Demo comparer unavailable")
+		return
+
+	if not bool(comparer.call("play", _demo_compare_ids.duplicate())):
+		_set_demo_status("Could not compare these demos")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	if not comparer.closed.is_connected(_on_demo_comparer_closed):
+		comparer.closed.connect(_on_demo_comparer_closed)
+
+	_play_ui(UI_SOUND_ACCEPT, -8.0)
+	set_process_input(false)
+	set_process(false)
+	visible = false
+
+
+func _on_demo_comparer_closed() -> void:
+	visible = true
+	set_process_input(true)
+	set_process(true)
+	_show_view("demos")
+	_set_demo_status(
+		("Compare: %d selected" % _demo_compare_ids.size())
+		if _demo_compare_mode
+		else ""
+	)
+
+
+func _set_demo_status(text: String) -> void:
+	if _demo_status_label == null:
+		return
+
+	_demo_status_label.text = text
+
+
+func _play_selected_demo() -> void:
+	if _selected_demo_id.is_empty():
+		_set_demo_status("Select a demo first")
+		return
+
+	var player := get_node_or_null("/root/DemoPlayer")
+
+	if player == null:
+		_set_demo_status("Demo player unavailable")
+		return
+
+	if not bool(player.call("play", _selected_demo_id)):
+		_set_demo_status("Could not play this demo")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	if not player.closed.is_connected(_on_demo_player_closed):
+		player.closed.connect(_on_demo_player_closed)
+
+	_play_ui(UI_SOUND_ACCEPT, -8.0)
+	set_process_input(false)
+	set_process(false)
+	visible = false
+
+
+func _on_demo_player_closed() -> void:
+	visible = true
+	set_process_input(true)
+	set_process(true)
+	_show_view("demos")
+
+
+func _prompt_demo_rename() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_name(
+		"Rename Demo",
+		String(demo.get("name", "Demo")),
+		_finish_demo_rename
+	)
+
+
+func _finish_demo_rename(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("rename_demo", _selected_demo_id, value)):
+		_set_demo_status("Renamed")
+		_play_ui(UI_SOUND_SAVE, -7.0)
+		_refresh_demo_list()
+	else:
+		_set_demo_status("Rename failed (empty name?)")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+
+
+func _prompt_demo_description() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_text(
+		"Demo Description",
+		String(demo.get("description", "")),
+		_finish_demo_description
+	)
+
+
+func _finish_demo_description(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("describe_demo", _selected_demo_id, value)):
+		_set_demo_status("Description saved")
+		_play_ui(UI_SOUND_SAVE, -7.0)
+		_refresh_demo_list()
+
+
+func _prompt_demo_folder() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_name(
+		"Demo Folder (empty = none)",
+		String(demo.get("folder", "")),
+		_finish_demo_folder
+	)
+
+
+func _finish_demo_folder(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("move_demo", _selected_demo_id, value)):
+		_set_demo_status("Folder updated")
+		_demo_folder_filter = ""
+		_play_ui(UI_SOUND_SAVE, -7.0)
+		_refresh_demo_list()
+
+
+func _cycle_demo_folder() -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	var folders: Array = store.call("list_folders")
+	var options: Array[String] = [""]
+	options.append_array(folders)
+	var index: int = options.find(_demo_folder_filter)
+	_demo_folder_filter = options[(index + 1) % options.size()]
+	_demo_start = 0
+	_refresh_demo_list()
+
+
+func _prompt_demo_duplicate() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_name(
+		"Duplicate Demo",
+		String(demo.get("name", "Demo")) + " Copy",
+		_finish_demo_duplicate
+	)
+
+
+func _finish_demo_duplicate(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	var new_id: String = String(store.call("duplicate_demo", _selected_demo_id))
+
+	if new_id.is_empty():
+		_set_demo_status("Duplicate failed")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	if not value.strip_edges().is_empty():
+		store.call("rename_demo", new_id, value)
+
+	_selected_demo_id = new_id
+	_set_demo_status("Duplicated")
+	_play_ui(UI_SOUND_SAVE, -7.0)
+	_refresh_demo_list()
+
+
+func _confirm_demo_delete() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_confirm(
+		"Delete Demo",
+		"Delete \"%s\" and its recording files?\nThis cannot be undone."
+		% String(demo.get("name", "Demo")),
+		_finish_demo_delete,
+		"Delete"
+	)
+
+
+func _finish_demo_delete() -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("delete_demo", _selected_demo_id)):
+		_selected_demo_id = ""
+		_set_demo_status("Deleted")
+		_play_ui(UI_SOUND_ACCEPT, -8.0)
+		_refresh_demo_list()
+
+
+func _format_duration(seconds: float) -> String:
+	var total := maxi(0, int(round(seconds)))
+	return "%d:%02d" % [int(total / 60), total % 60]
+
+
+
 func _ensure_water_column(
 	parent: Node3D,
 	column_name: String,
@@ -1241,6 +1794,8 @@ func _animate_view(view: String) -> void:
 		"saves":
 			_play_buttons_intro(_saves_panel)
 			_play_preview_intro()
+		"demos":
+			_play_buttons_intro(_demos_panel)
 
 
 func _play_open_intro() -> void:
@@ -1519,6 +2074,8 @@ func _dynamic_caption(action: String) -> String:
 				if _new_map_world_type == "blank"
 				else "World: Proc Gen (Soon)"
 			)
+		"demo_folder_filter":
+			return "Folder: " + (_demo_folder_filter if not _demo_folder_filter.is_empty() else "All")
 		"volume":
 			return "Volume: " + PerformanceSettings.volume_name()
 		"music":
@@ -1619,6 +2176,8 @@ func _click_at(position: Vector2) -> void:
 			_show_view("statistics")
 		"saves":
 			_show_view("saves")
+		"demos":
+			_show_view("demos")
 		"back_main":
 			if saves_only:
 				close_saves_only()
@@ -1742,6 +2301,29 @@ func _click_at(position: Vector2) -> void:
 			_confirm_delete()
 		"load_save":
 			_select_save(button.payload)
+		"select_demo":
+			_select_demo(String(button.payload))
+		"play_demo":
+			_play_selected_demo()
+		"compare_demo":
+			_toggle_demo_compare()
+		"rename_demo":
+			_prompt_demo_rename()
+		"describe_demo":
+			_prompt_demo_description()
+		"folder_demo":
+			_prompt_demo_folder()
+		"demo_folder_filter":
+			_cycle_demo_folder()
+		"duplicate_demo":
+			_prompt_demo_duplicate()
+		"delete_demo":
+			_confirm_demo_delete()
+		"back_demos":
+			if _demo_compare_mode:
+				_cancel_demo_compare()
+			else:
+				_show_view("main")
 
 
 func _refresh_statistics(pop: bool = true) -> void:
@@ -2174,6 +2756,41 @@ func _prompt_name(title: String, initial: String, callback: Callable) -> void:
 	dialog.popup_centered(Vector2i(440, 150))
 	edit.grab_focus()
 	edit.caret_column = edit.text.length()
+
+
+func _prompt_text(title: String, initial: String, callback: Callable) -> void:
+	_ensure_dialog_layer()
+	_dialog_open = true
+	_play_ui(UI_SOUND_NOTIF, -11.0)
+
+	var dialog := ConfirmationDialog.new()
+	dialog.title = title
+	dialog.ok_button_text = "Save"
+	dialog.process_mode = Node.PROCESS_MODE_ALWAYS
+	dialog.theme = _dialog_theme(16)
+
+	var edit := TextEdit.new()
+	edit.text = initial
+	edit.custom_minimum_size = Vector2(460, 140)
+	edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	edit.theme = _dialog_theme(16)
+	dialog.add_child(edit)
+
+	_dialog_layer.add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_TYPING_FINISH, -9.0)
+		var value := edit.text
+		dialog.queue_free()
+		callback.call(value)
+	)
+	dialog.canceled.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_CLICK, -11.0)
+		dialog.queue_free()
+	)
+	dialog.popup_centered(Vector2i(500, 230))
+	edit.grab_focus()
 
 
 func _confirm(

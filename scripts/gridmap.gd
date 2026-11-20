@@ -9,6 +9,9 @@ signal chunk_loaded(chunk: Vector2i)
 signal chunk_unloaded(chunk: Vector2i)
 signal flow_field_baked(target_cell: Vector3i)
 signal congestion_changed(affected_cells: Array[Vector3i])
+## Emitted after every incremental navigation rebuild. `duration_usec` covers
+## the A* cell refresh + connection rebuild, not the caller's mesh work.
+signal nav_refresh_measured(duration_usec: int, changed_cells: int)
 
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
 
@@ -170,6 +173,17 @@ var cell_to_id_map: Dictionary = {}
 var _id_to_cell: Dictionary = {} # astar point id -> cell
 var free_ids: Array[int] = []
 var next_id: int = 1
+
+# --- Measurement counters -------------------------------------------------
+## Duration of the most recent incremental navigation refresh.
+var last_nav_refresh_usec: int = 0
+var last_nav_refresh_cells: int = 0
+var nav_refresh_total_usec: int = 0
+var nav_refresh_count: int = 0
+## Duration of queued A* path requests (sum and last).
+var last_path_request_usec: int = 0
+var path_request_total_usec: int = 0
+var path_request_count: int = 0
 
 ## chunk -> { cell: true }
 var _chunk_cells: Dictionary = {}
@@ -1463,6 +1477,7 @@ func _process(_delta: float) -> void:
 		if not requester_valid or not callback_valid:
 			continue
 
+		var path_start_usec: int = Time.get_ticks_usec()
 		var path: PackedVector3Array
 
 		if request.get("flow", false):
@@ -1481,6 +1496,9 @@ func _process(_delta: float) -> void:
 		if not fast_paths:
 			path = _apply_requester_lane(requester, path)
 
+		last_path_request_usec = Time.get_ticks_usec() - path_start_usec
+		path_request_total_usec += last_path_request_usec
+		path_request_count += 1
 		callback.call(path)
 
 		if Time.get_ticks_usec() - start_usec >= path_budget_usec:
@@ -3044,7 +3062,149 @@ func _wipe_chunk(chunk: Vector2i) -> Array[Vector3i]:
 
 ## Batch version of _refresh_nav_around. Call it AFTER all the blocks are already set,
 ## so walkability and connection checks see the final state.
+## Full navigation parameter set for experiment metadata.
+func get_navigation_parameters() -> Dictionary:
+	return {
+		"cell_size": [cell_size.x, cell_size.y, cell_size.z],
+		"wall_penalty_max": wall_penalty_max,
+		"gap_penalty_max": gap_penalty_max,
+		"stair_path_cost": stair_path_cost,
+		"slab_path_cost": slab_path_cost,
+		"full_block_path_cost": full_block_path_cost,
+		"path_ground_radius": path_ground_radius,
+		"smoothing_max_lookahead": smoothing_max_lookahead,
+		"path_budget_usec": path_budget_usec,
+		"wall_repulsion_a": wall_repulsion_a,
+		"wall_repulsion_b": wall_repulsion_b,
+		"wall_query_radius": wall_query_radius,
+		"wall_force_enabled": wall_force_enabled,
+		"enable_flow_fields": enable_flow_fields,
+		"flow_field_max_cache": flow_field_max_cache,
+		"flow_field_max_cells": flow_field_max_cells,
+		"flow_bake_budget_usec": flow_bake_budget_usec,
+		"lane_taper_distance": lane_taper_distance,
+		"lane_sample_spacing": lane_sample_spacing,
+		"lane_wall_margin": lane_wall_margin,
+		"lane_max_gap_exposure": lane_max_gap_exposure,
+		"enable_congestion_routing": enable_congestion_routing,
+		"congestion_penalty_max": congestion_penalty_max,
+		"congestion_heat_per_report": congestion_heat_per_report,
+		"congestion_decay_per_sec": congestion_decay_per_sec,
+		"congestion_spread_radius": congestion_spread_radius,
+		"congestion_tick_interval": congestion_tick_interval,
+		"congestion_max_cells": congestion_max_cells,
+	}
+
+
+## Compact navigation-graph state for the recorder/comparer: node count, edge
+## count, connected components and largest component. Full connectivity is
+## skipped above MAX_CONNECTIVITY_NODES so a huge map cannot stall a run.
+const MAX_CONNECTIVITY_NODES: int = 50000
+
+
+func get_connectivity_snapshot() -> Dictionary:
+	var ids: PackedInt64Array = astar.get_point_ids()
+	var node_count: int = ids.size()
+	var edge_count: int = 0
+
+	for id: int in ids:
+		edge_count += astar.get_point_connections(id).size()
+
+	edge_count /= 2
+
+	if node_count == 0:
+		return {
+			"nodes": 0,
+			"edges": 0,
+			"components": 0,
+			"largest_component": 0,
+			"computed": true,
+		}
+
+	if node_count > MAX_CONNECTIVITY_NODES:
+		return {
+			"nodes": node_count,
+			"edges": edge_count,
+			"components": -1,
+			"largest_component": -1,
+			"computed": false,
+		}
+
+	var seen: Dictionary = {}
+	var components: int = 0
+	var largest: int = 0
+
+	for id: int in ids:
+		if seen.has(id):
+			continue
+
+		components += 1
+		var stack: Array[int] = [id]
+		var size: int = 0
+		seen[id] = true
+
+		while not stack.is_empty():
+			var current: int = stack.pop_back()
+			size += 1
+
+			for neighbour: int in astar.get_point_connections(current):
+				if seen.has(neighbour):
+					continue
+				seen[neighbour] = true
+				stack.append(neighbour)
+
+		largest = maxi(largest, size)
+
+	return {
+		"nodes": node_count,
+		"edges": edge_count,
+		"components": components,
+		"largest_component": largest,
+		"computed": true,
+	}
+
+
+## Full graph dump for the future comparer. Nodes are [id, cell.x, cell.y,
+## cell.z]; edges are unique [id_a, id_b] pairs. Truncated past `max_edges`.
+func get_nav_graph_snapshot(max_edges: int = 20000) -> Dictionary:
+	var ids: PackedInt64Array = astar.get_point_ids()
+	var nodes: Array = []
+	var edges: Array = []
+	var truncated: bool = false
+
+	for id: int in ids:
+		var cell: Vector3i = _id_to_cell.get(id, NO_CELL)
+
+		if cell == NO_CELL:
+			continue
+
+		nodes.append([id, cell.x, cell.y, cell.z])
+
+	for id: int in ids:
+		for neighbour: int in astar.get_point_connections(id):
+			if neighbour <= id:
+				continue
+
+			if edges.size() >= max_edges:
+				truncated = true
+				break
+
+			edges.append([id, neighbour])
+
+		if truncated:
+			break
+
+	return {
+		"nodes": nodes,
+		"edges": edges,
+		"node_count": nodes.size(),
+		"edge_count": edges.size(),
+		"truncated": truncated,
+	}
+
+
 func _refresh_nav_region(cells: Array[Vector3i]) -> Array[Vector3i]:
+	var start_usec: int = Time.get_ticks_usec()
 	var result: Array[Vector3i] = _expand_nav_affected(cells)
 
 	for cell: Vector3i in result:
@@ -3056,4 +3216,9 @@ func _refresh_nav_region(cells: Array[Vector3i]) -> Array[Vector3i]:
 		_refresh_point_weights_around(cell)
 
 	_invalidate_flow_fields(result)
+	last_nav_refresh_usec = Time.get_ticks_usec() - start_usec
+	last_nav_refresh_cells = result.size()
+	nav_refresh_total_usec += last_nav_refresh_usec
+	nav_refresh_count += 1
+	nav_refresh_measured.emit(last_nav_refresh_usec, last_nav_refresh_cells)
 	return result

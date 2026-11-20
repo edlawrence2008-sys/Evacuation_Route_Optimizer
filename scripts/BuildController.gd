@@ -1166,6 +1166,12 @@ func _finish_area() -> void:
 			var water := _get_water_system()
 			if water != null:
 				water.place(cells, water_kind)
+				if not cells.is_empty():
+					GlobalData.report_environment_change(
+						grid_map.to_global(grid_map.map_to_local(cells[0])),
+						"water_placed",
+						{"cells": cells, "water_kind": water_kind}
+					)
 				_play_sfx(_sfx_land, 1.1, 1.3)
 				_reroll_palette_preview()
 				if _hand != null:
@@ -2066,6 +2072,15 @@ func _place_placeable(hit: Dictionary) -> void:
 
 	instance.add_to_group("placeables")
 
+	GlobalData.report_environment_change(
+		(instance as Node3D).global_position,
+		"placeable_added",
+		{
+			"scene": String(instance.scene_file_path),
+			"name": String(instance.name),
+		}
+	)
+
 	_play_sfx(_sfx_land, 1.0, 1.2)
 
 	if _hand != null:
@@ -2133,6 +2148,15 @@ func _remove_placeables_in_cells(cells: Array[Vector3i]) -> void:
 					remove = true
 					break
 		if remove:
+			var placeable_position := (node as Node3D).global_position
+			GlobalData.report_environment_change(
+				placeable_position,
+				"placeable_removed",
+				{
+					"scene": String((node as Node).scene_file_path),
+					"name": String((node as Node).name),
+				}
+			)
 			node.queue_free()
 
 
@@ -2241,6 +2265,15 @@ func _spawn_placeables_in_cells(
 			instance.rotate_y(spin)
 
 		instance.add_to_group("placeables")
+
+		GlobalData.report_environment_change(
+			(instance as Node3D).global_position,
+			"placeable_added",
+			{
+				"scene": String(instance.scene_file_path),
+				"name": String(instance.name),
+			}
+		)
 
 
 ## Cell-based twin of _placeable_grid_position used by area placement.

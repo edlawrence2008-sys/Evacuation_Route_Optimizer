@@ -97,7 +97,7 @@ func populate() -> Dictionary:
 		if member.has_method("set_evacuation_mode"):
 			member.set_evacuation_mode(start_evacuating)
 
-		GlobalData.register_npc_spawned()
+		GlobalData.register_npc_spawned(member)
 
 		var manager := tree.root.get_node_or_null("EvacuationManager")
 		if manager and manager.has_method("register_npc"):

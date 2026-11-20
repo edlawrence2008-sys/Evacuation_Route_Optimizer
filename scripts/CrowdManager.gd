@@ -25,8 +25,16 @@ extends Node
 ##
 ## Parameters and their provenance are documented in docs/SIMULATION_MODEL.md.
 
-@export_group("Spatial Hash")
-## Hash cell size. Must be at least as large as the interaction cutoff, or a
+## Emitted when an agent crosses one of CONTACT_FORCE_THRESHOLDS (N) upward or
+## downward. Event-driven measurement; do not reconstruct from samples.
+signal contact_threshold_crossed(
+	npc: Node,
+	force: float,
+	threshold: float,
+	rising: bool
+)
+
+@export_group("Spatial Hash")## Hash cell size. Must be at least as large as the interaction cutoff, or a
 ## pair two cells apart could be missed by the 3x3 sweep.
 @export var cell_size: float = 1.5
 ## Force evaluation interval. Physics runs at 30 Hz, so 1/30 evaluates every
@@ -65,6 +73,13 @@ extends Node
 var last_solve_usec: int = 0
 var last_pair_count: int = 0
 var last_agent_count: int = 0
+## Pair contact events in the last solve and across the run. A contact event is
+## one overlapping pair; agent_contact_samples counts agents with force > 0.
+var last_contact_pairs: int = 0
+var total_contact_pairs: int = 0
+var total_contact_agent_samples: int = 0
+var contact_solves: int = 0
+var _tick_contact_pairs: int = 0
 
 # --- Contact-force distribution -------------------------------------------
 ## Per-agent contact force is a sum of normal contact forces (N). A single peak
@@ -89,6 +104,8 @@ var _contact_series_elapsed: float = 0.0
 var _contact_series_peak: float = 0.0
 var _contact_series_sum: float = 0.0
 var _contact_series_samples: int = 0
+## Per-agent threshold bitmask from the previous solve.
+var _contact_threshold_state: Dictionary = {}
 
 var grid: Dictionary = {} # Vector2i cell -> Array[int] (indices into _agents)
 var npc_count: int = 0
@@ -179,6 +196,7 @@ func _solve(step: float) -> void:
 
 	var pairs: int = 0
 	var keys: Array = grid.keys()
+	_tick_contact_pairs = 0
 
 	for cell: Vector2i in keys:
 		var list: Array = grid[cell]
@@ -197,6 +215,9 @@ func _solve(step: float) -> void:
 					pairs += 1
 
 	last_pair_count = pairs
+	last_contact_pairs = _tick_contact_pairs
+	total_contact_pairs += _tick_contact_pairs
+	contact_solves += 1
 
 	var density_area: float = PI * density_radius * density_radius
 
@@ -210,8 +231,43 @@ func _solve(step: float) -> void:
 			density
 		)
 
+	_emit_contact_thresholds()
 	_record_contact_force_stats(step)
 	last_solve_usec = Time.get_ticks_usec() - start_usec
+
+
+func _emit_contact_thresholds() -> void:
+	var next_state: Dictionary = {}
+
+	for index: int in range(_agents.size()):
+		var npc: Variant = _agents[index]
+		var force: float = _contact_force[index]
+		var mask: int = 0
+
+		for threshold_index: int in range(CONTACT_FORCE_THRESHOLDS.size()):
+			if force > CONTACT_FORCE_THRESHOLDS[threshold_index]:
+				mask |= 1 << threshold_index
+
+		var id: int = npc.get_instance_id()
+		var previous: int = int(_contact_threshold_state.get(id, 0))
+
+		if previous != mask:
+			for threshold_index: int in range(CONTACT_FORCE_THRESHOLDS.size()):
+				var bit: int = 1 << threshold_index
+				var was: bool = (previous & bit) != 0
+				var now: bool = (mask & bit) != 0
+
+				if was != now:
+					contact_threshold_crossed.emit(
+						npc,
+						force,
+						CONTACT_FORCE_THRESHOLDS[threshold_index],
+						now
+					)
+
+		next_state[id] = mask
+
+	_contact_threshold_state = next_state
 
 
 func _record_contact_force_stats(step: float) -> void:
@@ -242,6 +298,7 @@ func _record_contact_force_stats(step: float) -> void:
 		if force <= 0.0:
 			_contact_force_zero_samples += 1
 		else:
+			total_contact_agent_samples += 1
 			var bin: int = mini(int(force / CONTACT_FORCE_BIN_WIDTH), CONTACT_FORCE_BIN_COUNT - 1)
 			_contact_force_hist[bin] += 1
 
@@ -298,6 +355,12 @@ func reset_contact_force_stats() -> void:
 	_contact_series_sum = 0.0
 	_contact_series_samples = 0
 	_contact_series_elapsed = 0.0
+	_contact_threshold_state.clear()
+	last_contact_pairs = 0
+	total_contact_pairs = 0
+	total_contact_agent_samples = 0
+	contact_solves = 0
+	_tick_contact_pairs = 0
 
 
 func _contact_percentile(fraction: float, include_zero: bool = true) -> float:
@@ -358,6 +421,10 @@ func get_contact_force_stats() -> Dictionary:
 		"agent_seconds": _contact_force_agent_seconds,
 		"agent_seconds_above": above,
 		"series": _contact_series.duplicate(true),
+		"contact_pairs": last_contact_pairs,
+		"contact_pairs_total": total_contact_pairs,
+		"agent_contact_samples_total": total_contact_agent_samples,
+		"solves": contact_solves,
 	}
 
 
@@ -454,6 +521,7 @@ func _evaluate_pair(i: int, j: int) -> void:
 	if overlap > 0.0:
 		_overlap[i] += 1
 		_overlap[j] += 1
+		_tick_contact_pairs += 1
 
 		var normal_force: float = contact_stiffness * overlap
 		var tangent: Vector3 = Vector3(-normal.z, 0.0, normal.x)
@@ -606,4 +674,8 @@ func get_stats() -> Dictionary:
 		"pairs": last_pair_count,
 		"solve_usec": last_solve_usec,
 		"cells": grid.size(),
+		"contact_pairs": last_contact_pairs,
+		"contact_pairs_total": total_contact_pairs,
+		"agent_contact_samples_total": total_contact_agent_samples,
+		"solves": contact_solves,
 	}

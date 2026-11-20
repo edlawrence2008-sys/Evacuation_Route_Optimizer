@@ -1,9 +1,14 @@
 # Simulation model
 
-> Status: **2026-11-15**. Applies to `scripts/CrowdManager.gd`, `scripts/NPCstuff/Member.gd`,
-> `scripts/gridmap.gd`, `scripts/GlobalData.gd`, and `evacuation_manager.gd`.
-> Target: **600 live agents at 30 Hz physics** on the test map, with an explicit,
-> defensible Social Force Model rather than the previous ad-hoc separation push.
+> **Status:** 2026-11-17 (model unchanged since 2026-11-15) · **Applies to:**
+> `scripts/CrowdManager.gd`, `scripts/NPCstuff/Member.gd`, `scripts/gridmap.gd`,
+> `scripts/GlobalData.gd`, `evacuation_manager.gd` · **Companions:**
+> [`EVACUATION_POINTS.md`](EVACUATION_POINTS.md) (admission policy),
+> [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) (recorded metrics and run files),
+> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.3–4.5 (system context).
+> **Target:** **600 live agents at 30 Hz physics** on the test map, with an
+> explicit, defensible Social Force Model rather than the previous ad-hoc
+> separation push.
 
 This document describes what the crowd simulation actually computes, where each
 parameter comes from, the numerical scheme, the measured performance, and the
@@ -412,7 +417,9 @@ a run-wide distribution, not just a maximum:
 These are exposed as `contact_force_stats` by
 `EvacuationManager.get_summary()` and reset at the start of each run. The F4
 results panel shows the peak with its time, the loaded p99, exposure above
-2/3 kN, and the percentage of samples in contact.
+2/3 kN, and the percentage of samples in contact. `SimRecorder` additionally
+records `contact_pairs` (overlapping pairs per solve) and cumulative
+pair/agent-contact counters; see `docs/SIM_MEASUREMENTS.md`.
 
 Measured 600-agent, 4-exit runs (2 s pre-movement, same map and exits):
 

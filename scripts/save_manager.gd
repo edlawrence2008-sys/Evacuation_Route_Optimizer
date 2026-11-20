@@ -375,6 +375,7 @@ func _blank_platform_item(grid) -> int:
 
 func _build_manifest(display: String, world: Dictionary = {}) -> Dictionary:
 	var now := Time.get_unix_time_from_system()
+	var global_data := get_node_or_null("/root/GlobalData")
 	var player := get_tree().get_first_node_in_group("Player") as Node3D
 	var player_data := {}
 	if player != null:
@@ -403,6 +404,7 @@ func _build_manifest(display: String, world: Dictionary = {}) -> Dictionary:
 		"thumbnail": THUMBNAIL,
 		"player": player_data,
 		"cycle_time": cycle_time,
+		"sim_seed": int(global_data.rng_seed) if global_data != null else 0,
 		"placeables": _collect_placeables(),
 		"world": _normalise_world_metadata(world),
 	}
@@ -545,7 +547,12 @@ func _apply_manifest(manifest: Dictionary) -> void:
 	if cycle != null and manifest.has("cycle_time"):
 		cycle.set("_current_time", float(manifest.get("cycle_time", 0.0)))
 
+	# The run seed belongs to the save, so loading a slot restores the seed its
+	# recorded runs were produced with.
 	var global_data = get_node_or_null("/root/GlobalData")
+	if global_data != null and manifest.has("sim_seed"):
+		global_data.rng_seed = int(manifest.get("sim_seed", global_data.rng_seed))
+
 	if global_data != null and global_data.has_method("reset_spawning"):
 		global_data.reset_spawning()
 

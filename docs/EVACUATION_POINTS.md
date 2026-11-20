@@ -1,5 +1,11 @@
 # Evacuation points: finite throughput and receiving areas
 
+> **Status:** 2026-11-18 · **Applies to:** `scenes/evac_point.gd`,
+> `evacuation_manager.gd`, `scripts/NPCstuff/Member.gd`,
+> `scenes/EvacuationResults_hud.gd`, `scripts/map_renderer.gd` ·
+> **Companions:** [`SIMULATION_MODEL.md`](SIMULATION_MODEL.md) §5.6,
+> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.5.
+
 `scenes/placeables/sim/sim_evac_point.tscn` still works exactly as before: an
 NPC that enters the 1 m radius, 2 m tall trigger is recorded and removed from
 the simulation. Everything below is opt-in on the `Area3D` child's script.
@@ -25,6 +31,7 @@ position, so the pair is still treated as one exit.
 | Setting | Default | Meaning |
 |---|---|---|
 | `exit_id` | `""` | Stable id for stats/optimizer. Empty falls back to the node path. Two exits with the same explicit id merge their aggregates. |
+| `operational` | `true` | Whether the exit is usable. Disabling removes it from exit choice, releases queued/service-held agents, notifies assigned agents, and records the change for the recorder. |
 | `track_evacuation` | `true` | Write per-exit and per-agent records. When false, the global evacuated counter still advances and `retain_evacuated` still applies; only the detailed records are suppressed. |
 | `retain_evacuated` | `false` | Keep the evacuated node instead of freeing it. |
 | `keep_retained_visible` | `true` | Show or hide retained nodes. Ignored when not retaining. |
@@ -59,6 +66,11 @@ forever.
 - **Capacity needs retention.** A despawned agent leaves the safe area on the
   admission frame, so `receiving_capacity` only binds when `retain_evacuated`
   is true. This is deliberate: it keeps existing scenes at their old behaviour.
+- **Disabled exits.** `operational = false` (or `set_operational(false)`) removes
+  the exit from choice, clears its queue/service slot, calls
+  `Member.on_exit_unavailable()` for agents whose target is that exit, and emits
+  `availability_changed`. Re-enabling makes it eligible again. The recorder
+  writes `exit_state` and a `disruption` row for both transitions.
 - **Admission is counted once.** An agent added to the queue is admitted at
   most once. `GlobalData.register_evacuation()` always advances at completion;
   the per-agent record is written only when `track_evacuation` is true.
@@ -106,6 +118,9 @@ forever.
   can be inspected before the first agent reaches the point.
 - The F4 results panel and the statistics-image summary both show receiving
   occupancy, peak, queue and capacity events when any of them are active.
+- `SimRecorder` writes exit availability, admission rate, queue, wait,
+  occupancy, utilization and assigned-agent counts per sample; see
+  `docs/SIM_MEASUREMENTS.md`.
 - `GlobalData.reset_all()` is a debug path that kills active NPCs and clears
   counters, but it does not emit `spawning_reset`; use `reset_spawning()` for a
   complete run reset that also clears manager records and exit policies.

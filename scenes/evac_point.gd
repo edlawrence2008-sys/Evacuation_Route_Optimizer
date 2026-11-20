@@ -17,6 +17,12 @@ extends Area3D
 ## navigation or the live-agent count.
 
 signal occupancy_changed(point: Area3D)
+## Emitted on queue lifecycle changes: entered, service_started, admitted,
+## left, cancelled, rejected. `queue_length` is after the transition.
+signal queue_event(point: Area3D, agent: Node, event: String, queue_length: int)
+## Emitted when the exit is enabled/disabled at runtime. Disabled exits are
+## skipped by exit choice and notify agents already assigned to them.
+signal availability_changed(point: Area3D, available: bool)
 
 enum FullBehavior {
 	## Hold new arrivals at the exit until space in the receiving area frees up.
@@ -29,6 +35,14 @@ enum FullBehavior {
 ## Stable identifier used by stats, the optimizer and saved scenarios. When
 ## empty, the node path is used (unique, but breaks if the node is renamed).
 @export var exit_id: String = ""
+## Whether this exit is currently usable. Disabling it at runtime removes it
+## from exit choice, releases queued/service agents, and records the change.
+@export var operational: bool = true:
+	set(value):
+		if operational == value:
+			return
+		operational = value
+		_notify_availability_changed()
 ## Record per-agent and per-exit statistics in EvacuationManager. The global
 ## evacuated counter is always maintained because it drives run completion.
 @export var track_evacuation: bool = true
@@ -72,6 +86,8 @@ var _max_queue: int = 0
 var _total_wait: float = 0.0
 var _wait_samples: int = 0
 var _max_wait: float = 0.0
+var _first_admit_time: float = -1.0
+var _last_admit_time: float = -1.0
 
 var _service_agent: Node = null
 var _service_wait: float = 0.0
@@ -95,6 +111,9 @@ func _process(_delta: float) -> void:
 
 
 func _on_body_entered(body: Node3D) -> void:
+	if not operational:
+		return
+
 	if (
 		body == null
 		or not body.is_in_group("npc")
@@ -132,6 +151,9 @@ func _on_body_exited(body: Node3D) -> void:
 	if (was_queued or was_in_service) and body.has_method("on_exit_area_exited"):
 		body.on_exit_area_exited()
 
+	if was_queued or was_in_service:
+		_emit_queue(body, "left")
+
 	_service_tick()
 
 
@@ -155,6 +177,7 @@ func _enqueue(agent: Node, reason: String) -> void:
 	if agent.has_method("begin_exit_hold"):
 		agent.begin_exit_hold(self)
 
+	_emit_queue(agent, "entered")
 	_service_tick()
 
 
@@ -211,6 +234,7 @@ func _service_tick() -> void:
 			GlobalData.sim_now()
 			+ (1.0 / exit_service_rate if exit_service_rate > 0.0 else 0.0)
 		)
+		_emit_queue(next_agent, "service_started")
 
 
 func _finish_service() -> void:
@@ -238,6 +262,13 @@ func _finish_service() -> void:
 
 func _accept(agent: Node, wait_time: float) -> void:
 	_accepted += 1
+	_emit_queue(agent, "admitted")
+	var now: float = GlobalData.sim_now()
+
+	if _first_admit_time < 0.0:
+		_first_admit_time = now
+
+	_last_admit_time = now
 	_total_wait += wait_time
 	_wait_samples += 1
 	_max_wait = maxf(_max_wait, wait_time)
@@ -294,6 +325,7 @@ func _accept(agent: Node, wait_time: float) -> void:
 
 func _reject(agent: Node, reason: String) -> void:
 	_rejected += 1
+	_emit_queue(agent, "rejected:" + reason)
 
 	if is_instance_valid(agent) and agent.has_method("reject_evacuation"):
 		agent.reject_evacuation(reason)
@@ -328,14 +360,25 @@ func _remove_from_queue(agent: Node) -> bool:
 ## Called by Member when its exit hold times out or by the manager when a
 ## retained agent leaves. Removes the agent without accepting it.
 func cancel_agent(agent: Node) -> void:
-	_remove_from_queue(agent)
+	var was_queued: bool = _remove_from_queue(agent)
 
 	if _service_agent == agent:
 		_service_agent = null
 		_service_wait = 0.0
 		_service_complete_at = 0.0
+		was_queued = true
+
+	if was_queued:
+		_emit_queue(agent, "cancelled")
 
 	_service_tick()
+
+
+func _emit_queue(agent: Node, event: String) -> void:
+	if agent == null or not is_instance_valid(agent):
+		return
+
+	queue_event.emit(self, agent, event, _queue.size())
 
 
 ## Called by EvacuationManager when a retained agent is removed. Frees the
@@ -374,11 +417,17 @@ func get_exit_status() -> Dictionary:
 	return {
 		"exit_id": _resolved_exit_id(),
 		"name": _resolved_exit_name(),
+		"location": [global_position.x, global_position.y, global_position.z],
+		"operational": operational,
+		"available": is_available(),
 		"track": track_evacuation,
 		"retain": retain_evacuated,
 		"visible": keep_retained_visible,
 		"service_rate": exit_service_rate,
+		"max_queue_length": max_queue_length,
 		"receiving_capacity": receiving_capacity,
+		"receiving_full_behavior": int(receiving_full_behavior),
+		"receiving_area_offset": [receiving_area_offset.x, receiving_area_offset.y, receiving_area_offset.z],
 		"receiving_occupancy": _occupancy,
 		"peak_occupancy": _peak_occupancy,
 		"accepted": _accepted,
@@ -390,7 +439,67 @@ func get_exit_status() -> Dictionary:
 		"max_queue": _max_queue,
 		"average_wait": _total_wait / float(maxi(_wait_samples, 1)),
 		"max_wait": _max_wait,
+		"first_admit_time": _first_admit_time,
+		"last_admit_time": _last_admit_time,
 	}
+
+
+## Usable for exit choice right now. Capacity/queue limits are admission
+## policy, not availability, so they do not disable the exit.
+func is_available() -> bool:
+	return operational and is_inside_tree()
+
+
+func get_exit_id() -> String:
+	return _resolved_exit_id()
+
+
+## Disable or re-enable this exit at runtime. Agents whose current target is
+## this exit are notified so they can choose again.
+func set_operational(value: bool) -> void:
+	operational = value
+
+
+func _notify_availability_changed() -> void:
+	availability_changed.emit(self, is_available())
+
+	if operational:
+		return
+
+	# An exit that disappears from the choice set must also release agents
+	# already walking to it; otherwise they would keep a target they can no
+	# longer use.
+	for entry: Dictionary in _queue:
+		var queued: Variant = entry.get("agent")
+
+		if (
+			queued != null
+			and is_instance_valid(queued)
+			and queued.has_method("on_exit_area_exited")
+		):
+			queued.on_exit_area_exited()
+
+	_queue.clear()
+
+	if (
+		_service_agent != null
+		and is_instance_valid(_service_agent)
+		and _service_agent.has_method("on_exit_area_exited")
+	):
+		_service_agent.on_exit_area_exited()
+
+	_service_agent = null
+	_service_wait = 0.0
+	_service_complete_at = 0.0
+
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return
+
+	for npc: Node in tree.get_nodes_in_group("npc"):
+		if npc != null and is_instance_valid(npc) and npc.has_method("on_exit_unavailable"):
+			npc.on_exit_unavailable(self)
 
 
 func _resolved_exit_id() -> String:
@@ -447,6 +556,8 @@ func _reset_state() -> void:
 	_total_wait = 0.0
 	_wait_samples = 0
 	_max_wait = 0.0
+	_first_admit_time = -1.0
+	_last_admit_time = -1.0
 
 
 func _exit_tree() -> void:

@@ -4,6 +4,10 @@ extends Node
 ## the results panel: per-NPC times, exit usage, throughput and congestion.
 
 signal metrics_changed
+## Emitted once per admitted agent, with the same row stored in the run records.
+signal evacuation_recorded(record: Dictionary)
+## Emitted when an active agent dies without evacuating.
+signal npc_died(npc: Node)
 
 var _records: Dictionary = {} # npc instance id -> record
 var _arrivals: Array[float] = []
@@ -178,6 +182,7 @@ func notify_npc_died(npc: Node) -> void:
 
 	_records.erase(npc.get_instance_id())
 	_last_activity_ms = _now_ms()
+	npc_died.emit(npc)
 	metrics_changed.emit()
 
 
@@ -262,7 +267,7 @@ func register_evacuation(
 		exit["max_wait"] = maxf(float(exit["max_wait"]), wait_time)
 
 		_arrivals.append(duration)
-		_evacuations.append({
+		var evacuation_record: Dictionary = {
 			"agent_id": id,
 			"agent_serial": int(snapshot.get("agent_serial", -1)),
 			"exit_id": exit_key,
@@ -272,6 +277,29 @@ func register_evacuation(
 			"evacuation_time": duration,
 			"wait_time": wait_time,
 			"desired_speed": float(snapshot.get("desired_speed", 0.0)),
+			"distance": float(snapshot.get("distance", 0.0)),
+			"stuck_time": float(snapshot.get("stuck_time", 0.0)),
+			"stuck_strikes": int(snapshot.get("stuck_strikes", 0)),
+			"peak_density": float(snapshot.get("peak_density", 0.0)),
+			"pre_movement_wait": float(snapshot.get("pre_movement_wait", 0.0)),
+		}
+		_evacuations.append(evacuation_record)
+		evacuation_recorded.emit(evacuation_record.duplicate(true))
+	else:
+		# Tracking off suppresses the manager's records, not measurement: a
+		# recorder still needs to know that this agent reached an exit.
+		evacuation_recorded.emit({
+			"agent_id": id,
+			"agent_serial": int(snapshot.get("agent_serial", -1)),
+			"exit_id": exit_key,
+			"exit_name": exit_name,
+			"evacuation_time": duration,
+			"wait_time": wait_time,
+			"distance": float(snapshot.get("distance", 0.0)),
+			"stuck_time": float(snapshot.get("stuck_time", 0.0)),
+			"stuck_strikes": int(snapshot.get("stuck_strikes", 0)),
+			"peak_density": float(snapshot.get("peak_density", 0.0)),
+			"pre_movement_wait": float(snapshot.get("pre_movement_wait", 0.0)),
 		})
 
 	_records.erase(id)

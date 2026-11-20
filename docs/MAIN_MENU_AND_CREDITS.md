@@ -1,5 +1,11 @@
 # Main menu, saves, music and credits
 
+> **Status:** 2026-11-17 · **Applies to:** `scenes/menu/main_menu.*`,
+> `scenes/menu/menu_backdrop.gd`, `scenes/menu/credits.*`,
+> `scenes/ui/bgm_popup.*`, `scripts/music_manager.gd`,
+> `resources/credits/credits.json` · **Companions:**
+> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §3.2, §4.7, §4.13.
+
 ## Boot flow
 
 `project.godot` boots into `scenes/menu/main_menu.tscn`, a standalone 3D main

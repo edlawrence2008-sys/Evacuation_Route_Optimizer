@@ -7,8 +7,11 @@ extends VBoxContainer
 @onready var reset_button: Button = $Actions/Reset
 @onready var pause_spawning: CheckButton = $Actions/PauseSpawning
 @onready var evac_mode: CheckButton = $EvacuationMode
+@onready var record_run: CheckButton = $RecordRun
 @onready var quota_spin: SpinBox = $Limits/QuotaValue
 @onready var cap_spin: SpinBox = $Limits/CapValue
+@onready var seed_spin: SpinBox = $Limits/SeedRow/SeedValue
+@onready var randomize_seed_button: Button = $Limits/SeedRow/Randomize
 @onready var member_count_spin: SpinBox = $RandomGrid/CountValue
 @onready var start_evacuating_check: CheckButton = $RandomGrid/StartModeValue
 @onready var pathfind_only_check: CheckButton = $RandomGrid/PathOnlyValue
@@ -24,8 +27,10 @@ func _ready() -> void:
 	reset_button.pressed.connect(_on_reset_pressed)
 	pause_spawning.toggled.connect(_on_pause_spawning_toggled)
 	evac_mode.toggled.connect(_on_evac_mode_toggled)
+	record_run.toggled.connect(_on_record_run_toggled)
 	quota_spin.value_changed.connect(_on_quota_changed)
 	cap_spin.value_changed.connect(_on_cap_changed)
+	randomize_seed_button.pressed.connect(_on_randomize_seed_pressed)
 	member_count_spin.value_changed.connect(_on_member_count_changed)
 	start_evacuating_check.toggled.connect(_on_start_evacuating_toggled)
 	pathfind_only_check.toggled.connect(_on_pathfind_only_toggled)
@@ -55,7 +60,9 @@ func _process(delta: float) -> void:
 func _sync_from_state() -> void:
 	quota_spin.set_value_no_signal(GlobalData.global_spawn_quota)
 	cap_spin.set_value_no_signal(GlobalData.global_unit_cap)
+	seed_spin.set_value_no_signal(GlobalData.rng_seed)
 	evac_mode.set_pressed_no_signal(GlobalData.evacuation_mode)
+	record_run.set_pressed_no_signal(SimRecorder.recording_enabled)
 	pause_spawning.set_pressed_no_signal(GlobalData.is_spawning_paused)
 	pause_spawning.disabled = not GlobalData.is_spawning_enabled
 
@@ -70,6 +77,12 @@ func _sync_from_state() -> void:
 func _apply_limits() -> void:
 	GlobalData.global_spawn_quota = int(quota_spin.value)
 	GlobalData.global_unit_cap = maxi(1, int(cap_spin.value))
+	GlobalData.rng_seed = int(seed_spin.value)
+
+
+func _on_randomize_seed_pressed() -> void:
+	seed_spin.value = float(randi() % 2147483647)
+	status_label.text = "Seed %d - press Start or Populate to apply." % int(seed_spin.value)
 
 
 func _on_start_pressed() -> void:
@@ -90,6 +103,11 @@ func _on_pause_spawning_toggled(paused: bool) -> void:
 
 func _on_evac_mode_toggled(enabled: bool) -> void:
 	GlobalData.set_evacuation_mode(enabled)
+	_update_status()
+
+
+func _on_record_run_toggled(enabled: bool) -> void:
+	SimRecorder.set_recording_enabled(enabled)
 	_update_status()
 
 
@@ -123,6 +141,10 @@ func _on_populate_pressed() -> void:
 		return
 
 	_apply_limits()
+	if get_tree().get_nodes_in_group("npc").is_empty():
+		# Populate uses the global RNG for candidate selection, so reseed it
+		# with the chosen seed to make a fresh population repeatable.
+		GlobalData.reset_determinism(int(seed_spin.value))
 	populator.member_count = int(member_count_spin.value)
 	populator.start_evacuating = start_evacuating_check.button_pressed
 	populator.only_pathfindable_blocks = pathfind_only_check.button_pressed

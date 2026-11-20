@@ -1,5 +1,14 @@
 extends CharacterBody3D
 
+## Measurement/recording hook. Emitted whenever this agent is assigned a new
+## evacuation route or target, and once when a route attempt fails. The payload
+## is intentionally self-contained so a recorder can be added without Member
+## knowing about it. See docs/SIM_MEASUREMENTS.md.
+signal route_changed(info: Dictionary)
+## Emitted immediately when the chosen exit/destination changes, before a path
+## is requested. Recorders must not infer this from later snapshots.
+signal destination_changed(info: Dictionary)
+
 # ============================================================
 # COMPONENT REFERENCES
 # ============================================================
@@ -333,6 +342,30 @@ var _peak_contact_force: float = 0.0
 var _last_position: Vector3 = Vector3.ZERO
 var _has_last_position: bool = false
 
+# --- Run measurement state -------------------------------------------------
+## Number of route/target reassessments (each emitted route event + failures).
+var route_changes: int = 0
+## Number of times the chosen destination exit changed.
+var route_switch_count: int = 0
+## Monotonic id for the current route; 0 = no evacuation route assigned yet.
+var route_id: int = 0
+var destination_exit_id: String = ""
+var destination_exit_name: String = ""
+var last_route_reason: String = ""
+var last_path_usec: int = 0
+## Finite-difference acceleration over one physics tick, m/s^2.
+var acceleration: Vector3 = Vector3.ZERO
+var _previous_velocity: Vector3 = Vector3.ZERO
+var _route_previous_id: int = 0
+var _route_previous_target: Vector3 = Vector3.ZERO
+var _route_previous_exit_id: String = ""
+var _last_requested_target: Vector3 = Vector3.ZERO
+var _last_requested_exit_id: String = ""
+var _pending_route_reason: String = ""
+var _pending_route_started_usec: int = 0
+var _spawned_at_sim: float = -1.0
+var _evacuated_at_sim: float = -1.0
+
 const LOGIC_TICK_RATE: float = 0.15
 const FALL_CHECK_INTERVAL: float = 0.25
 ## Substeps used to integrate the social force acceleration. Three substeps at
@@ -393,6 +426,7 @@ func _ready() -> void:
 	# behaviour derived from them is reproducible for a given run seed.
 	agent_serial = GlobalData.claim_agent_serial()
 	_rng.seed = hash([GlobalData.rng_seed, agent_serial])
+	_spawned_at_sim = GlobalData.sim_now()
 	_foot_offset = _measure_foot_offset()
 	_ground_query = PhysicsRayQueryParameters3D.new()
 	_ground_query.collision_mask = 1
@@ -846,6 +880,12 @@ func _physics_process(delta: float) -> void:
 			_sprite_update_accum = 0.0
 
 	_track_movement_distance()
+
+	# Measurement: acceleration is the change in velocity over this tick. The
+	# SFM integrator writes velocity directly, so this is the effective
+	# kinematic acceleration rather than only the steering force.
+	acceleration = (velocity - _previous_velocity) / maxf(delta, 0.0001)
+	_previous_velocity = velocity
 
 	if update_steering:
 		var grounded_now: bool = _is_grounded()
@@ -1387,6 +1427,8 @@ func _request_congestion_detour(
 		path_index = 0
 
 	is_awaiting_path = true
+	_pending_route_reason = "detour"
+	_pending_route_started_usec = Time.get_ticks_usec()
 	grid.request_path(
 		self,
 		global_position,
@@ -1458,6 +1500,8 @@ func _request_corner_repath() -> void:
 		return
 
 	_corner_repath_timer = CORNER_REPATH_INTERVAL
+	_pending_route_reason = "corner"
+	_pending_route_started_usec = Time.get_ticks_usec()
 	_repath()
 
 
@@ -1605,6 +1649,7 @@ func mark_evacuated() -> void:
 		return
 
 	set_meta("evacuated", true)
+	_evacuated_at_sim = GlobalData.sim_now()
 	_exit_hold_active = false
 	_exit_hold_exit = null
 	_exit_hold_deadline = 0.0
@@ -2394,6 +2439,56 @@ func get_desired_speed() -> float:
 	return desired_speed
 
 
+## Complete behavioural parameter set for run metadata. Keep this list aligned
+## with the exports above; the comparer needs to know what differed between runs.
+func get_behavior_parameters() -> Dictionary:
+	return {
+		"movement_speed": movement_speed,
+		"max_extra_speed": max_extra_speed,
+		"max_extra_lane_offset": max_extra_lane_offset,
+		"lane_offset_strength": lane_offset_strength,
+		"use_desired_speed_distribution": use_desired_speed_distribution,
+		"desired_speed_std": desired_speed_std,
+		"desired_speed_min": desired_speed_min,
+		"desired_speed_max": desired_speed_max,
+		"body_radius": body_radius,
+		"body_mass": body_mass,
+		"relaxation_time": relaxation_time,
+		"social_force_scale": social_force_scale,
+		"wall_force_scale": wall_force_scale,
+		"wall_force_update_interval": wall_force_update_interval,
+		"use_physics_contact": use_physics_contact,
+		"use_kinematic_movement": use_kinematic_movement,
+		"kinematic_step_height": kinematic_step_height,
+		"kinematic_snap_down_height": kinematic_snap_down_height,
+		"max_horizontal_speed": max_horizontal_speed,
+		"allow_jumping": allow_jumping,
+		"allow_yielding": allow_yielding,
+		"waypoint_arrival_distance": waypoint_arrival_distance,
+		"stuck_time_threshold": stuck_time_threshold,
+		"stuck_progress_ratio": stuck_progress_ratio,
+		"enable_crowd_damage": enable_crowd_damage,
+		"crowd_threshold": crowd_threshold,
+		"crush_damage_per_sec": crush_damage_per_sec,
+		"is_evacuee": is_evacuee,
+		"evac_shortlist_size": evac_shortlist_size,
+		"evac_choice_tolerance": evac_choice_tolerance,
+		"evac_confirm_timeout": evac_confirm_timeout,
+		"max_evacuation_failures": max_evacuation_failures,
+		"failed_evac_point_cooldown": failed_evac_point_cooldown,
+		"max_exit_hold_time": max_exit_hold_time,
+		"pre_movement_enabled": pre_movement_enabled,
+		"pre_movement_mean": pre_movement_mean,
+		"pre_movement_sigma": pre_movement_sigma,
+		"pre_movement_max": pre_movement_max,
+		"exit_choice_beta_distance": exit_choice_beta_distance,
+		"exit_choice_beta_queue": exit_choice_beta_queue,
+		"exit_choice_beta_visible": exit_choice_beta_visible,
+		"exit_choice_familiarity": exit_choice_familiarity,
+		"exit_choice_temperature": exit_choice_temperature,
+	}
+
+
 func get_pre_movement_delay() -> float:
 	return _pre_movement_delay
 
@@ -2497,6 +2592,9 @@ func request_evacuation_target(target: Vector3) -> void:
 	current_path.clear()
 	path_index = 0
 	_flow_wait = 0.0
+	_pending_route_reason = "destination"
+	_pending_route_started_usec = Time.get_ticks_usec()
+	_emit_destination_changed(target)
 
 	if gridmap:
 		if gridmap.enable_flow_fields:
@@ -2513,6 +2611,7 @@ func request_evacuation_target(target: Vector3) -> void:
 			gridmap.ensure_flow_field_cell(_flow_target_cell)
 			is_awaiting_path = false
 			_reset_stuck()
+			_assign_route("destination", PackedVector3Array(), "flow")
 		else:
 			_flow_active = false
 			is_awaiting_path = true
@@ -2541,6 +2640,9 @@ func _fail_evacuation() -> void:
 		evacuation_manager.notify_evacuation_failed(
 			_last_evac_target
 		)
+
+	if route_id > 0 or has_evacuation_target:
+		_assign_route("failed", PackedVector3Array(), "failed")
 
 	has_evacuation_target = false
 	current_state = State.IDLE
@@ -2612,6 +2714,27 @@ func _route_to_closest_evac_point() -> void:
 	var my_position: Vector3 = global_position
 	var valid_points: Array[Vector3] = []
 	var seen_positions: Dictionary = {}
+	var unavailable: Dictionary = {}
+
+	# Exits can be disabled at runtime. Collect their quantised keys first so a
+	# root node visited before its Area3D cannot sneak an unavailable exit in.
+	for node: Node in evacuation_nodes:
+		var disabled_exit := node as Node3D
+
+		if (
+			disabled_exit == null
+			or not is_instance_valid(disabled_exit)
+			or not disabled_exit.has_method("is_available")
+			or disabled_exit.is_available()
+		):
+			continue
+
+		var disabled_position: Vector3 = disabled_exit.global_position
+		unavailable[Vector3i(
+			roundi(disabled_position.x * 2.0),
+			roundi(disabled_position.y * 2.0),
+			roundi(disabled_position.z * 2.0)
+		)] = true
 
 	for node: Node in evacuation_nodes:
 		var point := node as Node3D
@@ -2634,6 +2757,9 @@ func _route_to_closest_evac_point() -> void:
 			continue
 
 		seen_positions[key] = true
+
+		if unavailable.has(key):
+			continue
 
 		if not _is_evacuation_point_failed(point_position):
 			valid_points.append(point_position)
@@ -2798,6 +2924,8 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 				_congestion_repath_timer,
 				CONGESTION_REPATH_INTERVAL * 1.5
 			)
+			_pending_route_reason = ""
+			_pending_route_started_usec = 0
 			_reset_stuck()
 			return
 
@@ -2809,6 +2937,13 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 		current_path = new_path
 		path_index = 0
 		_reset_stuck()
+
+		if current_state == State.SEEKING_EVAC or has_evacuation_target:
+			var reason: String = _pending_route_reason
+			if reason.is_empty():
+				reason = "path"
+			_assign_route(reason, new_path, "path")
+
 		return
 
 	# A congestion detour that failed should not discard a still-usable route.
@@ -2936,6 +3071,8 @@ func _repath() -> void:
 		return
 
 	is_awaiting_path = true
+	_pending_route_reason = "navigation"
+	_pending_route_started_usec = Time.get_ticks_usec()
 
 	grid.request_path(
 		self,
@@ -2943,6 +3080,331 @@ func _repath() -> void:
 		current_path[current_path.size() - 1],
 		_on_path_received
 	)
+
+
+## Publish a route assignment for recording and expose the destination exit.
+## `mode` is "path", "flow" or "failed". Route ids are monotonic per agent; the
+## recorder uses `previous_route_id` to link before/after disruption snapshots.
+func _emit_destination_changed(target: Vector3) -> void:
+	var identity: Dictionary = _resolve_exit_identity(target)
+	var new_exit_id: String = String(identity.get("exit_id", ""))
+	var changed: bool = (
+		target.distance_to(_last_requested_target) > 0.25
+		or new_exit_id != _last_requested_exit_id
+	)
+
+	if not changed:
+		return
+
+	destination_changed.emit({
+		"agent_serial": agent_serial,
+		"previous_target": _last_requested_target,
+		"previous_exit_id": _last_requested_exit_id,
+		"target": target,
+		"exit_id": new_exit_id,
+		"exit_name": String(identity.get("name", "")),
+		"at": GlobalData.sim_now(),
+	})
+	_last_requested_target = target
+	_last_requested_exit_id = new_exit_id
+
+
+func _assign_route(reason: String, path: PackedVector3Array, mode: String) -> void:
+	var target: Vector3 = _last_evac_target
+	var identity: Dictionary = _resolve_exit_identity(target)
+	var new_exit_id: String = String(identity.get("exit_id", ""))
+	var new_exit_name: String = String(identity.get("name", ""))
+	var switched: bool = (
+		route_id > 0
+		and (
+			target.distance_to(_route_previous_target) > 0.25
+			or new_exit_id != _route_previous_exit_id
+		)
+	)
+	var previous_id: int = route_id
+	var path_usec: int = 0
+
+	if _pending_route_started_usec > 0:
+		path_usec = Time.get_ticks_usec() - _pending_route_started_usec
+
+	_pending_route_started_usec = 0
+	_pending_route_reason = ""
+	route_id += 1
+	route_changes += 1
+
+	if switched:
+		route_switch_count += 1
+
+	_route_previous_id = previous_id
+	_route_previous_target = target
+	_route_previous_exit_id = new_exit_id
+	destination_exit_id = new_exit_id
+	destination_exit_name = new_exit_name
+	last_route_reason = reason
+	last_path_usec = path_usec
+
+	var path_cells: Array = []
+
+	if gridmap != null:
+		for point: Vector3 in path:
+			var cell: Vector3i = gridmap.local_to_map(
+				gridmap.to_local(point)
+			)
+			path_cells.append([cell.x, cell.y, cell.z])
+
+		if path.is_empty():
+			var target_cell: Vector3i = gridmap.local_to_map(
+				gridmap.to_local(target)
+			)
+			path_cells.append([target_cell.x, target_cell.y, target_cell.z])
+
+	var info: Dictionary = {
+		"agent_serial": agent_serial,
+		"agent_id": get_instance_id(),
+		"route_id": route_id,
+		"previous_route_id": previous_id,
+		"reason": reason,
+		"mode": mode,
+		"success": mode != "failed",
+		"evacuating": current_state == State.SEEKING_EVAC or has_evacuation_target,
+		"target": target,
+		"exit_id": destination_exit_id,
+		"exit_name": destination_exit_name,
+		"path": path,
+		"path_cells": path_cells,
+		"path_points": path.size(),
+		"path_usec": path_usec,
+		"route_length": _route_length(path),
+		"remaining_length": _remaining_route_length(),
+		"switched": switched,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
+		"at": GlobalData.sim_now(),
+	}
+	route_changed.emit(info)
+
+
+func _route_length(path: PackedVector3Array) -> float:
+	if path.is_empty():
+		return 0.0
+
+	var from: Vector3 = global_position
+	var total: float = 0.0
+
+	for point: Vector3 in path:
+		total += from.distance_to(point)
+		from = point
+
+	return total
+
+
+func _remaining_route_length() -> float:
+	if _flow_active:
+		return global_position.distance_to(_flow_target)
+
+	if path_index < current_path.size():
+		return _path_length_from_here(current_path)
+
+	return 0.0
+
+
+## Finds the EvacPoint node that owns `point` and returns its stable id/name.
+## Exits are deduplicated by quantised position because the root and Area3D
+## both join the group.
+func _resolve_exit_identity(point: Vector3) -> Dictionary:
+	var tree: SceneTree = get_tree()
+
+	if tree == null or point == Vector3.ZERO:
+		return {}
+
+	var best_distance: float = INF
+	var best: Dictionary = {}
+
+	for node: Node in tree.get_nodes_in_group("EvacPoint"):
+		var exit_node := node as Node3D
+
+		if exit_node == null or not is_instance_valid(exit_node):
+			continue
+
+		if not exit_node.has_method("get_exit_status"):
+			continue
+
+		var distance: float = exit_node.global_position.distance_to(point)
+
+		if distance >= best_distance or distance > 0.5:
+			continue
+
+		var status: Dictionary = exit_node.get_exit_status()
+		best_distance = distance
+		best = {
+			"exit_id": String(status.get("exit_id", exit_node.get_path())),
+			"name": String(status.get("name", exit_node.name)),
+		}
+
+	return best
+
+
+## True when this agent's current evacuation route runs within `radius` of the
+## point. Used by the recorder to count agents affected by an environment edit.
+func is_route_affected(
+	point: Vector3,
+	radius: float = 3.0,
+	vertical_tolerance: float = 2.0
+) -> bool:
+	if has_meta("evacuated") or current_state == State.DEAD:
+		return false
+
+	if _flow_active:
+		var closest: Vector3 = Geometry3D.get_closest_point_to_segment(
+			point,
+			global_position,
+			_flow_target
+		)
+		var difference: Vector3 = closest - point
+		return (
+			Vector2(difference.x, difference.z).length() <= radius
+			and absf(difference.y) <= vertical_tolerance
+		)
+
+	if current_path.is_empty():
+		var direct := global_position - point
+
+		return (
+			Vector2(direct.x, direct.z).length() <= radius
+			and absf(direct.y) <= vertical_tolerance
+		)
+
+	return _path_passes_near(point, radius, vertical_tolerance)
+
+
+## Called by an EvacPoint that was disabled at runtime while this agent was
+## heading for it. Drops the target and lets the normal IDLE timer choose a
+## different exit.
+func on_exit_unavailable(exit_point: Node3D) -> void:
+	if exit_point == null or not is_instance_valid(exit_point):
+		return
+
+	var distance: float = _last_evac_target.distance_to(exit_point.global_position)
+
+	if distance > 1.5:
+		return
+
+	if _last_evac_target != Vector3.ZERO:
+		_mark_evacuation_point_failed(_last_evac_target)
+
+	if route_id > 0:
+		_assign_route("exit_unavailable", PackedVector3Array(), "failed")
+
+	has_evacuation_target = false
+	current_state = State.IDLE
+	current_path.clear()
+	path_index = 0
+	is_awaiting_path = false
+	_repath_pending = false
+	_flow_active = false
+	_flow_wait = 0.0
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	wait_timer = 0.1
+
+
+## Route snapshot for a recorder that attaches after the route was assigned.
+func get_route_snapshot() -> Dictionary:
+	if route_id == 0:
+		return {}
+
+	var path: PackedVector3Array = (
+		PackedVector3Array() if _flow_active else current_path
+	)
+	var path_cells: Array = []
+
+	if gridmap != null:
+		for point: Vector3 in path:
+			var cell: Vector3i = gridmap.local_to_map(gridmap.to_local(point))
+			path_cells.append([cell.x, cell.y, cell.z])
+
+		if path.is_empty():
+			var target_cell: Vector3i = gridmap.local_to_map(
+				gridmap.to_local(_last_evac_target)
+			)
+			path_cells.append([target_cell.x, target_cell.y, target_cell.z])
+
+	return {
+		"agent_serial": agent_serial,
+		"agent_id": get_instance_id(),
+		"route_id": route_id,
+		"previous_route_id": _route_previous_id,
+		"reason": "snapshot",
+		"mode": "flow" if _flow_active else "path",
+		"success": true,
+		"evacuating": true,
+		"target": _last_evac_target,
+		"exit_id": destination_exit_id,
+		"exit_name": destination_exit_name,
+		"path": path,
+		"path_cells": path_cells,
+		"path_points": path.size(),
+		"path_usec": 0,
+		"route_length": _route_length(path),
+		"remaining_length": _remaining_route_length(),
+		"switched": false,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
+		"at": GlobalData.sim_now(),
+	}
+
+
+## Flat snapshot consumed by the simulator recorder and any future player.
+func get_measurement_state() -> Dictionary:
+	return {
+		"serial": agent_serial,
+		"id": get_instance_id(),
+		"state": int(current_state),
+		"status": _status_name(),
+		"position": global_position,
+		"velocity": velocity,
+		"speed": Vector2(velocity.x, velocity.z).length(),
+		"acceleration": acceleration,
+		"destination": _last_evac_target,
+		"exit_id": destination_exit_id,
+		"exit_name": destination_exit_name,
+		"route_id": route_id,
+		"route_index": path_index,
+		"route_points": current_path.size(),
+		"route_length": _remaining_route_length(),
+		"distance": _distance_travelled,
+		"contact_force": contact_force,
+		"density": local_density,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
+		"stuck_strikes": _stuck_strikes,
+		"stuck_time": _stuck_time_total,
+		"evacuated": is_evacuated(),
+		"evacuated_at": _evacuated_at_sim,
+		"spawned_at": _spawned_at_sim,
+		"desired_speed": desired_speed,
+		"pre_movement_delay": _pre_movement_delay,
+	}
+
+
+func _status_name() -> String:
+	if has_meta("evacuated"):
+		return "evacuated"
+
+	match current_state:
+		State.DEAD:
+			return "dead"
+		State.ARRIVED:
+			return "queued" if _exit_hold_active else "arrived"
+		State.SEEKING_EVAC:
+			return "seeking_exit"
+		State.WANDERING:
+			return "wandering"
+		State.IDLE:
+			return "pre_movement" if not _has_started_moving else "idle"
+		_:
+			return "active"
 
 
 ## Snapshot consumed by EvacuationManager when this NPC reaches an exit.

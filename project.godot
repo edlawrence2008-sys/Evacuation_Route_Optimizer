@@ -34,6 +34,10 @@ LogicNetwork="*res://scripts/logic/logic_network.gd"
 PerformanceSettings="*res://scripts/performance_settings.gd"
 MusicManager="*res://scripts/music_manager.gd"
 SaveManager="*res://scripts/save_manager.gd"
+DemoStore="*res://scripts/demo_store.gd"
+SimRecorder="*res://scripts/sim_recorder.gd"
+DemoPlayer="*res://scripts/demo_player.gd"
+DemoComparer="*res://scripts/demo_comparer.gd"
 
 [debug]
 
