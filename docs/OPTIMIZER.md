@@ -656,7 +656,7 @@ Consequences:
   do not attribute the seed's improvement to pheromone search.
 - `exhaustive` stays a reference mode for small cohort counts.
 
-The pure phase-1 tests are 48 assertions over cohorts, the FIFO queue model,
+The pure phase-1 tests are 51 assertions over cohorts, the FIFO queue model,
 congestion prediction, reachability, determinism, the exhaustive optimum, the
 search guard and weight presets; the navigation test is 18 assertions over the
 real `NavGridMap` cost field and path cells. Run commands and expected output
@@ -672,9 +672,53 @@ verifies the optimizer block and optimizer route rows, and deletes the demo
 afterwards.
 
 Phase 3 adds **27 assertions** in `optimizer_phase3_test.gd` (ACO against exact,
-local search and nearest; determinism; budget; scale) and the comparer/player
-layout test adds **23**. Total optimizer coverage is **175 assertions** across
-the six harnesses.
+local search and nearest; determinism; budget; scale), the comparer/player layout
+test adds **28**, and `demo_restore_test.tscn` adds **22** for Load State.
+Total coverage is **236 assertions** across the eight harnesses.
+
+### 8.5 Late arrivals: measured cause and fixes (2026-11-20)
+
+Recorded demos on the test map (332 agents, 2 exits, seed 12345) showed a small
+tail arriving 100–130 s after the main crowd. The cause was measured, not
+guessed:
+
+- Mean desired speed was **1.338 m/s**, but the late agents were the
+  **0.64–0.88 m/s tail** of the Weidmann distribution.
+- Their routes were **58–83 m**, so their expected travel time alone was
+  **75–113 s**. Add 4–45 s of pre-movement and 0–12 s of stuck time and the
+  observed 96–130 s follows.
+- Example: agent 304 had 0.643 m/s, a 72.9 m route, 4.0 s pre-movement and
+  11.2 s stuck → 130.0 s measured.
+- The optimizer used the **cohort mean speed** for every member, so a 0.64 m/s
+  agent inside a 1.34 m/s cohort was predicted to arrive ~2× too early. It
+  assigned that cohort a long route; the measured makespan then jumped from 96 s
+  (baseline) to 130 s (optimized) even though the predicted cost improved.
+- A second, smaller effect: an agent near a corner/prop could alternate between
+  two exits. A successful path cleared **all** cooldowns, and a nav refresh
+  re-ran the exit choice instead of re-pathing to the same exit. The agent
+  toggled exits every ~0.5 s and lost 10–30 s.
+
+Fixes now in the code:
+
+1. **Per-agent speed in the objective.** `CohortBuilder` keeps every member's
+   desired speed; `ExitCostAnalyzer` builds one arrival per agent as
+   `distance / speed`. The slow tail now defines the predicted makespan. A
+   dedicated test asserts that a 0.6 / 1.4 m/s pair predicts the slow arrival,
+   not the mean.
+2. **Cooldowns persist.** A successful path no longer clears
+   `_failed_evac_points`. When every exit is on cooldown the agent waits for the
+   earliest expiry (0.5–2 s) instead of clearing all cooldowns and re-choosing
+   immediately.
+3. **Nav refreshes keep the exit.** `_repath()` now requests the same target
+   (`optimizer` assignment first, then the last target) instead of re-running
+   the logit choice.
+4. **Visible diagnosis.** The run summary and F4 panel list the **top-5 latest
+   agents** with speed, pre-movement, distance, stuck time and route changes;
+   the evacuation record now carries route changes/switches.
+
+These fixes reduce the tail but do not remove it: a 0.64 m/s walker on a 70 m
+route is legitimately slow. The optimizer now sees that and prefers a shorter
+exit for the cohort instead of averaging it away.
 
 The **600-agent scale test** (`optimizer_scale_test.tscn`, 40 × 20 m floor,
 4 exits) built 28 cohorts, solved in **73–86 ms**, and applied **600 / 600**
@@ -800,8 +844,57 @@ an estimate be labelled as a measurement.
 
 Protocol: same save, layout, seed, agent parameters and sampling interval; **≥5
 seeds per condition**; report mean and spread, never the best run. The Demo
-Comparer already aligns runs on relative simulation time and reports exit
-assignments, disruption responses and configuration differences.
+Comparer aligns runs on relative simulation time; its **Final Summary** table and
+**Verdict** line compare total/P95/max time, peak density and peak contact
+directly. The F4 results panel prints the optimizer's predicted makespan next to
+the measured maximum so the prediction gap is visible.
+
+### 11.1 A/B checklist (baseline vs optimized)
+
+1. Load the save/layout. Do not move or edit placeables between runs.
+2. Set the **Seed** in the Simulation panel and press **Reset**.
+3. Optimizer **off**: **Start**, wait until the crowd finishes (or the expected
+   horizon), then **Reset**. This records demo A.
+4. Optimizer **on**, same seed and settings: **Start**, wait the same horizon,
+   then **Reset**. This records demo B.
+5. Pause → **Demos** → select A and B → **Compare**. A is the baseline; read
+   **Final Summary** and **Verdict**.
+6. Treat a comparison as valid only if both demos show the same seed, layout and
+   scenario line. A changed map or moved placeable invalidates it; the
+   configuration diff and the scenario line state the seed/agent/optimizer
+   settings.
+
+The old demos are still useful for diagnosis, but they were recorded before the
+speed-tail fix; their `late_agents` block explains their tail. Re-run for a
+post-fix comparison.
+
+### 11.2 Editable demos
+
+The Demo Player adds **Load State**:
+
+1. Play/scrub a demo to the point of interest.
+2. **Load State** → confirm. The live crowd is cleared with
+   `GlobalData.kill_all_npcs()` while the map, exits and **spawners stay alive**.
+   Recorded agents are instantiated with their serials, positions, exits,
+   desired speeds, pre-movement remainder, route/contact counters and spawn
+   times. The recorder's earlier `evacuation` events are replayed into
+   `EvacuationManager`, exit admission totals are restored, and each spawner's
+   spawned count / section count / interval phase is restored. **Spawners keep
+   spawning** from those counts. The source demo is copied through this tick
+   into a new demo (`resumed_from`/`resumed_at`), which then records the live
+   continuation.
+3. Time stays frozen and the inventory opens with the Simulation/Optimizer
+   tools; closing the inventory resumes time. Then Optimizer → **Run once** to
+   re-optimize from that state.
+
+Limitations: this is a **best-effort restore**, not a bit-exact replay. Exact
+path geometry, queue order, velocity-dependent contact state and clones of
+already-evacuated agents are not recreated; a missing recorded exit falls back to
+the local choice. The map should match the demo. It is a scenario-editing tool,
+not a replay. The restore acceptance test is
+`tests/demo_restore_test.tscn` (22 assertions) and
+`tests/recording_control_test.tscn` (31 assertions) cover restore and recording
+continuation.
 
 ---
 
@@ -854,7 +947,7 @@ No new autoload, no new HUD category, no new input action.
 | Phase | Work | Completion condition |
 |---|---|---|
 | 0 | **Contracts and adapter boundary** — **done 2026-11-20** | `SimulationSnapshot`, `OptimizationRequest` and `OptimizationResult` are plain data; the pure manager runs without the scene tree |
-| 1 | **Cohorts + cost fields + exact baselines** — **done 2026-11-20** | `CohortBuilder`; `NavGridMap.build_cost_field_to()` / `get_path_cells()`; `nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`; 66 headless assertions pass, and exhaustive matches the analytic minimum on a 3-exit test |
+| 1 | **Cohorts + cost fields + exact baselines** - **done 2026-11-20** | `CohortBuilder`; `NavGridMap.build_cost_field_to()` / `get_path_cells()`; `nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`; 69 headless assertions pass (51 optimizer + 18 nav), and exhaustive matches the analytic minimum on a 3-exit test |
 | 2 | **Apply + record + panel** — **done 2026-11-20** | `Member` assignment override; `GlobalData.environment_version`/mode; `OptimizerBridge`; manifest/event/summary recording; right-side optimizer panel. Acceptance: 25-agent recorded evacuation with measured admissions and optimizer route rows, late-spawn adoption, plus a 600-agent / 28-cohort solve (~80 ms) applying 600/600 assignments. A full 600-agent *recorded evacuation* is still a longer manual run |
 | 3 | **Predictive congestion + ACO** — **done 2026-11-20** | ACO seeded by local search, with 16 ants / 40 iterations / 250 ms defaults; never worse than local search, matched exact in 3/5 seeded 6-cohort instances, deterministic and budgeted. 27 ACO assertions. A measured predicted-vs-actual density study remains experiment work |
 | 4 | **Multi-objective + modes** — queue/contact/switching terms, weight presets | Each mode produces a measurably different trade-off without breaking evacuation |

@@ -1,7 +1,7 @@
 # Demos: recorded experiments, library, player and comparer
 
-> **Status:** 2026-11-20 (library/player/comparer unchanged since 2026-11-18;
-> optimizer experiment workflow cross-referenced) · **Applies to:**
+> **Status:** 2026-11-20 (optimizer-aware comparisons, Load State continuation,
+> manual recording, scrolling demo list) · **Applies to:**
 > `scripts/demo_store.gd` (autoload
 > `DemoStore`), `scripts/demo_player.gd` (autoload `DemoPlayer`),
 > `scripts/demo_comparer.gd` (autoload `DemoComparer`),
@@ -49,6 +49,8 @@ The pause menu's main list now has **DEMOS**, built like the Saves page:
 - **Description** opens a multi-line text dialog (stored in `demo.json`).
 - **Move to Folder** prompts for a folder name; empty clears the folder.
 - **Folder: All** cycles the filter through all folders in this save.
+- **Mouse wheel** scrolls the demo list one row per notch. The page label still
+  reports the current page.
 - **Duplicate** copies the recording and metadata; a name prompt lets you
   rename the copy.
 - **Delete** asks for confirmation and removes the folder.
@@ -78,6 +80,7 @@ Controls:
 | View: Contact force | Colour by recorded contact force. |
 | View: Exit assignment | Colour by the agent's assigned exit id. |
 | Route | Toggle the selected agent's route polyline at the current time. |
+| Load State | Replace the live crowd with the agents at the current playback time (confirmation required). Restores agent state, evacuation history, exit totals and spawner counts; spawners keep spawning. Use this to edit a scenario or run the optimizer from a recorded moment. |
 
 The bottom transport bar scrolls horizontally when the controls exceed the
 viewport, so no button is cut off on narrow windows.
@@ -129,6 +132,11 @@ through:
   throughput, peak contact force and route changes. This replaces the old
   free-form value block, so 3–6 recordings stay comparable at a glance.
 - **Deltas vs A** — the same rows expressed as differences from recording A.
+- **Final Summary** — total, average, P95 and max evacuation time, peak density,
+  peak contact force and deaths for every recording, built from each run's final
+  summary. This is the table to use for “did the optimizer help?”.
+- **Verdict** — one line per non-A recording stating how much faster/slower it
+  was, the P95 change, and the peak-density/contact changes.
 - **Synchronized metrics** — six stacked charts with a shared cursor.
 - **Show detailed differences** — collapsed by default. When enabled, it shows
   trajectory divergence, exit assignments, disruption responses, environment
@@ -163,6 +171,51 @@ so the comparer's configuration diff and exit-assignment diff show which
 objective produced which outcome. Predicted costs remain in the optimizer event,
 separate from the measured summary.
 
+## Recording
+
+- **Record On Start** in the Simulation panel keeps the original behaviour: a
+  demo starts when **Start** begins a run.
+- **Start/Stop Recording** captures immediately without using Start. A manual
+  recording survives a later Start, and the button reports the live state.
+- A run records until it is stopped or every configured spawn quota has been
+  reached and the last live member has evacuated. Unlimited-quota runs stay
+  open until stopped manually.
+- Loading a state continues the source demo into a new recording (see
+  **Editable demos** below).
+
+## Editable demos
+
+A demo is evidence, but it can also seed a new experiment. **Load State** in the
+Demo Player imports the current playback tick into the live map:
+
+- The live crowd is cleared with `GlobalData.kill_all_npcs()`; the spawners,
+  quotas and map stay alive.
+- Recorded agents are instantiated with their **serials, positions, chosen
+  exits, desired speeds, pre-movement remainder, route/contact counters and
+  spawn times**. Evacuation history up to that tick is replayed into
+  `EvacuationManager`, exit admission totals are restored, and each spawner's
+  spawned count, section count and interval phase are restored.
+- **Spawners keep spawning** from the restored counts. A spawner with quota left
+  resumes; one that had met its quota stays met.
+- **The recording continues.** A new demo is created whose `recording.jsonl`
+  copies everything from the source demo through the load tick (run header,
+  spawns, ticks, routes, evacuations, disruptions) and then records the live
+  continuation. The new run header stores `resumed_from` and `resumed_at`, and
+  the combined summary includes the earlier evacuations. The source demo is
+  unchanged.
+- **Time stays paused with the inventory open.** After loading, the pause menu
+  closes, simulation time is frozen, and the inventory opens on the
+  Simulation/Optimizer tools. Closing the inventory resumes time.
+- The confirmation and loaded popups are clamped to the viewport and scroll
+  their text, so a long message cannot push the buttons off-screen.
+- After loading, press **Optimizer → Run once** to optimize from this state.
+
+This is a **best-effort restore**, not a bit-exact replay: exact path geometry,
+queue order, velocity-dependent contact state and clones of already-evacuated
+agents are not recreated, and missing recorded exits fall back to the local
+choice. The map should match the demo. It is intended for scenario editing and
+for testing the optimizer from a recorded moment.
+
 ## What the player and comparer read
 
 Only the structured files. They do not query live NPCs, meshes, camera or
@@ -179,3 +232,6 @@ exit field order and the event catalogue.
   large (raise `sampling_interval` or disable path capture in `SimRecorder`).
 - Simulation is frozen while inspecting; this is an inspection tool, not a
   live re-simulation.
+- Load State is best-effort: exact path geometry, queue order and contact state
+  are rebuilt rather than replayed, and already-evacuated agent nodes are not
+  recreated (their evacuation history is restored).

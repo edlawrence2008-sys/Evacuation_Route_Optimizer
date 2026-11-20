@@ -157,6 +157,7 @@ func load_save(slug: String) -> void:
 
 	var tree := get_tree()
 	tree.paused = false
+	Engine.time_scale = 1.0
 
 	var map_path := String(manifest.get("map", ""))
 	if not map_path.is_empty() and ResourceLoader.exists(map_path):
@@ -278,6 +279,7 @@ func new_blank_map(name: String, world_options: Dictionary = {}) -> String:
 	_clear_dir(_live_chunks())
 
 	tree.paused = false
+	Engine.time_scale = 1.0
 	if ResourceLoader.exists(map_path):
 		tree.change_scene_to_file(map_path)
 	else:
@@ -297,6 +299,15 @@ func new_blank_map(name: String, world_options: Dictionary = {}) -> String:
 			node.queue_free()
 	await tree.process_frame
 	await tree.process_frame
+
+	var gd := get_node_or_null("/root/GlobalData")
+
+	if gd != null and gd.has_method("reset_spawning"):
+		gd.call("reset_spawning")
+
+	var runtime = get_node_or_null("/root/RuntimeExports")
+	if runtime != null and runtime.has_method("apply_defaults_to_live"):
+		runtime.call("apply_defaults_to_live")
 
 	var player := tree.get_first_node_in_group("Player") as Node3D
 	var cell := Vector3i(0, 0, 0)
@@ -405,9 +416,20 @@ func _build_manifest(display: String, world: Dictionary = {}) -> Dictionary:
 		"player": player_data,
 		"cycle_time": cycle_time,
 		"sim_seed": int(global_data.rng_seed) if global_data != null else 0,
+		"runtime_exports": _collect_runtime_exports(),
 		"placeables": _collect_placeables(),
 		"world": _normalise_world_metadata(world),
 	}
+
+
+func _collect_runtime_exports() -> Dictionary:
+	var runtime = get_node_or_null("/root/RuntimeExports")
+
+	if runtime == null or not runtime.has_method("collect_live"):
+		return {}
+
+	var result: Variant = runtime.call("collect_live")
+	return result if result is Dictionary else {}
 
 
 ## World descriptor stored with every save. Only "existing" and "blank" are
@@ -468,7 +490,31 @@ func _collect_placeables() -> Array:
 				xform.origin.x, xform.origin.y, xform.origin.z,
 			],
 			"props": _collect_simple_properties(node),
+			"node_props": _collect_child_script_properties(node),
 		})
+	return entries
+
+
+## Some placeable scenes put their script on a child (EvacPoint's script lives
+## on Area3D). Collect those exports under a relative node path so runtime edits
+## such as service rate, queue limits and receiving capacity survive a save.
+func _collect_child_script_properties(root: Node) -> Array:
+	var entries: Array = []
+
+	for child: Node in root.find_children("*", "", true, false):
+		if child.get_script() == null:
+			continue
+
+		var props := _collect_simple_properties(child)
+
+		if props.is_empty():
+			continue
+
+		entries.append({
+			"path": String(root.get_path_to(child)),
+			"props": props,
+		})
+
 	return entries
 
 
@@ -487,9 +533,32 @@ func _collect_simple_properties(node: Node) -> Dictionary:
 			or value is bool
 			or value is String
 			or value is StringName
+			or value is Vector2
+			or value is Vector3
+			or value is Color
 		):
-			props[key] = value
+			var runtime = get_node_or_null("/root/RuntimeExports")
+			props[key] = (
+				runtime.call("encode_value", value)
+				if runtime != null and runtime.has_method("encode_value")
+				else value
+			)
 	return props
+
+
+func _apply_saved_props(target: Node, props: Dictionary) -> void:
+	if target == null:
+		return
+
+	var runtime = get_node_or_null("/root/RuntimeExports")
+
+	for key: Variant in props:
+		var value: Variant = props[key]
+
+		if runtime != null and runtime.has_method("decode_value"):
+			value = runtime.call("decode_value", value)
+
+		target.set(String(key), value)
 
 
 func _apply_manifest(manifest: Dictionary) -> void:
@@ -514,8 +583,22 @@ func _apply_manifest(manifest: Dictionary) -> void:
 			if instance == null:
 				continue
 			var props: Dictionary = entry.get("props", {})
-			for key in props:
-				instance.set(String(key), props[key])
+			_apply_saved_props(instance, props)
+
+			for group: Dictionary in entry.get("node_props", []):
+				var path := String(group.get("path", ""))
+
+				if path.is_empty() or path == ".":
+					continue
+
+				var target := instance.get_node_or_null(NodePath(path))
+
+				if target == null:
+					continue
+
+				var child_props: Dictionary = group.get("props", {})
+				_apply_saved_props(target, child_props)
+
 			scene_root.add_child(instance)
 			# Keep restored placeables in the same group used by the save scan,
 			# even if a scene forgets to register itself. This keeps them alive
@@ -555,6 +638,16 @@ func _apply_manifest(manifest: Dictionary) -> void:
 
 	if global_data != null and global_data.has_method("reset_spawning"):
 		global_data.reset_spawning()
+
+	var runtime = get_node_or_null("/root/RuntimeExports")
+
+	if runtime != null and runtime.has_method("apply_live"):
+		var runtime_block: Variant = manifest.get("runtime_exports", {})
+
+		if runtime_block is Dictionary and not runtime_block.is_empty():
+			runtime.call("apply_live", runtime_block)
+		elif runtime.has_method("apply_defaults_to_live"):
+			runtime.call("apply_defaults_to_live")
 
 
 func _flush_world() -> void:

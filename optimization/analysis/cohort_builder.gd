@@ -64,6 +64,7 @@ static func _bucketize(snapshot: SimulationSnapshot, size: float) -> Dictionary:
 			bucket = {
 				"members": [],
 				"cells": [],
+				"speeds": [],
 				"sum_position": Vector3.ZERO,
 				"sum_speed": 0.0,
 				"sum_remaining": 0.0,
@@ -71,16 +72,18 @@ static func _bucketize(snapshot: SimulationSnapshot, size: float) -> Dictionary:
 			buckets[key] = bucket
 
 		var serial: int = int(agent.get("serial", -1))
+		var desired_speed: float = maxf(
+			float(agent.get("desired_speed", DEFAULT_SPEED)), 0.2
+		)
 
 		if serial < 0:
 			continue
 
 		(bucket["members"] as Array).append(serial)
 		(bucket["cells"] as Array).append(agent.get("cell", Vector3i.ZERO))
+		(bucket["speeds"] as Array).append(desired_speed)
 		bucket["sum_position"] = Vector3(bucket["sum_position"]) + position
-		bucket["sum_speed"] = float(bucket["sum_speed"]) + float(
-			agent.get("desired_speed", DEFAULT_SPEED)
-		)
+		bucket["sum_speed"] = float(bucket["sum_speed"]) + desired_speed
 		bucket["sum_remaining"] = float(bucket["sum_remaining"]) + float(
 			agent.get("path_remaining", 0.0)
 		)
@@ -125,6 +128,7 @@ static func _merge_to_limit(buckets: Dictionary, limit: int) -> Dictionary:
 
 		(target["members"] as Array).append_array(source["members"])
 		(target["cells"] as Array).append_array(source["cells"])
+		(target["speeds"] as Array).append_array(source["speeds"])
 		target["sum_position"] = (
 			Vector3(target["sum_position"]) + Vector3(source["sum_position"])
 		)
@@ -169,6 +173,14 @@ static func _finalize(buckets: Dictionary) -> Array:
 		var cohort_id: int = cohorts.size()
 		var speed_sum: float = float(bucket["sum_speed"])
 		var speed: float = speed_sum / float(count)
+		var speeds: Array = bucket["speeds"]
+		var speed_min: float = INF
+		var speed_max: float = 0.0
+
+		for value: Variant in speeds:
+			var member_speed: float = float(value)
+			speed_min = minf(speed_min, member_speed)
+			speed_max = maxf(speed_max, member_speed)
 
 		cohorts.append({
 			"cohort_id": cohort_id,
@@ -177,6 +189,9 @@ static func _finalize(buckets: Dictionary) -> Array:
 			"count": count,
 			"centroid": Vector3(bucket["sum_position"]) / float(count),
 			"speed": speed if speed > 0.1 else DEFAULT_SPEED,
+			"speed_min": speed_min if speed_min < INF else DEFAULT_SPEED,
+			"speed_max": speed_max,
+			"speeds": speeds.duplicate(),
 			"remaining": float(bucket["sum_remaining"]) / float(count),
 			"cell": _modal_cell(bucket["cells"]),
 		})

@@ -30,6 +30,10 @@ const AGENT_FIELDS: Array[String] = [
 	"contact_force", "density",
 	"route_changes", "route_switches", "stuck_strikes",
 	"evacuated_at",
+	"desired_speed", "pre_movement_delay", "pre_movement_wait",
+	"stuck_time", "flow_active", "exit_hold", "is_evacuee", "has_target",
+	"peak_density", "peak_contact_force",
+	"spawned_at", "optimizer_assigned", "optimizer_exit_id",
 ]
 
 ## Exit tick row order. Keep in sync with `_sample()`.
@@ -60,6 +64,7 @@ const EXIT_FIELDS: Array[String] = [
 @export var disruption_window: float = 15.0
 
 var _recording: bool = false
+var _manual_recording: bool = false
 var _file: FileAccess = null
 var _run_dir: String = ""
 var _run_id: String = ""
@@ -121,6 +126,11 @@ var _summary_contact_pairs: int = 0
 var _summary_contact_samples: int = 0
 var _summary_contact_solves: int = 0
 var _summary: Dictionary = {}
+## Set by DemoPlayer Load State: the next run-start or explicit resume copies the
+## source demo's prefix into a new demo and continues recording from it.
+var _pending_continuation_demo: String = ""
+var _pending_continuation_cutoff: float = -1.0
+signal recording_state_changed(recording: bool)
 ## Events declared by a scenario before/at run start. No automatic scheduler
 ## exists; this is metadata for reproducible experiments.
 var _scheduled_events: Array[Dictionary] = []
@@ -148,6 +158,7 @@ func _ready() -> void:
 	GlobalData.spawning_reset.connect(_on_run_reset)
 	GlobalData.agent_spawned.connect(_on_agent_spawned)
 	GlobalData.environment_changed.connect(_on_environment_changed)
+	GlobalData.npc_evacuated.connect(_on_progress_changed)
 
 	var manager := get_node_or_null("/root/EvacuationManager")
 
@@ -164,6 +175,11 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if not _recording:
+		return
+
+	_maybe_auto_finalize()
+
 	if not _recording:
 		return
 
@@ -209,6 +225,11 @@ func get_run_dir() -> String:
 	return _run_dir
 
 
+## The current (or last) demo folder id. Used by the continuation flow and tests.
+func get_demo_id() -> String:
+	return _demo_id
+
+
 func get_last_summary() -> Dictionary:
 	return _summary.duplicate(true)
 
@@ -218,9 +239,33 @@ func set_recording_enabled(value: bool) -> void:
 
 	if not value and _recording:
 		_finalize("disabled")
+		recording_state_changed.emit(false)
 	elif value and not _recording and GlobalData.is_spawning_enabled:
 		# Re-enabling mid-run starts a fresh file from this point.
 		_begin_run()
+		recording_state_changed.emit(_recording)
+
+
+## Starts a recording immediately, even when no run is active. Use this for a
+## manual capture that does not follow the Start button.
+func start_manual_recording() -> bool:
+	if _recording:
+		return true
+
+	_clear_pending_continuation()
+	_begin_run()
+	_manual_recording = _recording
+	recording_state_changed.emit(_recording)
+	return _recording
+
+
+## Ends the current recording and finalizes its demo/summary.
+func stop_manual_recording() -> void:
+	if not _recording:
+		return
+
+	_finalize("manual")
+	recording_state_changed.emit(false)
 
 
 ## Declare a planned environmental event for the next/current run. This is
@@ -281,21 +326,68 @@ func record_optimizer_execution(
 # ---------------------------------------------------------------------------
 
 func _on_run_started() -> void:
+	if not _pending_continuation_demo.is_empty():
+		var source_demo := _pending_continuation_demo
+		var cutoff := _pending_continuation_cutoff
+		_clear_pending_continuation()
+		_begin_continuation(source_demo, cutoff)
+
+		if not _recording and recording_enabled:
+			_begin_run()
+
+		recording_state_changed.emit(_recording)
+		return
+
 	if not recording_enabled:
 		return
 
 	if _recording:
+		if _manual_recording:
+			return
 		_finalize("restart")
 
 	_begin_run()
+	recording_state_changed.emit(_recording)
 
 
 func _on_run_stopped() -> void:
 	_finalize("stopped")
+	recording_state_changed.emit(false)
 
 
 func _on_run_reset() -> void:
 	_finalize("reset")
+	recording_state_changed.emit(false)
+
+
+func _on_progress_changed(_total: int) -> void:
+	_maybe_auto_finalize()
+
+
+## The run is over when every quota has been met and no member is still alive.
+## Unlimited-quota runs stay open until the player stops the recording.
+func _maybe_auto_finalize() -> void:
+	if not _recording or _sample_count <= 0:
+		return
+
+	var total_quota: int = GlobalData.get_total_max_spawns()
+
+	if total_quota < 0 or GlobalData.npcs_spawned <= 0:
+		return
+
+	if GlobalData.npcs_spawned < total_quota:
+		return
+
+	var tree := get_tree()
+
+	if tree == null:
+		return
+
+	if not tree.get_nodes_in_group("npc").is_empty():
+		return
+
+	_finalize("quota_complete")
+	recording_state_changed.emit(false)
 
 
 func _begin_run() -> void:
@@ -398,6 +490,397 @@ func _begin_run() -> void:
 	_register_existing_agents()
 
 
+## Prepares a continuation recording from a source demo. DemoPlayer calls this
+## before Load State resumes spawning; the next run-start or resume_continuation
+## copies the source prefix into a new demo and continues live sampling.
+func prepare_continuation(source_demo_id: String, cutoff_sim: float) -> void:
+	if source_demo_id.is_empty():
+		return
+
+	if _recording:
+		_finalize("load_state")
+
+	_pending_continuation_demo = source_demo_id
+	_pending_continuation_cutoff = maxf(0.0, cutoff_sim)
+
+
+func resume_continuation() -> void:
+	if _pending_continuation_demo.is_empty():
+		return
+
+	var source_demo := _pending_continuation_demo
+	var cutoff := _pending_continuation_cutoff
+	_clear_pending_continuation()
+	_begin_continuation(source_demo, cutoff)
+
+
+func _clear_pending_continuation() -> void:
+	_pending_continuation_demo = ""
+	_pending_continuation_cutoff = -1.0
+
+
+func _begin_continuation(source_demo_id: String, cutoff_sim: float) -> void:
+	var demo_store := get_node_or_null("/root/DemoStore")
+
+	if demo_store == null:
+		return
+
+	var source_meta: Dictionary = demo_store.call("get_demo", source_demo_id)
+
+	if source_meta.is_empty():
+		return
+
+	var source_path: String = String(demo_store.call("recording_path", source_demo_id))
+
+	if not FileAccess.file_exists(source_path):
+		return
+
+	var scan: Dictionary = _scan_continuation_prefix(source_path, cutoff_sim)
+	var run: Dictionary = scan.get("run", {})
+	var source_name: String = String(source_meta.get("name", source_demo_id))
+	var created: Dictionary = demo_store.call("create_demo", "%s (loaded)" % source_name, {
+		"seed": int(run.get("rng_seed", GlobalData.rng_seed)),
+		"scene": String(run.get("scene", _scene_path())),
+		"sample_interval": sampling_interval,
+		"status": "recording",
+		"started_at": String(run.get("started_at", _started_unix)),
+		"parent_demo": source_demo_id,
+		"resumed_at": cutoff_sim,
+		"experiment": run.get("metadata", {}),
+		"exit_configuration": run.get("exits", []),
+	}, String(demo_store.call("active_save_slug")))
+
+	if created.is_empty():
+		return
+
+	_demo_save_slug = String(demo_store.call("active_save_slug"))
+	_demo_id = String(created.get("id", ""))
+	_run_dir = String(created.get("dir", ""))
+	_run_id = _demo_id
+	_started_sim = float(run.get("t", cutoff_sim))
+	_started_unix = String(
+		run.get("started_at", Time.get_datetime_string_from_system(false, true))
+	)
+
+	_file = FileAccess.open(_run_dir.path_join("recording.jsonl"), FileAccess.WRITE)
+
+	if _file == null:
+		push_warning("SimRecorder: cannot open continuation file")
+		return
+
+	var lines: Array = scan.get("lines", [])
+
+	for value: Variant in lines:
+		if not value is Dictionary:
+			continue
+
+		var record: Dictionary = (value as Dictionary).duplicate(true)
+
+		if String(record.get("type", "")) == "run":
+			record["demo_id"] = _demo_id
+			record["run_id"] = _demo_id
+			record["save_slug"] = _demo_save_slug
+			record["resumed_from"] = source_demo_id
+			record["resumed_at"] = cutoff_sim
+
+		_file.store_line(JSON.stringify(_json_ready(record)))
+
+	_file.flush()
+	_recording = true
+	_manual_recording = true
+	_clear_run_state_for_continuation()
+	_spawn_serials = (scan.get("spawn_serials", {}) as Dictionary).duplicate()
+	_evacuated_serials = (scan.get("evacuated_serials", {}) as Dictionary).duplicate()
+	_dead_serials = (scan.get("dead_serials", {}) as Dictionary).duplicate()
+	_last_routes = (scan.get("last_routes", {}) as Dictionary).duplicate(true)
+	_evac_times.clear()
+
+	for value: Variant in scan.get("evac_times", []):
+		_evac_times.append(float(value))
+
+	_evacuation_distance_total = float(scan.get("evac_distance_total", 0.0))
+	_last_evac_sim = float(scan.get("last_evac_sim", -1.0))
+	_route_changes_total = int(scan.get("route_changes_total", 0))
+	_route_switches_total = int(scan.get("route_switches_total", 0))
+	_destination_changes_total = int(scan.get("destination_changes_total", 0))
+	_max_route_changes = int(scan.get("max_route_changes", 0))
+	_max_route_switches = int(scan.get("max_route_switches", 0))
+	_density_peak = float(scan.get("density_peak", 0.0))
+	_density_integral = float(scan.get("density_integral", 0.0))
+	_density_time = float(scan.get("density_time", 0.0))
+	_speed_integral = float(scan.get("speed_integral", 0.0))
+	_speed_time = float(scan.get("speed_time", 0.0))
+	_summary_peak_contact_force = float(
+		scan.get("summary_peak_contact_force", 0.0)
+	)
+	_summary_contact_pairs = int(scan.get("summary_contact_pairs", 0))
+	_summary_contact_samples = int(scan.get("summary_contact_samples", 0))
+	_summary_contact_solves = int(scan.get("summary_contact_solves", 0))
+	_last_sim_stats = (scan.get("last_sim", {}) as Dictionary).duplicate(true)
+	_last_exit_rows = (scan.get("last_exit_rows", []) as Array).duplicate(true)
+	_disruptions.clear()
+
+	for value: Variant in scan.get("disruptions", []):
+		if value is Dictionary:
+			_disruptions.append((value as Dictionary).duplicate(true))
+
+	_active_disruption = (
+		_disruptions[_disruptions.size() - 1].duplicate(true)
+		if not _disruptions.is_empty()
+		else {}
+	)
+	_sample_count = int(scan.get("tick_count", 0))
+	_last_sample_sim = cutoff_sim
+	_flush_accum = 0.0
+	_cache_grid()
+
+	var run_exits: Variant = run.get("exits", [])
+	_run_exit_catalog = (
+		(run_exits as Array).duplicate(true) if run_exits is Array else []
+	)
+	var run_metadata: Variant = run.get("metadata", {})
+	_experiment_metadata = (
+		(run_metadata as Dictionary).duplicate(true)
+		if run_metadata is Dictionary
+		else {}
+	)
+
+	if _experiment_metadata.is_empty():
+		_experiment_metadata = _collect_experiment_metadata(_run_exit_catalog)
+
+	var optimizer_config: Variant = _experiment_metadata.get("optimizer", {})
+
+	if optimizer_config is Dictionary and not optimizer_config.is_empty():
+		_optimizer_configuration = (optimizer_config as Dictionary).duplicate(true)
+
+	_scheduled_events.clear()
+	var scheduled: Variant = _experiment_metadata.get("scheduled_events", [])
+
+	if scheduled is Array:
+		for value: Variant in scheduled:
+			if value is Dictionary:
+				_scheduled_events.append((value as Dictionary).duplicate(true))
+
+	var exits: Array = _collect_exits()
+	var last_accepted: Dictionary = scan.get("last_exit_accepted", {})
+	_known_exit_ids.clear()
+	_exit_signal_ids.clear()
+	_exit_accepted_at_start.clear()
+	_last_exit_statuses.clear()
+
+	for entry: Dictionary in exits:
+		var status: Dictionary = entry["status"]
+		var exit_id: String = String(status.get("exit_id", ""))
+		_known_exit_ids[exit_id] = true
+		_last_exit_statuses[exit_id] = status
+		_exit_accepted_at_start[exit_id] = maxi(
+			0,
+			int(status.get("accepted", 0)) - int(last_accepted.get(exit_id, 0))
+		)
+		_connect_exit_signal(entry["node"])
+
+	_write_manifest(_run_exit_catalog, _experiment_metadata)
+	demo_store.call("update_demo", _demo_id, {
+		"experiment": _json_ready(_experiment_metadata),
+		"exit_configuration": _run_exit_catalog.duplicate(true),
+		"status": "recording",
+	}, _demo_save_slug)
+
+	# Imported agents are already in the tree. Register them for live route
+	# updates without writing a second spawn row for serials copied from the
+	# source prefix.
+	_register_existing_agents()
+	_last_sample_sim = cutoff_sim
+	recording_state_changed.emit(true)
+
+
+func _clear_run_state_for_continuation() -> void:
+	_agents.clear()
+	_pending_environment.clear()
+	_pre_disruption.clear()
+	_affected.clear()
+	_rerouted.clear()
+	_rerouted_current.clear()
+	_summary = {}
+
+
+func _scan_continuation_prefix(path: String, cutoff_sim: float) -> Dictionary:
+	var result: Dictionary = {
+		"lines": [],
+		"run": {},
+		"tick_count": 0,
+		"spawn_serials": {},
+		"evacuated_serials": {},
+		"dead_serials": {},
+		"evac_times": [],
+		"evac_distance_total": 0.0,
+		"last_evac_sim": -1.0,
+		"last_tick": {},
+		"last_sim": {},
+		"last_exit_rows": [],
+		"last_exit_accepted": {},
+		"route_changes_total": 0,
+		"route_switches_total": 0,
+		"destination_changes_total": 0,
+		"max_route_changes": 0,
+		"max_route_switches": 0,
+		"last_routes": {},
+		"disruptions": [],
+		"density_peak": 0.0,
+		"density_integral": 0.0,
+		"density_time": 0.0,
+		"speed_integral": 0.0,
+		"speed_time": 0.0,
+		"summary_peak_contact_force": 0.0,
+		"summary_contact_pairs": 0,
+		"summary_contact_samples": 0,
+		"summary_contact_solves": 0,
+	}
+	var file := FileAccess.open(path, FileAccess.READ)
+
+	if file == null:
+		return result
+
+	var previous_tick_t: float = -1.0
+
+	while not file.eof_reached():
+		var line := file.get_line()
+
+		if line.strip_edges().is_empty():
+			continue
+
+		var parsed: Variant = JSON.parse_string(line)
+
+		if not parsed is Dictionary:
+			continue
+
+		var record: Dictionary = parsed
+		var type := String(record.get("type", ""))
+		var t := float(record.get("t", 0.0))
+
+		if type == "end":
+			continue
+
+		if type != "run" and t > cutoff_sim + 0.001:
+			continue
+
+		(result["lines"] as Array).append(record)
+
+		match type:
+			"run":
+				result["run"] = record
+			"agent_spawn":
+				(result["spawn_serials"] as Dictionary)[int(record.get("agent", -1))] = true
+			"evacuation":
+				var serial := int(record.get("agent", -1))
+				(result["spawn_serials"] as Dictionary)[serial] = true
+				(result["evacuated_serials"] as Dictionary)[serial] = true
+				(result["evac_times"] as Array).append(
+					float(record.get("evacuation_time", 0.0))
+				)
+				result["evac_distance_total"] = (
+					float(result["evac_distance_total"])
+					+ float(record.get("distance", 0.0))
+				)
+				result["last_evac_sim"] = maxf(
+					float(result["last_evac_sim"]), t
+				)
+			"agent_death":
+				(result["dead_serials"] as Dictionary)[int(record.get("agent", -1))] = true
+			"tick":
+				result["tick_count"] = int(result["tick_count"]) + 1
+				result["last_tick"] = record
+				var sim: Dictionary = record.get("sim", {})
+				result["last_sim"] = sim
+				result["last_exit_rows"] = record.get("exits", [])
+
+				for row_value: Variant in record.get("agents", []):
+					if row_value is Array and (row_value as Array).size() > 0:
+						(result["spawn_serials"] as Dictionary)[int(row_value[0])] = true
+
+				for exit_value: Variant in record.get("exits", []):
+					if exit_value is Array and (exit_value as Array).size() > 4:
+						(result["last_exit_accepted"] as Dictionary)[
+							String(exit_value[0])
+						] = int(exit_value[4])
+
+				var dt: float = (
+					maxf(0.0, t - previous_tick_t)
+					if previous_tick_t >= 0.0
+					else 0.0
+				)
+				previous_tick_t = t
+
+				if dt > 0.0:
+					result["density_integral"] = (
+						float(result["density_integral"])
+						+ float(sim.get("density_mean", 0.0)) * dt
+					)
+					result["density_time"] = float(result["density_time"]) + dt
+					result["speed_integral"] = (
+						float(result["speed_integral"])
+						+ float(sim.get("speed_mean", 0.0)) * dt
+					)
+					result["speed_time"] = float(result["speed_time"]) + dt
+
+				result["density_peak"] = maxf(
+					float(result["density_peak"]),
+					float(sim.get("density_max", 0.0))
+				)
+				result["summary_peak_contact_force"] = maxf(
+					float(result["summary_peak_contact_force"]),
+					float(sim.get("peak_contact_force", 0.0))
+				)
+				result["summary_contact_pairs"] = maxi(
+					int(result["summary_contact_pairs"]),
+					int(sim.get("contact_pairs_total", 0))
+				)
+				result["summary_contact_samples"] = maxi(
+					int(result["summary_contact_samples"]),
+					int(sim.get("agent_contact_samples_total", 0))
+				)
+				result["summary_contact_solves"] = maxi(
+					int(result["summary_contact_solves"]),
+					int(sim.get("contact_solves", 0))
+				)
+			"route", "route_change":
+				if String(record.get("reason", "")) != "snapshot":
+					result["route_changes_total"] = (
+						int(result["route_changes_total"]) + 1
+					)
+				if bool(record.get("switched", false)):
+					result["route_switches_total"] = (
+						int(result["route_switches_total"]) + 1
+					)
+				result["max_route_changes"] = maxi(
+					int(result["max_route_changes"]),
+					int(record.get("route_changes", 0))
+				)
+				result["max_route_switches"] = maxi(
+					int(result["max_route_switches"]),
+					int(record.get("route_switches", 0))
+				)
+				(result["last_routes"] as Dictionary)[int(record.get("agent", -1))] = {
+					"route_id": int(record.get("route_id", 0)),
+					"exit_id": String(record.get("exit_id", "")),
+					"target": record.get("target", Vector3.ZERO),
+					"path": record.get("path", []),
+				}
+			"destination":
+				result["destination_changes_total"] = (
+					int(result["destination_changes_total"]) + 1
+				)
+				result["max_route_changes"] = maxi(
+					int(result["max_route_changes"]),
+					int(record.get("route_changes", 0))
+				)
+			"disruption":
+				(result["disruptions"] as Array).append(record)
+
+	file.close()
+	return result
+
+
 func _finalize(reason: String) -> void:
 	if not _recording:
 		return
@@ -411,11 +894,11 @@ func _finalize(reason: String) -> void:
 
 	_file = null
 	_recording = false
+	_manual_recording = false
 	_summary = summary
 	_write_summary_file(summary)
 	_update_demo_metadata(summary)
 	_clear_run_state()
-
 
 func _update_demo_metadata(summary: Dictionary) -> void:
 	if _demo_id.is_empty():
@@ -552,6 +1035,7 @@ func _register_agent(npc: Node, existing: bool) -> void:
 		npc.destination_changed.connect(_on_agent_destination_changed)
 
 	var serial: int = int(npc.get("agent_serial"))
+	var already_known: bool = _spawn_serials.has(serial)
 	_spawn_serials[serial] = true
 
 	var record: Dictionary = {
@@ -565,7 +1049,9 @@ func _register_agent(npc: Node, existing: bool) -> void:
 		"desired_speed": float(npc.get("desired_speed")),
 		"pre_movement_delay": float(npc.call("get_pre_movement_delay")),
 	}
-	_write(record)
+
+	if not already_known:
+		_write(record)
 
 	if npc.has_method("get_route_snapshot"):
 		var route: Dictionary = npc.call("get_route_snapshot")
@@ -704,7 +1190,10 @@ func _on_evacuation_recorded(record: Dictionary) -> void:
 		"stuck_time": float(record.get("stuck_time", 0.0)),
 		"stuck_strikes": int(record.get("stuck_strikes", 0)),
 		"peak_density": float(record.get("peak_density", 0.0)),
+		"peak_contact_force": float(record.get("peak_contact_force", 0.0)),
 		"pre_movement_wait": float(record.get("pre_movement_wait", 0.0)),
+		"route_changes": int(record.get("route_changes", 0)),
+		"route_switches": int(record.get("route_switches", 0)),
 	}
 	_write(event)
 
@@ -730,6 +1219,7 @@ func _on_npc_died(npc: Node) -> void:
 		"agent": serial,
 		"position": npc.global_position,
 	})
+	_maybe_auto_finalize()
 
 
 # ---------------------------------------------------------------------------
@@ -801,6 +1291,19 @@ func _sample(now: float) -> void:
 			int(state.get("route_switches", 0)),
 			int(state.get("stuck_strikes", 0)),
 			_n(float(state.get("evacuated_at", -1.0))),
+			_n(float(state.get("desired_speed", 0.0))),
+			_n(float(state.get("pre_movement_delay", 0.0))),
+			_n(float(state.get("pre_movement_wait", 0.0))),
+			_n(float(state.get("stuck_time", 0.0))),
+			1 if bool(state.get("flow_active", false)) else 0,
+			1 if bool(state.get("exit_hold", false)) else 0,
+			1 if bool(state.get("is_evacuee", false)) else 0,
+			1 if bool(state.get("has_target", false)) else 0,
+			_n(float(state.get("peak_density", 0.0))),
+			_n(float(state.get("peak_contact_force", 0.0))),
+			_n(float(state.get("spawned_at", -1.0))),
+			1 if bool(state.get("optimizer_assigned", false)) else 0,
+			String(state.get("optimizer_exit_id", "")),
 		])
 
 	var mean_density: float = density_sum / float(maxi(active, 1))
@@ -890,12 +1393,22 @@ func _sample(now: float) -> void:
 	_last_sim_stats = sim_stats
 	_sample_count += 1
 
+	var spawner_rows: Array = []
+
+	for spawner: Node in tree.get_nodes_in_group("spawners"):
+		if spawner == null or not is_instance_valid(spawner):
+			continue
+
+		if spawner.has_method("get_measurement_state"):
+			spawner_rows.append(spawner.call("get_measurement_state"))
+
 	_write({
 		"type": "tick",
 		"t": now,
 		"sim": sim_stats,
 		"agents": rows,
 		"exits": exit_rows,
+		"spawners": spawner_rows,
 	})
 
 
@@ -1436,6 +1949,7 @@ func _build_summary(reason: String) -> Dictionary:
 	sorted_times.sort()
 	var average_time: float = 0.0
 	var median_time: float = 0.0
+	var p95_time: float = 0.0
 
 	if not sorted_times.is_empty():
 		var total: float = 0.0
@@ -1446,6 +1960,9 @@ func _build_summary(reason: String) -> Dictionary:
 		average_time = total / float(sorted_times.size())
 		var middle: int = int(sorted_times.size() / 2.0)
 		median_time = sorted_times[middle]
+		p95_time = sorted_times[
+			clampi(int(ceil(float(sorted_times.size()) * 0.95)) - 1, 0, sorted_times.size() - 1)
+		]
 
 		if sorted_times.size() % 2 == 0:
 			median_time = (sorted_times[middle - 1] + sorted_times[middle]) * 0.5
@@ -1525,6 +2042,12 @@ func _build_summary(reason: String) -> Dictionary:
 			"route_reassignment_t": float(disruption.get("route_reassignment_t", -1.0)),
 		})
 
+	var manager := get_node_or_null("/root/EvacuationManager")
+	var late_agents: Array = []
+
+	if manager != null and manager.has_method("get_summary"):
+		late_agents = manager.get_summary().get("late_agents", [])
+
 	return {
 		"format": FORMAT,
 		"version": VERSION,
@@ -1554,6 +2077,7 @@ func _build_summary(reason: String) -> Dictionary:
 		),
 		"average_evacuation_time": average_time,
 		"median_evacuation_time": median_time,
+		"p95_evacuation_time": p95_time,
 		"max_evacuation_time": (
 			sorted_times[sorted_times.size() - 1] if not sorted_times.is_empty() else 0.0
 		),
@@ -1602,6 +2126,7 @@ func _build_summary(reason: String) -> Dictionary:
 		"exits": exits,
 		"active_exits": statuses.size(),
 		"available_exits": available_exits,
+		"late_agents": late_agents,
 		"disruptions": disruption_rows,
 		"rerouted_agents": _rerouted.size(),
 		"files": {

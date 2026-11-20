@@ -44,9 +44,14 @@ text = "Evacuation Mode"
 
 [node name="RecordRun" type="CheckButton" parent="." unique_id=1643065159]
 layout_mode = 2
-tooltip_text = "Write agent, exit, environment and disruption measurements to user://runs for this run."
+tooltip_text = "Automatically record each run that starts with Start."
 button_pressed = true
-text = "Record Run"
+text = "Record On Start"
+
+[node name="RecordNow" type="Button" parent="." unique_id=1643065160]
+layout_mode = 2
+tooltip_text = "Start or stop a recording immediately, without using Start."
+text = "Start Recording"
 
 [node name="Limits" type="GridContainer" parent="." unique_id=661914493]
 layout_mode = 2

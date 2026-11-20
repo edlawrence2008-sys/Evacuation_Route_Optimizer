@@ -17,6 +17,40 @@ const NOCLIP_LOOK_SENSITIVITY := 0.004
 const NOCLIP_MIN_MULT := 0.2
 const NOCLIP_MAX_MULT := 10.0
 const NOCLIP_HOLD_RESET_TIME := 0.4
+const MEMBER_SCENE := preload("res://scenes/npcs/Member.tscn")
+
+# Tick row indices, mirrored from SimRecorder.AGENT_FIELDS. Keep in sync.
+const AGENT_STATUS := 1
+const AGENT_STATE := 2
+const AGENT_EXIT_ID := 16
+const AGENT_DISTANCE := 22
+const AGENT_CONTACT_FORCE := 23
+const AGENT_DENSITY := 24
+const AGENT_ROUTE_CHANGES := 25
+const AGENT_ROUTE_SWITCHES := 26
+const AGENT_STUCK_STRIKES := 27
+const AGENT_DESIRED_SPEED := 29
+const AGENT_PRE_DELAY := 30
+const AGENT_PRE_WAIT := 31
+const AGENT_STUCK_TIME := 32
+const AGENT_IS_EVACUEE := 35
+const AGENT_HAS_TARGET := 36
+const AGENT_PEAK_DENSITY := 37
+const AGENT_PEAK_CONTACT := 38
+const AGENT_SPAWNED_AT := 39
+const AGENT_OPTIMIZER_ASSIGNED := 40
+const AGENT_OPTIMIZER_EXIT_ID := 41
+
+# Exit row indices, mirrored from SimRecorder.EXIT_FIELDS.
+const EXIT_ACCEPTED := 4
+const EXIT_MAX_QUEUE := 6
+const EXIT_PEAK_OCCUPANCY := 8
+const EXIT_AVERAGE_WAIT := 9
+const EXIT_MAX_WAIT := 10
+const EXIT_REJECTED := 16
+const EXIT_CAPACITY_WAITS := 17
+const EXIT_CAPACITY_REJECTIONS := 18
+const EXIT_QUEUE_FULL_REJECTIONS := 19
 const BG := Color(0.055, 0.05, 0.045, 0.94)
 const PANEL := Color(0.10, 0.09, 0.08, 0.96)
 const GOLD := Color(1.0, 0.84, 0.34, 1.0)
@@ -29,6 +63,9 @@ var _ticks: Array = []
 var _tick_maps: Array = []
 var _events: Array = []
 var _routes: Dictionary = {} # serial -> Array[route event]
+var _demo_id: String = ""
+var _workspace_build_controller: Node = null
+var _workspace_pause_active: bool = false
 var _world: Node3D = null
 var _proxies: Dictionary = {} # serial -> MeshInstance3D
 var _exit_nodes: Dictionary = {} # exit_id -> MeshInstance3D
@@ -76,6 +113,9 @@ var _noclip_hold_active: bool = false
 var _noclip_hold_elapsed: float = 0.0
 var _noclip_hold_reset_done: bool = false
 var _started_t: float = 0.0
+## The run header's absolute start time. Unlike `_started_t` (the first tick),
+## this is the true run start used when replaying evacuation history.
+var _run_start_t: float = -1.0
 
 
 func _ready() -> void:
@@ -116,6 +156,7 @@ func play(demo_id: String) -> bool:
 	if not _load_recording(path):
 		return false
 
+	_demo_id = demo_id
 	_meta = meta
 	_duration = _max_tick_time()
 	_started_t = _min_tick_time()
@@ -368,6 +409,7 @@ func _load_recording(path: String) -> bool:
 	_tick_maps.clear()
 	_events.clear()
 	_routes.clear()
+	_run_start_t = -1.0
 
 	var file := FileAccess.open(path, FileAccess.READ)
 
@@ -389,6 +431,7 @@ func _load_recording(path: String) -> bool:
 		var t := float(obj.get("t", 0.0))
 
 		if type == "run":
+			_run_start_t = t
 			var run_metadata: Dictionary = obj.get("metadata", {})
 
 			for key: Variant in run_metadata:
@@ -1044,6 +1087,544 @@ func _latest_route_for(serial: int, time: float) -> Dictionary:
 # UI
 # ---------------------------------------------------------------------------
 
+func _show_load_state_dialog() -> void:
+	if _ticks.is_empty():
+		return
+
+	var index: int = _tick_index_at(_time)
+	var count: int = _tick_map(index).size() if index >= 0 else 0
+	var text := (
+		"Replace the live crowd with the %d agents at t = %.1f s?\n\n"
+		+ "The current crowd and run counters are cleared. Agents load at their "
+		+ "recorded positions with their chosen exits, speeds, pre-movement "
+		+ "remainder and measurement counters. Exit totals and spawner counts/"
+		+ "timers are restored, and the spawners keep spawning.\n\n"
+		+ "The recording is continued into a new demo: everything before this "
+		+ "point is copied into it, then live recording starts.\n\n"
+		+ "Exact paths, queue order and already-evacuated agents are not "
+		+ "recreated. After loading, time stays paused with the inventory open; "
+		+ "close the inventory to resume."
+	) % [count, _time - _started_t]
+	_show_scroll_dialog(
+		"Load demo state",
+		text,
+		"Load State",
+		_apply_demo_state,
+		"Cancel"
+	)
+
+
+func _show_scroll_dialog(
+	title: String,
+	text: String,
+	ok_text: String,
+	on_ok: Callable,
+	cancel_text: String = ""
+) -> void:
+	var win := Window.new()
+	win.title = title
+	win.process_mode = Node.PROCESS_MODE_ALWAYS
+	win.exclusive = true
+	win.transient = true
+	win.unresizable = false
+	var theme := Theme.new()
+	theme.default_font = FONT
+	theme.default_font_size = 15
+
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	win.size = Vector2i(
+		int(minf(760.0, maxf(420.0, view.x - 80.0))),
+		int(minf(560.0, maxf(300.0, view.y - 80.0)))
+	)
+
+	var margin := MarginContainer.new()
+	margin.theme = theme
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", 16)
+	margin.add_theme_constant_override("margin_right", 16)
+	margin.add_theme_constant_override("margin_top", 14)
+	margin.add_theme_constant_override("margin_bottom", 14)
+	win.add_child(margin)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
+	margin.add_child(column)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+
+	var label := RichTextLabel.new()
+	label.text = text
+	label.bbcode_enabled = false
+	label.fit_content = true
+	label.scroll_active = false
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(label)
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_END
+	buttons.add_theme_constant_override("separation", 8)
+	column.add_child(buttons)
+
+	if not cancel_text.is_empty():
+		var cancel := Button.new()
+		cancel.text = cancel_text
+		cancel.pressed.connect(func() -> void:
+			win.hide()
+			win.queue_free()
+		)
+		buttons.add_child(cancel)
+
+	var ok := Button.new()
+	ok.text = ok_text
+	ok.pressed.connect(func() -> void:
+		win.hide()
+		win.queue_free()
+
+		if on_ok.is_valid():
+			on_ok.call()
+	)
+	buttons.add_child(ok)
+	win.close_requested.connect(func() -> void:
+		win.hide()
+		win.queue_free()
+	)
+
+	get_tree().root.add_child(win)
+	win.popup_centered(win.size)
+
+
+func _apply_demo_state() -> void:
+	var index: int = _tick_index_at(_time)
+
+	if index < 0 or index >= _ticks.size():
+		return
+
+	var tick: Dictionary = _ticks[index]
+	var map: Dictionary = _tick_map(index)
+
+	var exit_positions: Dictionary = _live_exit_positions()
+	var scene: Node = get_tree().current_scene
+
+	if scene == null:
+		scene = get_tree().root
+
+	var sim_stats: Dictionary = tick.get("sim", {})
+	var tick_time: float = float(tick.get("t", GlobalData.sim_time))
+	var max_serial: int = 0
+	var loaded: int = 0
+
+	GlobalData.rng_seed = int(
+		_meta.get("rng_seed", _meta.get("seed", GlobalData.rng_seed))
+	)
+	GlobalData.sim_time = tick_time
+	GlobalData.set_evacuation_mode(true)
+	# Kill the crowd but do not call reset_spawning(): that would stop the
+	# spawners and wipe their quotas. The imported agents take over the live
+	# population, and the spawners keep working from their recorded counts.
+	GlobalData.kill_all_npcs()
+
+	var manager := get_node_or_null("/root/EvacuationManager")
+
+	if manager != null and manager.has_method("reset_run"):
+		manager.call("reset_run")
+
+	# Clear the previous run's exit aggregates, then restore the tick's totals.
+	for exit_node: Node in get_tree().get_nodes_in_group("EvacPoint"):
+		if exit_node != null and exit_node.has_method("reset_counters"):
+			exit_node.call("reset_counters")
+
+	_restore_exit_counters(tick)
+
+	var restored_history: int = 0
+
+	if manager != null and manager.has_method("restore_evacuation_history"):
+		var run_start: float = _run_start_t
+		if run_start < 0.0:
+			run_start = _started_t
+
+		restored_history = int(
+			manager.call(
+				"restore_evacuation_history",
+				_events,
+				tick_time,
+				run_start
+			)
+		)
+
+	_restore_spawners(tick)
+
+	for serial_value: Variant in map.keys():
+		var row: Array = map[serial_value]
+		var status: String = _row_string(row, AGENT_STATUS, "")
+
+		if status in ["evacuated", "dead"] or row.size() < 17:
+			continue
+
+		var member: Node3D = MEMBER_SCENE.instantiate()
+		var serial: int = int(serial_value)
+		member.name = "DemoAgent_%d" % serial
+		member.position = _row_vector3(row, 3, Vector3.ZERO)
+		scene.add_child(member)
+
+		var state: Dictionary = _agent_state_from_row(row, exit_positions)
+		member.call("apply_demo_state", state)
+		GlobalData.notify_agent_spawned(member)
+
+		if (
+			manager != null
+			and manager.has_method("restore_agent_spawn_time")
+			and float(state.get("spawned_at", -1.0)) >= 0.0
+		):
+			manager.call(
+				"restore_agent_spawn_time",
+				member,
+				float(state["spawned_at"])
+			)
+
+		max_serial = maxi(max_serial, serial)
+		loaded += 1
+
+	GlobalData.npcs_spawned = maxi(
+		int(sim_stats.get("spawned", 0)), max_serial
+	)
+	GlobalData.npcs_evacuated = maxi(0, int(sim_stats.get("evacuated", 0)))
+	GlobalData.set_agent_serial_floor(maxi(max_serial, GlobalData.npcs_spawned))
+
+	# Continue the source demo into a new recording: copy its prefix through
+	# this tick, then append live records. Do this before Start so the
+	# start-spawning signal does not create an unrelated blank demo.
+	var recorder := get_node_or_null("/root/SimRecorder")
+
+	if recorder != null and not _demo_id.is_empty():
+		recorder.call("prepare_continuation", _demo_id, tick_time)
+
+	# Resume spawning. With imported agents alive, start_spawning keeps the
+	# serial counter monotonic instead of resetting determinism.
+	GlobalData.start_spawning()
+
+	if recorder != null:
+		recorder.call("resume_continuation")
+
+	print(
+		"DemoPlayer: loaded %d agents and %d earlier evacuations from the recording at t=%.2f"
+		% [loaded, restored_history, _time - _started_t]
+	)
+
+	close()
+	_enter_loaded_workspace()
+
+	var text := (
+		"Loaded %d agents at t = %.1f s (%d earlier evacuations replayed).\n\n"
+		+ "Restored: serials, positions, chosen exits, desired speeds, "
+		+ "pre-movement remainder, route/contact counters, evacuation history, "
+		+ "exit admission totals and spawner quota/timers. Spawners keep "
+		+ "spawning as before.\n\n"
+		+ "A new demo recording was created from everything before this point "
+		+ "and is now recording the continuation.\n\n"
+		+ "Time is paused and the inventory is open. Close the inventory to "
+		+ "resume. Use Optimizer → Run once to optimize from this state."
+	) % [loaded, _time - _started_t, restored_history]
+	_show_scroll_dialog("Demo state loaded", text, "OK", Callable(), "")
+
+
+func _enter_loaded_workspace() -> void:
+	var tree := get_tree()
+
+	if tree == null:
+		return
+
+	var player := tree.get_first_node_in_group("Player")
+
+	if player == null:
+		return
+
+	var pause_menu := player.get_node_or_null(
+		"head/CameraSmooth/Camera3D/PauseMenu"
+	)
+
+	if pause_menu != null and pause_menu.has_method("set_paused"):
+		pause_menu.call("set_paused", false)
+
+	var build_controller := player.get_node_or_null("BuildController")
+
+	if build_controller == null:
+		return
+
+	_workspace_build_controller = build_controller
+
+	if (
+		build_controller.has_signal("inventory_toggled")
+		and not build_controller.is_connected(
+			"inventory_toggled",
+			Callable(self, "_on_workspace_inventory_toggled")
+		)
+	):
+		build_controller.connect(
+			"inventory_toggled",
+			Callable(self, "_on_workspace_inventory_toggled")
+		)
+
+	# Freeze simulation time without pausing the tree, so the inventory and the
+	# optimizer panel still receive input. Closing the inventory resumes time.
+	_workspace_pause_active = true
+	Engine.time_scale = 0.0
+
+	if build_controller.has_method("open_inventory"):
+		build_controller.call("open_inventory")
+	else:
+		build_controller.set("inventory_open", true)
+		build_controller.call("_update_build_ui")
+
+	if build_controller.get("hud_manager") == null:
+		# No HUD means no inventory to close and no signal will arrive.
+		_workspace_pause_active = false
+		Engine.time_scale = 1.0
+
+
+func _on_workspace_inventory_toggled(open: bool) -> void:
+	if open or not _workspace_pause_active:
+		return
+
+	_workspace_pause_active = false
+	Engine.time_scale = 1.0
+
+
+func _agent_state_from_row(
+	row: Array, exit_positions: Dictionary
+) -> Dictionary:
+	var exit_id: String = _row_string(row, AGENT_EXIT_ID, "")
+	var destination: Vector3 = _row_vector3(row, 13, Vector3.ZERO)
+
+	if not exit_id.is_empty() and exit_positions.has(exit_id):
+		destination = exit_positions[exit_id]
+
+	return {
+		"serial": _row_int(row, 0, 0),
+		"status": _row_string(row, AGENT_STATUS, ""),
+		"state": _row_int(row, AGENT_STATE, 0),
+		"position": _row_vector3(row, 3, Vector3.ZERO),
+		"velocity": _row_vector3(row, 6, Vector3.ZERO),
+		"acceleration": _row_vector3(row, 9, Vector3.ZERO),
+		"destination": destination,
+		"exit_id": exit_id,
+		"distance": _row_float(row, AGENT_DISTANCE, 0.0),
+		"contact_force": _row_float(row, AGENT_CONTACT_FORCE, 0.0),
+		"density": _row_float(row, AGENT_DENSITY, 0.0),
+		"route_changes": _row_int(row, AGENT_ROUTE_CHANGES, 0),
+		"route_switches": _row_int(row, AGENT_ROUTE_SWITCHES, 0),
+		"stuck_strikes": _row_int(row, AGENT_STUCK_STRIKES, 0),
+		"desired_speed": _row_float(row, AGENT_DESIRED_SPEED, 0.0),
+		"pre_movement_delay": _row_float(row, AGENT_PRE_DELAY, 0.0),
+		"pre_movement_wait": _row_float(row, AGENT_PRE_WAIT, 0.0),
+		"stuck_time": _row_float(row, AGENT_STUCK_TIME, 0.0),
+		"is_evacuee": _row_int(row, AGENT_IS_EVACUEE, 1) != 0,
+		"has_target": _row_int(row, AGENT_HAS_TARGET, 0) != 0,
+		"peak_density": _row_float(row, AGENT_PEAK_DENSITY, 0.0),
+		"peak_contact_force": _row_float(row, AGENT_PEAK_CONTACT, 0.0),
+		"spawned_at": _row_float(row, AGENT_SPAWNED_AT, -1.0),
+		"optimizer_assigned": _row_int(row, AGENT_OPTIMIZER_ASSIGNED, 0) != 0,
+		"optimizer_exit_id": _row_string(row, AGENT_OPTIMIZER_EXIT_ID, ""),
+	}
+
+
+func _restore_exit_counters(tick: Dictionary) -> void:
+	var rows: Array = tick.get("exits", [])
+	var live: Dictionary = _live_exits_by_id()
+	var recorded_locations: Dictionary = _recorded_exit_locations()
+	var live_positions: Array = []
+
+	for exit_id: String in live:
+		var live_node: Node = live[exit_id]
+
+		if live_node is Node3D:
+			live_positions.append([live_node, (live_node as Node3D).global_position])
+
+	for row_value: Variant in rows:
+		if not row_value is Array:
+			continue
+
+		var row: Array = row_value
+		var exit_id: String = _row_string(row, 0, "")
+		var node: Node = live.get(exit_id)
+
+		if node == null and recorded_locations.has(exit_id):
+			var recorded: Vector3 = recorded_locations[exit_id]
+			var best_distance: float = 3.0
+
+			for entry: Array in live_positions:
+				var distance: float = recorded.distance_to(entry[1])
+
+				if distance < best_distance:
+					best_distance = distance
+					node = entry[0]
+
+		if node == null:
+			continue
+
+		if node.has_method("set_operational"):
+			node.call("set_operational", _row_int(row, 2, 1) != 0)
+
+		if not node.has_method("restore_counters"):
+			continue
+
+		node.call("restore_counters", {
+			"accepted": _row_int(row, EXIT_ACCEPTED, 0),
+			"max_queue": _row_int(row, EXIT_MAX_QUEUE, 0),
+			"peak_occupancy": _row_int(row, EXIT_PEAK_OCCUPANCY, 0),
+			"average_wait": _row_float(row, EXIT_AVERAGE_WAIT, 0.0),
+			"max_wait": _row_float(row, EXIT_MAX_WAIT, 0.0),
+			"rejected": _row_int(row, EXIT_REJECTED, 0),
+			"capacity_waits": _row_int(row, EXIT_CAPACITY_WAITS, 0),
+			"capacity_rejections": _row_int(
+				row, EXIT_CAPACITY_REJECTIONS, 0
+			),
+			"queue_full_rejections": _row_int(
+				row, EXIT_QUEUE_FULL_REJECTIONS, 0
+			),
+		})
+
+
+func _recorded_exit_locations() -> Dictionary:
+	var result: Dictionary = {}
+	var catalog: Array = _meta.get("exit_configuration", [])
+
+	for value: Variant in catalog:
+		if not value is Dictionary:
+			continue
+
+		var entry: Dictionary = value
+		var location: Array = entry.get("location", [])
+
+		if location.size() < 3:
+			continue
+
+		result[String(entry.get("exit_id", ""))] = Vector3(
+			float(location[0]), float(location[1]), float(location[2])
+		)
+
+	return result
+
+
+func _restore_spawners(tick: Dictionary) -> void:
+	var states: Array = tick.get("spawners", [])
+
+	if states.is_empty():
+		return
+
+	var live: Dictionary = {}
+	var by_name: Dictionary = {}
+	var by_position: Array = []
+
+	for node: Node in get_tree().get_nodes_in_group("spawners"):
+		if node == null or not is_instance_valid(node):
+			continue
+
+		live[String(node.get_path())] = node
+
+		if not by_name.has(String(node.name)):
+			by_name[String(node.name)] = node
+
+		if node is Node3D:
+			by_position.append([node, (node as Node3D).global_position])
+
+	for value: Variant in states:
+		if not value is Dictionary:
+			continue
+
+		var state: Dictionary = value
+		var node: Node = live.get(String(state.get("path", "")))
+
+		if node == null:
+			node = by_name.get(String(state.get("name", "")))
+
+		if node == null:
+			var recorded: Array = state.get("position", [])
+			var target := Vector3.ZERO
+
+			if recorded.size() >= 3:
+				target = Vector3(
+					float(recorded[0]), float(recorded[1]), float(recorded[2])
+				)
+				var best_distance: float = 2.0
+
+				for entry: Array in by_position:
+					var candidate: Node = entry[0]
+					var distance: float = target.distance_to(entry[1])
+
+					if distance < best_distance:
+						best_distance = distance
+						node = candidate
+
+		if node != null and node.has_method("restore_measurement_state"):
+			node.call("restore_measurement_state", state)
+
+
+func _live_exits_by_id() -> Dictionary:
+	var result: Dictionary = {}
+
+	for node: Node in get_tree().get_nodes_in_group("EvacPoint"):
+		if node == null or not is_instance_valid(node):
+			continue
+
+		if not node.has_method("get_exit_status"):
+			continue
+
+		var status: Dictionary = node.call("get_exit_status")
+		result[String(status.get("exit_id", ""))] = node
+
+	return result
+
+
+func _row_value(row: Array, index: int, fallback: Variant) -> Variant:
+	return row[index] if index >= 0 and index < row.size() else fallback
+
+
+func _row_string(row: Array, index: int, fallback: String) -> String:
+	return String(_row_value(row, index, fallback))
+
+
+func _row_int(row: Array, index: int, fallback: int) -> int:
+	return int(_row_value(row, index, fallback))
+
+
+func _row_float(row: Array, index: int, fallback: float) -> float:
+	return float(_row_value(row, index, fallback))
+
+
+func _row_vector3(row: Array, start: int, fallback: Vector3) -> Vector3:
+	return Vector3(
+		_row_float(row, start, fallback.x),
+		_row_float(row, start + 1, fallback.y),
+		_row_float(row, start + 2, fallback.z)
+	)
+
+
+func _live_exit_positions() -> Dictionary:
+	var positions: Dictionary = {}
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return positions
+
+	for node: Node in tree.get_nodes_in_group("EvacPoint"):
+		if node == null or not is_instance_valid(node):
+			continue
+
+		if not node.has_method("get_exit_status"):
+			continue
+
+		var status: Dictionary = node.call("get_exit_status")
+		positions[String(status.get("exit_id", ""))] = (
+			node as Node3D
+		).global_position
+
+	return positions
+
+
 func _build_ui() -> void:
 	_layer = CanvasLayer.new()
 	_layer.name = "DemoPlayerUI"
@@ -1174,6 +1755,13 @@ func _build_ui() -> void:
 	_noclip_button.button_down.connect(_begin_noclip_hold)
 	_noclip_button.button_up.connect(_end_noclip_hold)
 	controls.add_child(_noclip_button)
+
+	var load_state_button := _button("Load State", _show_load_state_dialog)
+	load_state_button.tooltip_text = (
+		"Replace the live crowd with the agents at the current playback time, "
+		+ "then run the optimizer on that state."
+	)
+	controls.add_child(load_state_button)
 
 	_time_label = Label.new()
 	_time_label.custom_minimum_size = Vector2(150, 0)

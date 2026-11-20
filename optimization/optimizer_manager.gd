@@ -20,7 +20,7 @@ static func algorithm_label(algorithm: String) -> String:
 		OptimizationRequest.ALGORITHM_LOCAL_SEARCH:
 			return "Local search"
 		OptimizationRequest.ALGORITHM_ACO:
-			return "Ant colony (not implemented)"
+			return "Ant colony (hybrid ACS)"
 		_:
 			return algorithm
 
@@ -144,6 +144,9 @@ static func solve(
 			"count": int(cohort.get("count", 0)),
 			"position": cohort.get("centroid", Vector3.ZERO),
 			"cell": cohort.get("cell", Vector3i.ZERO),
+			"speed": float(cohort.get("speed", 0.0)),
+			"speed_min": float(cohort.get("speed_min", 0.0)),
+			"speed_max": float(cohort.get("speed_max", 0.0)),
 			"exit_id": exit_id,
 			"exit_index": int(route.get("exit_index", -1)),
 			"predicted_distance": float(route.get("distance", -1.0)),

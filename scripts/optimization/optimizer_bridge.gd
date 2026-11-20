@@ -60,11 +60,38 @@ var _connected_grid: NavGridMap
 
 func _ready() -> void:
 	process_priority = 40
+	add_to_group("optimizer_bridge")
 	GlobalData.spawning_started.connect(_on_run_started)
 	GlobalData.spawning_reset.connect(_on_run_reset)
 	GlobalData.agent_spawned.connect(_on_agent_spawned)
+	_apply_runtime_defaults()
 	_sync_recorder_configuration()
 	_publish_state("off")
+
+
+func _apply_runtime_defaults() -> void:
+	var defaults: Dictionary = RuntimeExports.get_default_section("optimizer")
+
+	if defaults.is_empty():
+		return
+
+	if defaults.has("algorithm"):
+		algorithm = String(defaults["algorithm"])
+	if defaults.has("mode"):
+		mode = String(defaults["mode"])
+	if defaults.has("cohort_size"):
+		cohort_size = clampf(float(defaults["cohort_size"]), 1.0, 40.0)
+	if defaults.has("max_cohorts"):
+		max_cohorts = clampi(int(defaults["max_cohorts"]), 1, 400)
+	if defaults.has("auto_solve"):
+		auto_solve = bool(defaults["auto_solve"])
+	if defaults.get("weights") is Dictionary:
+		weights = (defaults["weights"] as Dictionary).duplicate(true)
+	if defaults.get("parameters") is Dictionary:
+		parameters = (defaults["parameters"] as Dictionary).duplicate(true)
+	if defaults.has("enabled"):
+		enabled = bool(defaults["enabled"])
+		GlobalData.set_optimizer_enabled(enabled)
 
 
 func _exit_tree() -> void:
@@ -168,6 +195,9 @@ func _on_run_started() -> void:
 	last_skipped = 0
 	last_rejection = ""
 	adopted_spawns = 0
+	GlobalData.optimizer_last_estimate = 0.0
+	GlobalData.optimizer_last_algorithm = ""
+	GlobalData.optimizer_last_mode = ""
 	_serial_to_node.clear()
 
 	if auto_solve:
@@ -324,6 +354,9 @@ func _run_solve() -> void:
 
 	var result: OptimizationResult = OptimizerManager.solve(snapshot, request)
 	last_result = result
+	GlobalData.optimizer_last_estimate = result.estimated_completion_time
+	GlobalData.optimizer_last_algorithm = result.algorithm
+	GlobalData.optimizer_last_mode = result.mode
 
 	var rejection: String = _validate(result, snapshot)
 	var applied: int = 0

@@ -17,6 +17,12 @@ var is_spawning_paused: bool = false
 ## explicit per-agent assignment.
 var optimizer_enabled: bool = false
 
+## Last optimizer estimate, for the results panel's predicted-vs-measured line.
+## Predicted values are never written into the measured summary fields.
+var optimizer_last_estimate: float = 0.0
+var optimizer_last_algorithm: String = ""
+var optimizer_last_mode: String = ""
+
 ## Bumped whenever the world or an exit changes in a way that invalidates an
 ## optimizer result. A result whose source version differs is applied only after
 ## re-solving. Chunk streaming does not bump it.
@@ -114,6 +120,21 @@ func register_npc_spawned(npc: Node = null) -> void:
 
 	if npc != null and is_instance_valid(npc):
 		agent_spawned.emit(npc)
+
+
+## Announces an agent that was created outside a spawner (demo import, debug
+## spawn) to recorder/listener code without touching the run counters. The
+## caller is responsible for restoring npcs_spawned/npcs_evacuated, because an
+## imported agent was already counted in the recording.
+func notify_agent_spawned(npc: Node) -> void:
+	if npc != null and is_instance_valid(npc):
+		agent_spawned.emit(npc)
+
+
+## Keeps future serials strictly above an imported population so a new spawn
+## cannot collide with a recorded agent's right-of-way tie-break id.
+func set_agent_serial_floor(value: int) -> void:
+	_agent_serial = maxi(_agent_serial, value)
 
 
 ## Public entry point for systems that modify the world after load. The recorder
@@ -296,6 +317,16 @@ func get_section_quota(section: String) -> int:
 func increment_section_spawn_count(section: String) -> void:
 	var current: int = get_section_spawn_count(section)
 	_section_spawn_counts[section] = current + 1
+
+
+## Restores a shared section's spawn count after importing a recorded state.
+## Without this, reloading a mid-run demo would let every section re-spend its
+## full quota.
+func set_section_spawn_count(section: String, count: int) -> void:
+	if section.is_empty():
+		return
+
+	_section_spawn_counts[section] = maxi(0, count)
 
 func reset_all() -> void:
 	kill_all_npcs()

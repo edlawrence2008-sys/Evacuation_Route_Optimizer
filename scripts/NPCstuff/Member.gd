@@ -361,6 +361,9 @@ var last_route_reason: String = ""
 var _optimizer_assignment_active: bool = false
 var _optimizer_assigned_exit_id: String = ""
 var _optimizer_assigned_target: Vector3 = Vector3.ZERO
+## Set by the demo-state importer so the deferred initial action does not
+## overwrite the restored state on the next frame.
+var _imported_demo_state: bool = false
 var last_path_usec: int = 0
 ## Finite-difference acceleration over one physics tick, m/s^2.
 var acceleration: Vector3 = Vector3.ZERO
@@ -481,6 +484,12 @@ func _begin_initial_action() -> void:
 	# Allow the scene and navigation nodes to finish their current setup.
 	await get_tree().process_frame
 
+	if _imported_demo_state:
+		# The demo importer restored a concrete state (possibly pre-movement or
+		# already seeking an exit). Running the normal opening choice here would
+		# overwrite it one frame later.
+		return
+
 	if not is_inside_tree() or current_state == State.DEAD:
 		return
 
@@ -498,6 +507,155 @@ func apply_agent_overrides(overrides: Dictionary) -> void:
 	_sanitize_agent_settings()
 	_refresh_derived_stats()
 	_apply_visual_mode()
+
+
+## Best-effort restore from a recorded demo tick. This preserves identity,
+## position, chosen exit, speed, pre-movement remainder and the measurement
+## counters that the recorder captures. Route geometry, queue membership and
+## contact state are rebuilt by the normal simulation after the import.
+func apply_demo_state(state: Dictionary) -> void:
+	if state.is_empty():
+		return
+
+	_imported_demo_state = true
+
+	var restored_serial: int = int(state.get("serial", agent_serial))
+	if restored_serial > 0:
+		agent_serial = restored_serial
+		_rng.seed = hash([GlobalData.rng_seed, agent_serial])
+
+	var restored_position: Vector3 = state.get(
+		"position", global_position
+	)
+	global_position = restored_position
+	_last_position = restored_position
+	_has_last_position = true
+	velocity = state.get("velocity", Vector3.ZERO)
+	acceleration = state.get("acceleration", Vector3.ZERO)
+
+	var recorded_speed: float = float(state.get("desired_speed", 0.0))
+
+	if recorded_speed > 0.0:
+		desired_speed = maxf(0.1, recorded_speed)
+
+	is_evacuee = bool(state.get("is_evacuee", is_evacuee))
+	contact_force = maxf(0.0, float(state.get("contact_force", 0.0)))
+	local_density = maxf(0.0, float(state.get("density", 0.0)))
+
+	_distance_travelled = maxf(0.0, float(state.get("distance", 0.0)))
+	_peak_density = maxf(
+		local_density, float(state.get("peak_density", 0.0))
+	)
+	_peak_contact_force = maxf(
+		contact_force, float(state.get("peak_contact_force", 0.0))
+	)
+	route_changes = maxi(0, int(state.get("route_changes", 0)))
+	route_switch_count = maxi(0, int(state.get("route_switches", 0)))
+
+	var spawned_at: float = float(state.get("spawned_at", -1.0))
+	if spawned_at >= 0.0:
+		_spawned_at_sim = spawned_at
+
+	_reset_stuck()
+	_stuck_time_total = maxf(0.0, float(state.get("stuck_time", 0.0)))
+	_stuck_strikes = maxi(0, int(state.get("stuck_strikes", 0)))
+
+	var pre_delay: float = maxf(0.0, float(state.get("pre_movement_delay", 0.0)))
+	var pre_wait: float = maxf(0.0, float(state.get("pre_movement_wait", 0.0)))
+	var was_pre_movement: bool = String(state.get("status", "")) == "pre_movement"
+
+	if pre_delay > 0.0:
+		_pre_movement_delay = pre_delay
+
+		if was_pre_movement:
+			_pre_movement_elapsed = clampf(pre_wait, 0.0, pre_delay)
+			_has_started_moving = false
+			wait_timer = maxf(pre_delay - _pre_movement_elapsed, 0.0)
+		else:
+			_pre_movement_elapsed = pre_delay
+			_has_started_moving = true
+			wait_timer = 0.0
+	else:
+		_pre_movement_delay = 0.0
+		_pre_movement_elapsed = 0.0
+		_has_started_moving = true
+		wait_timer = 0.0
+
+	clear_optimizer_assignment()
+	has_evacuation_target = false
+
+	var recorded_state: int = int(state.get("state", State.IDLE))
+	var exit_id: String = String(state.get("exit_id", ""))
+	var exit_target: Vector3 = state.get("destination", Vector3.ZERO)
+
+	if exit_target == Vector3.ZERO and not exit_id.is_empty():
+		exit_target = _live_exit_target(exit_id)
+
+	var has_exit: bool = (
+		not exit_id.is_empty() and exit_target != Vector3.ZERO
+	)
+
+	if was_pre_movement:
+		current_state = State.IDLE
+	elif recorded_state == State.WANDERING:
+		# A recorded wanderer did not have a destination yet. Let the normal
+		# brain choose a fresh one after a short delay.
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = _rng.randf_range(0.1, 0.5)
+	elif recorded_state == State.SEEKING_EVAC or recorded_state == State.ARRIVED:
+		current_state = State.SEEKING_EVAC
+	elif recorded_state == State.IDLE:
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = 0.0
+	else:
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = 0.0
+
+	if has_exit and not was_pre_movement:
+		var used_optimizer: bool = bool(state.get("optimizer_assigned", false))
+
+		if used_optimizer:
+			set_optimizer_assignment(exit_id, exit_target)
+		else:
+			request_evacuation_target(exit_target, "demo_restore")
+	elif has_exit and bool(state.get("optimizer_assigned", false)):
+		# Pre-movement agents keep an optimizer assignment until their delay
+		# expires, exactly as the live assignment path does.
+		set_optimizer_assignment(exit_id, exit_target)
+
+	if not has_exit and current_state == State.SEEKING_EVAC:
+		# Recorded exit no longer exists in this map. Let the normal choice run
+		# instead of leaving the agent stuck on a missing target.
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = 0.0
+
+
+## Resolves a recorded exit id to the live EvacPoint position. Missing exits
+## return ZERO so the caller can fall back to the local choice.
+func _live_exit_target(exit_id: String) -> Vector3:
+	if exit_id.is_empty() or get_tree() == null:
+		return Vector3.ZERO
+
+	for node: Node in get_tree().get_nodes_in_group("EvacPoint"):
+		if node == null or not is_instance_valid(node):
+			continue
+
+		if not node.has_method("get_exit_status"):
+			continue
+
+		var status: Dictionary = node.call("get_exit_status")
+
+		if String(status.get("exit_id", "")) != exit_id:
+			continue
+
+		if node is Node3D:
+			return (node as Node3D).global_position
+
+	return Vector3.ZERO
 
 
 func _apply_export_overrides(overrides: Dictionary) -> void:
@@ -2837,14 +2995,22 @@ func _route_to_closest_evac_point() -> void:
 			valid_points.append(point_position)
 
 	if valid_points.is_empty():
-		# Every point is temporarily on cooldown. Clear cooldowns so the NPC
-		# can try again rather than becoming permanently unable to evacuate.
-		_failed_evac_points.clear()
+		# Every exit is temporarily on cooldown. Wait for the earliest cooldown
+		# instead of clearing all of them and immediately re-choosing: clearing
+		# made agents alternate between two failed exits every retry.
+		var now: float = _now_seconds()
+		var earliest_ready: float = now + 2.0
+
+		for failed_position: Variant in _failed_evac_points.keys():
+			earliest_ready = minf(
+				earliest_ready, float(_failed_evac_points[failed_position])
+			)
+
 		has_evacuation_target = false
 		_flow_active = false
 		is_awaiting_path = false
 		current_state = State.IDLE
-		wait_timer = 2.0
+		wait_timer = clampf(earliest_ready - now, 0.5, 2.0)
 		return
 
 	request_evacuation_target(
@@ -3003,7 +3169,9 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 
 		_detour_from_flow = false
 		_evacuation_failures = 0
-		_failed_evac_points.clear()
+		# Cooldowns are time-based and must survive a successful path request.
+		# Clearing them here let an agent alternate between two failed exits
+		# every few hundred milliseconds.
 
 		# NavGridMap applies lane_offset to flow-field evacuation paths.
 		current_path = new_path
@@ -3134,7 +3302,19 @@ func _repath() -> void:
 		return
 
 	if current_state == State.SEEKING_EVAC:
-		_route_to_closest_evac_point()
+		# A navigation refresh must re-path to the same exit, not re-run the
+		# exit choice. Re-choosing here made chunk/nav edits flip agents
+		# between near-equal exits.
+		var keep_target: Vector3 = (
+			_optimizer_assigned_target
+			if _optimizer_assignment_active
+			else _last_evac_target
+		)
+
+		if keep_target != Vector3.ZERO:
+			request_evacuation_target(keep_target, "navigation")
+		else:
+			_route_to_closest_evac_point()
 		return
 
 	var grid: NavGridMap = _get_gridmap()
@@ -3447,18 +3627,28 @@ func get_measurement_state() -> Dictionary:
 		"route_index": path_index,
 		"route_points": current_path.size(),
 		"route_length": _remaining_route_length(),
+		"remaining_length": _remaining_route_length(),
 		"distance": _distance_travelled,
 		"contact_force": contact_force,
 		"density": local_density,
 		"route_changes": route_changes,
 		"route_switches": route_switch_count,
 		"stuck_strikes": _stuck_strikes,
-		"stuck_time": _stuck_time_total,
 		"evacuated": is_evacuated(),
 		"evacuated_at": _evacuated_at_sim,
 		"spawned_at": _spawned_at_sim,
 		"desired_speed": desired_speed,
 		"pre_movement_delay": _pre_movement_delay,
+		"pre_movement_wait": (
+			_pre_movement_delay if _has_started_moving else _pre_movement_elapsed
+		),
+		"stuck_time": _stuck_time_total,
+		"flow_active": _flow_active,
+		"exit_hold": _exit_hold_active,
+		"is_evacuee": is_evacuee,
+		"has_target": has_evacuation_target,
+		"peak_density": _peak_density,
+		"peak_contact_force": _peak_contact_force,
 		"optimizer_assigned": _optimizer_assignment_active,
 		"optimizer_exit_id": _optimizer_assigned_exit_id,
 	}
@@ -3500,4 +3690,6 @@ func get_evacuation_snapshot() -> Dictionary:
 		),
 		"peak_contact_force": _peak_contact_force,
 		"contact_overlaps": contact_overlaps,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
 	}

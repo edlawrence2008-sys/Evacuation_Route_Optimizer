@@ -33,6 +33,10 @@ func _run() -> void:
 				"player: transport bar scrolls horizontally",
 				_has_horizontal_scroll(player_ui)
 			)
+			_expect(
+				"player: Load State action",
+				_has_button_text(player_ui, "Load State")
+			)
 
 		var panel: Variant = player.get("_panel")
 		_expect("player: bottom panel exists", panel != null)
@@ -56,6 +60,8 @@ func _run() -> void:
 
 		_expect("comparer: values table box", comparer.get("_values_box") != null)
 		_expect("comparer: deltas table box", comparer.get("_deltas_box") != null)
+		_expect("comparer: final summary box", comparer.get("_summary_box") != null)
+		_expect("comparer: verdict label", comparer.get("_verdict_label") != null)
 		_expect(
 			"comparer: details toggle",
 			comparer.get("_differences_toggle") != null
@@ -79,11 +85,35 @@ func _test_comparer_tables(comparer: Node) -> void:
 		"letter": "A",
 		"name": "Baseline",
 		"color": Color(1.0, 0.4, 0.3),
+		"events": [{
+			"type": "end",
+			"summary": {
+				"total_evacuation_time": 100.0,
+				"average_evacuation_time": 50.0,
+				"p95_evacuation_time": 80.0,
+				"max_evacuation_time": 90.0,
+				"global_max_density": 1.0,
+				"peak_contact_force": 1000.0,
+				"agents_died": 0,
+			},
+		}],
 	}
 	var demo_b: Dictionary = {
 		"letter": "B",
 		"name": "Optimized",
 		"color": Color(0.3, 0.7, 1.0),
+		"events": [{
+			"type": "end",
+			"summary": {
+				"total_evacuation_time": 80.0,
+				"average_evacuation_time": 42.0,
+				"p95_evacuation_time": 70.0,
+				"max_evacuation_time": 85.0,
+				"global_max_density": 1.1,
+				"peak_contact_force": 1200.0,
+				"agents_died": 0,
+			},
+		}],
 	}
 	comparer.set("_demos", [demo_a, demo_b])
 	comparer.call("_build_metrics_tables")
@@ -153,6 +183,18 @@ func _test_comparer_tables(comparer: Node) -> void:
 			(delta_row[0] as Label).text
 		)
 
+	var summary_box: Variant = comparer.get("_summary_box")
+	_expect(
+		"comparer: final summary table built",
+		summary_box != null and (summary_box as VBoxContainer).get_child_count() == 1
+	)
+	var verdict: Variant = comparer.get("_verdict_label")
+	_expect(
+		"comparer: verdict reports the faster run",
+		verdict is Label and String((verdict as Label).text).contains("faster"),
+		"" if verdict == null else String((verdict as Label).text)
+	)
+
 
 func _has_horizontal_scroll(node: Node) -> bool:
 	if node is ScrollContainer:
@@ -163,6 +205,17 @@ func _has_horizontal_scroll(node: Node) -> bool:
 
 	for child: Node in node.get_children():
 		if _has_horizontal_scroll(child):
+			return true
+
+	return false
+
+
+func _has_button_text(node: Node, text: String) -> bool:
+	if node is Button and (node as Button).text == text:
+		return true
+
+	for child: Node in node.get_children():
+		if _has_button_text(child, text):
 			return true
 
 	return false

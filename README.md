@@ -98,11 +98,14 @@ godot --headless --path . --script res://tests/optimizer_phase3_test.gd
 godot --headless --path . res://tests/optimizer_phase2_test.tscn
 godot --headless --path . res://tests/optimizer_scale_test.tscn
 godot --headless --path . --script res://tests/demo_ui_test.gd
+godot --headless --path . res://tests/demo_restore_test.tscn
+godot --headless --path . res://tests/recording_control_test.tscn
 ```
 
-Expected: `48`, `18`, `27`, `52`, `7` and `23` checks with `failures=0` — 175
-assertions in total. The phase-2 test records and deletes its own demo. Details
-in [`tests/README.md`](tests/README.md).
+Expected: `51`, `18`, `27`, `52`, `7`, `28`, `22` and `31` checks with
+`failures=0` - 236 assertions in total. The phase-2 test records and deletes its
+own demo; the restore and recording tests use temporary demo folders and clean
+them up. Details in [`tests/README.md`](tests/README.md).
 
 ## Documentation
 

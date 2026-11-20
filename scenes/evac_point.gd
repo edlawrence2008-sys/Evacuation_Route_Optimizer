@@ -543,6 +543,43 @@ func _notify_occupancy_changed() -> void:
 		manager.notify_receiving_occupancy_changed(self)
 
 
+## Clears admission/queue counters for a loaded demo state. Call this before
+## `restore_counters()` so the imported tick's totals are not added to the
+## previous live run's totals.
+func reset_counters() -> void:
+	_reset_state()
+
+
+## Restores the additive counters captured in a demo tick. The live queue and
+## receiving occupancy are deliberately left empty: imported agents re-enter
+## the trigger and rebuild the queue, and there are no retained nodes to hold
+## receiving slots at load time.
+func restore_counters(status: Dictionary) -> void:
+	_accepted = maxi(0, int(status.get("accepted", _accepted)))
+	_rejected = maxi(0, int(status.get("rejected", _rejected)))
+	_capacity_waits = maxi(0, int(status.get("capacity_waits", _capacity_waits)))
+	_capacity_rejections = maxi(
+		0, int(status.get("capacity_rejections", _capacity_rejections))
+	)
+	_queue_full_rejections = maxi(
+		0, int(status.get("queue_full_rejections", _queue_full_rejections))
+	)
+	_max_queue = maxi(0, int(status.get("max_queue", _max_queue)))
+	_peak_occupancy = maxi(0, int(status.get("peak_occupancy", _peak_occupancy)))
+	_max_wait = maxf(0.0, float(status.get("max_wait", _max_wait)))
+
+	var average_wait: float = maxf(0.0, float(status.get("average_wait", 0.0)))
+	_wait_samples = _accepted
+	_total_wait = average_wait * float(_accepted)
+
+	if _accepted > 0:
+		_first_admit_time = 0.0
+		_last_admit_time = GlobalData.sim_now()
+	else:
+		_first_admit_time = -1.0
+		_last_admit_time = -1.0
+
+
 func _reset_state() -> void:
 	_queue.clear()
 	_service_agent = null

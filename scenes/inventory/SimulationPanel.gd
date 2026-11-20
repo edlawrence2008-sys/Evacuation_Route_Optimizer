@@ -11,6 +11,7 @@ extends VBoxContainer
 @onready var pause_spawning: CheckButton = $Actions/PauseSpawning
 @onready var evac_mode: CheckButton = $EvacuationMode
 @onready var record_run: CheckButton = $RecordRun
+@onready var record_now: Button = $RecordNow
 @onready var quota_spin: SpinBox = $Limits/QuotaValue
 @onready var cap_spin: SpinBox = $Limits/CapValue
 @onready var seed_spin: SpinBox = $Limits/SeedRow/SeedValue
@@ -32,6 +33,9 @@ func _ready() -> void:
 	pause_spawning.toggled.connect(_on_pause_spawning_toggled)
 	evac_mode.toggled.connect(_on_evac_mode_toggled)
 	record_run.toggled.connect(_on_record_run_toggled)
+	record_now.pressed.connect(_on_record_now_pressed)
+	SimRecorder.recording_state_changed.connect(_on_recording_state_changed)
+	RuntimeExports.runtime_exports_applied.connect(_on_run_state_changed)
 	quota_spin.value_changed.connect(_on_quota_changed)
 	cap_spin.value_changed.connect(_on_cap_changed)
 	randomize_seed_button.pressed.connect(_on_randomize_seed_pressed)
@@ -68,6 +72,7 @@ func _sync_from_state() -> void:
 	seed_spin.set_value_no_signal(GlobalData.rng_seed)
 	evac_mode.set_pressed_no_signal(GlobalData.evacuation_mode)
 	record_run.set_pressed_no_signal(SimRecorder.recording_enabled)
+	_update_record_button()
 	pause_spawning.set_pressed_no_signal(GlobalData.is_spawning_paused)
 	pause_spawning.disabled = not GlobalData.is_spawning_enabled
 
@@ -113,7 +118,30 @@ func _on_evac_mode_toggled(enabled: bool) -> void:
 
 func _on_record_run_toggled(enabled: bool) -> void:
 	SimRecorder.set_recording_enabled(enabled)
+	_update_record_button()
 	_update_status()
+
+
+func _on_record_now_pressed() -> void:
+	if SimRecorder.is_recording():
+		SimRecorder.stop_manual_recording()
+	else:
+		SimRecorder.start_manual_recording()
+
+	_update_record_button()
+	_update_status()
+
+
+func _on_recording_state_changed(_recording: bool) -> void:
+	_update_record_button()
+	_update_status()
+
+
+func _update_record_button() -> void:
+	if record_now == null:
+		return
+
+	record_now.text = "Stop Recording" if SimRecorder.is_recording() else "Start Recording"
 
 
 func _on_quota_changed(value: float) -> void:
@@ -190,9 +218,20 @@ func _update_status(keep_message: bool = false) -> void:
 	elif not GlobalData.is_spawning_enabled:
 		state = "stopped"
 
+	var rec: String = "recording" if SimRecorder.is_recording() else (
+		"record on start" if SimRecorder.recording_enabled else "recording off"
+	)
+
 	status_label.text = (
-		"Spawned %d / %s | Alive %d / %d | %s"
-		% [GlobalData.npcs_spawned, quota_text, alive, GlobalData.global_unit_cap, state]
+		"Spawned %d / %s | Alive %d / %d | %s | %s"
+		% [
+			GlobalData.npcs_spawned,
+			quota_text,
+			alive,
+			GlobalData.global_unit_cap,
+			state,
+			rec,
+		]
 	)
 
 

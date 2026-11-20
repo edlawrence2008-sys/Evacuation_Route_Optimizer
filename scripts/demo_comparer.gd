@@ -69,6 +69,8 @@ var _recordings_box: VBoxContainer = null
 var _chart: ChartBoard = null
 var _values_box: VBoxContainer = null
 var _deltas_box: VBoxContainer = null
+var _summary_box: VBoxContainer = null
+var _verdict_label: Label = null
 var _value_labels: Array = []
 var _delta_labels: Array = []
 var _differences_toggle: CheckButton = null
@@ -443,7 +445,8 @@ func _load_recording(path: String) -> Dictionary:
 		elif type in [
 			"agent_spawn", "destination", "evacuation", "agent_death",
 			"route", "route_change", "queue", "contact", "environment",
-			"disruption", "exit_state", "exit_added", "exit_removed", "end",
+			"disruption", "exit_state", "exit_added", "exit_removed",
+			"optimizer", "end",
 		]:
 			events.append(obj)
 
@@ -1497,6 +1500,18 @@ func _build_ui() -> void:
 	_deltas_box.add_theme_constant_override("separation", 4)
 	column.add_child(_deltas_box)
 
+	column.add_child(_section_label("FINAL SUMMARY"))
+
+	_summary_box = VBoxContainer.new()
+	_summary_box.add_theme_constant_override("separation", 4)
+	column.add_child(_summary_box)
+
+	_verdict_label = Label.new()
+	_verdict_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_verdict_label.add_theme_font_size_override("font_size", 11)
+	_verdict_label.add_theme_color_override("font_color", GOLD)
+	column.add_child(_verdict_label)
+
 	column.add_child(_section_label("SYNCHRONIZED METRICS"))
 
 	_chart = ChartBoard.new()
@@ -1712,6 +1727,15 @@ func _build_metrics_tables() -> void:
 			"Select at least two recordings to compare deltas against A."
 		))
 
+	if _summary_box != null:
+		for child: Node in _summary_box.get_children():
+			child.free()
+
+		_summary_box.add_child(_build_final_summary_grid())
+
+		if _verdict_label != null:
+			_verdict_label.text = _build_verdict()
+
 
 func _metric_grid(
 	metrics: Array,
@@ -1830,6 +1854,135 @@ func _on_differences_toggled(show_details: bool) -> void:
 		_differences.visible = show_details
 
 
+func _final_summary(demo: Dictionary) -> Dictionary:
+	for event: Dictionary in demo.get("events", []):
+		if String(event.get("type", "")) == "end":
+			var value: Variant = event.get("summary", {})
+
+			if value is Dictionary:
+				return value
+
+	var meta: Dictionary = demo.get("meta", {})
+	var fallback: Variant = meta.get("summary", {})
+	return fallback if fallback is Dictionary else {}
+
+
+func _summary_metric_rows() -> Array:
+	return [
+		{"key": "total_evacuation_time", "label": "Total", "digits": 1, "suffix": " s"},
+		{"key": "average_evacuation_time", "label": "Average", "digits": 1, "suffix": " s"},
+		{"key": "p95_evacuation_time", "label": "P95", "digits": 1, "suffix": " s"},
+		{"key": "max_evacuation_time", "label": "Max", "digits": 1, "suffix": " s"},
+		{"key": "global_max_density", "label": "Peak density", "digits": 2},
+		{
+			"key": "peak_contact_force",
+			"label": "Peak kN",
+			"digits": 2,
+			"scale": 0.001,
+		},
+		{"key": "agents_died", "label": "Deaths", "digits": 0},
+	]
+
+
+func _build_final_summary_grid() -> GridContainer:
+	var grid := GridContainer.new()
+	grid.columns = 1 + _demos.size()
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 2)
+
+	var header := Label.new()
+	header.text = "Final"
+	header.add_theme_color_override("font_color", MUTED)
+	header.add_theme_font_size_override("font_size", 10)
+	header.custom_minimum_size = Vector2(88, 0)
+	grid.add_child(header)
+
+	for demo: Dictionary in _demos:
+		var chip := Label.new()
+		chip.text = String(demo.get("letter"))
+		chip.tooltip_text = String(demo.get("name"))
+		chip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		chip.add_theme_color_override("font_color", demo["color"])
+		chip.add_theme_font_size_override("font_size", 11)
+		grid.add_child(chip)
+
+	for metric: Dictionary in _summary_metric_rows():
+		var name_label := Label.new()
+		name_label.text = String(metric.get("label", ""))
+		name_label.add_theme_color_override("font_color", MUTED)
+		name_label.add_theme_font_size_override("font_size", 10)
+		name_label.custom_minimum_size = Vector2(88, 0)
+		grid.add_child(name_label)
+
+		for demo: Dictionary in _demos:
+			var summary: Dictionary = _final_summary(demo)
+			var value: float = float(summary.get(String(metric["key"]), 0.0))
+			value *= float(metric.get("scale", 1.0))
+			var cell := Label.new()
+			cell.text = _format_metric(value, int(metric["digits"])) + String(
+				metric.get("suffix", "")
+			)
+			cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			cell.add_theme_font_size_override("font_size", 10)
+			grid.add_child(cell)
+
+	return grid
+
+
+func _build_verdict() -> String:
+	if _demos.size() < 2:
+		return "Add another recording to compare against A."
+
+	var base: Dictionary = _final_summary(_demos[0])
+
+	if base.is_empty():
+		return "Recording A has no final summary."
+
+	var lines: Array[String] = []
+
+	for index: int in range(1, _demos.size()):
+		var demo: Dictionary = _demos[index]
+		var summary: Dictionary = _final_summary(demo)
+
+		if summary.is_empty():
+			continue
+
+		var total_delta: float = float(
+			summary.get("total_evacuation_time", 0.0)
+		) - float(base.get("total_evacuation_time", 0.0))
+		var p95_delta: float = float(
+			summary.get("p95_evacuation_time", 0.0)
+		) - float(base.get("p95_evacuation_time", 0.0))
+		var density_delta: float = float(
+			summary.get("global_max_density", 0.0)
+		) - float(base.get("global_max_density", 0.0))
+		var force_delta: float = (
+			float(summary.get("peak_contact_force", 0.0))
+			- float(base.get("peak_contact_force", 0.0))
+		) * 0.001
+		var time_word: String = "faster" if total_delta < 0.0 else "slower"
+
+		lines.append(
+			"%s: %.1f s %s (%+.1f), P95 %+.1f s, peak density %+.2f, peak force %+.2f kN"
+			% [
+				String(demo.get("letter")),
+				absf(total_delta),
+				time_word,
+				total_delta,
+				p95_delta,
+				density_delta,
+				force_delta,
+			]
+		)
+
+	if lines.is_empty():
+		return "No comparable final summaries."
+
+	return "  |  ".join(lines)
+
+
 func _scenario_line(demo: Dictionary) -> String:
 	var meta: Dictionary = demo.get("meta", {})
 	var experiment: Dictionary = demo.get("experiment", meta.get("experiment", {}))
@@ -1852,6 +2005,16 @@ func _scenario_line(demo: Dictionary) -> String:
 		+ ("on" if bool(navigation.get("enable_congestion_routing", false)) else "off")
 	)
 	parts.append("retries %d" % int(agent.get("max_evacuation_failures", 0)))
+
+	var optimizer: Dictionary = experiment.get("optimizer", {})
+
+	if bool(optimizer.get("available", false)):
+		var optimizer_config: Dictionary = optimizer.get("configuration", {})
+		parts.append("opt %s/%s" % [
+			String(optimizer_config.get("algorithm", "?")),
+			String(optimizer_config.get("mode", "?")),
+		])
+
 	return " · ".join(PackedStringArray(parts))
 
 

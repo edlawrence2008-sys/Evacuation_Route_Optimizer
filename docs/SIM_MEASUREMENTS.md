@@ -25,8 +25,11 @@ active map save's demo library:
 Demos are grouped by save and are only listed while that save is active. Direct
 scene runs with no loadable save use `user://saves/_unsaved/demos/`.
 
-Recording is on by default and can be toggled with **Record Run** in the
-Simulation panel (or `SimRecorder.set_recording_enabled(false)` before a run).
+Recording starts automatically with **Start** when **Record On Start** is enabled,
+or immediately with **Start Recording** in the Simulation panel. A manual
+recording survives a later Start. It can be stopped at any time with **Stop
+Recording**. A run auto-finalizes when every configured spawn quota has been
+met and no member is alive; unlimited-quota runs stay open.
 
 ## Sampling model
 
@@ -86,6 +89,12 @@ treat a run as evidence:
 | Agent route changes | count | assignments + failures in `Member._assign_route()` | `tick.agents[i][25]`; `route.route_changes`; `summary.route_changes_total` |
 | Agent contact force | N | `CrowdManager` pair contact applied to the agent | `tick.agents[i][23]`; `summary.peak_contact_force` |
 | Agent local density | agents/m² | `CrowdManager` same-floor count within 1.4 m | `tick.agents[i][24]`; `summary.global_max_density` / `global_average_density` |
+| Agent pre-movement | s | sampled delay and elapsed wait in `Member` | `tick.agents[i][30]` (delay), `[31]` (elapsed or full delay); `agent_spawn.pre_movement_delay` |
+| Agent stuck state | count / s | `Member._stuck_strikes` and accumulated stuck time | `tick.agents[i][28]`, `[32]`; `evacuation.stuck_time` / `stuck_strikes` |
+| Agent behaviour flags | boolean | flow steering, exit hold, evacuee, target present | `tick.agents[i][33..36]` |
+| Agent peak exposure | agents/m² / N | per-agent peak density and contact | `tick.agents[i][37..38]`; `evacuation.peak_density` / `peak_contact_force` |
+| Agent spawn time | s | `Member._spawned_at_sim` | `tick.agents[i][39]` |
+| Optimizer assignment | boolean / exit ID | `Member._optimizer_assignment_active` + target | `tick.agents[i][40..41]` |
 
 Status values: `pre_movement`, `idle`, `wandering`, `seeking_exit`, `arrived`,
 `queued` (waiting for exit service/receiving space), `evacuated`, `dead`.
@@ -96,6 +105,10 @@ Acceleration is the *effective* kinematic acceleration (change in the velocity
 written by the movement/SFM layer), not just the steering force. It is noisy by
 nature and should be smoothed by an analysis tool.
 
+Agent tick rows currently have **42 fields**. New measurements are appended so
+older recordings keep their prefix indexes; `DemoPlayer` safe-reads shorter rows
+when importing an old demo.
+
 ## B. Environment-level measurements
 
 | Variable | Unit | Source | Where it is recorded |
@@ -103,6 +116,7 @@ nature and should be smoothed by an analysis tool.
 | Active exits | count | `EvacPoint` nodes with `get_exit_status()` | `tick.sim.active_exits`; `summary.active_exits` |
 | Exit availability | boolean | `EvacPoint.operational` + in-tree | `tick.exits[i][2..3]`, `summary.exits[].available` |
 | Exit admission rate | agents/s | accepted / run elapsed | `tick.exits[i][12]`; `summary.exits[].admission_rate` |
+| Spawner state | count / s | `scenes/spawner.gd` `get_measurement_state()` | `tick.spawners[i]`: path, name, position, quota, section, spawned_count, section_count, spawn_timer, interval |
 | Obstacle state | cells/items | `NavGridMap` block events | `layout.cells` at start; `environment` events for add/remove |
 | Navigation connectivity | graph data | `NavGridMap.get_connectivity_snapshot()` | `run.nav`; `nav_graph.nodes/edges`; `disruption.connectivity` |
 | Environmental modification time | s | `GlobalData.sim_now()` on the edit | `environment.t`, `disruption.t` |
@@ -149,6 +163,8 @@ is accepted ÷ total evacuated.
 | Global peak contact force | N | `CrowdManager` contact distribution | `tick.sim.peak_contact_force`; `summary.peak_contact_force` |
 | Total contact events | count | overlapping pairs + agent-tick contact samples | `tick.sim.contact_pairs_total`, `agent_contact_samples_total`; summary equivalents |
 | Total evacuation time | s | last evacuation − run start | `summary.total_evacuation_time` |
+| P95 evacuation time | s | sorted arrival times | `summary.p95_evacuation_time` |
+| Late agents | agents | top 5 by evacuation time | `summary.late_agents` with serial, exit, time, desired speed, pre-movement wait, distance, stuck time, route changes/switches |
 | Navigation computation time | ms/µs | `NavGridMap` refresh + queued path request timers | `summary.navigation` (µs); `nav_usec` on environment/disruption |
 
 Navigation time includes refreshes caused by chunk streaming and block edits,
@@ -196,13 +212,13 @@ with affected agents being those currently assigned to that exit.
 
 | `type` | Key fields |
 |---|---|
-| `run` | `format`, `version`, `run_id`, `rng_seed`, `scene`, `sample_interval`, `fields`, `capabilities`, `exits`, `nav` |
+| `run` | `format`, `version`, `run_id`, `rng_seed`, `scene`, `sample_interval`, `fields`, `capabilities`, `exits`, `nav`; a Load State continuation also carries `resumed_from` (source demo id) and `resumed_at` (load tick). |
 | `agent_spawn` | `agent` (serial), `agent_id`, `name`, `position`, `desired_speed`, `pre_movement_delay`, `existing_at_start` |
-| `tick` | `sim`, `agents` (rows), `exits` (rows) |
+| `tick` | `sim`, `agents` (42-field rows), `exits` (rows), `spawners` (state rows) |
 | `route` | `agent`, `route_id`, `previous_route_id`, `reason`, `mode`, `target`, `exit_id`, `path`, `path_cells`, `route_length`, `remaining_length`, `path_usec`, `switched`, `route_changes`, `route_switches` |
 | `destination` | `agent`, `previous_target`, `previous_exit_id`, `target`, `exit_id` (emitted at the moment of choice, before the path exists) |
 | `route_change` | `route` plus `disruption_id`, `before`, `after`, `before_path` |
-| `evacuation` | `agent`, `exit_id`, `evacuation_time`, `wait_time`, `distance`, `stuck_time`, `peak_density`, `pre_movement_wait` |
+| `evacuation` | `agent`, `exit_id`, `evacuation_time`, `wait_time`, `distance`, `stuck_time`, `peak_density`, `pre_movement_wait`, `route_changes`, `route_switches`, `peak_contact_force`, `stuck_strikes` |
 | `queue` | `exit_id`, `agent`, `event` (`entered`, `service_started`, `admitted`, `left`, `cancelled`, `rejected:*`), `queue_length` |
 | `contact` | `agent`, `force`, `threshold`, `rising` (threshold crossing, 0.5/1/2/3 kN) |
 | `nav` | `duration_usec`, `changed_cells` (navigation refresh completion) |
@@ -267,7 +283,11 @@ second of simulated time, plus route rows on assignment. To reduce size:
 - set `record_paths = false` (route ids remain, polylines are omitted);
 - set `record_nav_graph = false` (connectivity counts remain);
 - set `record_initial_layout = false`;
-- call `SimRecorder.set_recording_enabled(false)` for performance-only runs.
+- call `SimRecorder.set_recording_enabled(false)` for performance-only runs, or
+  stop a manual recording with `SimRecorder.stop_manual_recording()`.
+- Load State creates a new demo that copies the source recording through the
+  load tick, then appends the live continuation. The source demo is not
+  modified.
 
 The recorder reuses arrays and only flushes once per second, so file I/O is not
 in the per-tick path.

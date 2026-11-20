@@ -126,6 +126,116 @@ func reset_run() -> void:
 	metrics_changed.emit()
 
 
+## Replays the recorder's `evacuation` events that happened at or before a
+## loaded tick, so the summary after Load State includes the part of the run
+## that was already over. The live agents are not recreated; only the
+## aggregates and per-agent history are rebuilt.
+func restore_evacuation_history(
+	events: Array, cutoff_sim: float, run_start_sim: float
+) -> int:
+	var restored: int = 0
+
+	if _run_started_ms == 0:
+		_run_started_ms = int(round(maxf(0.0, run_start_sim) * 1000.0))
+
+	for value: Variant in events:
+		if not value is Dictionary:
+			continue
+
+		var event: Dictionary = value
+
+		if String(event.get("type", "")) != "evacuation":
+			continue
+
+		var event_sim: float = float(event.get("t", -1.0))
+
+		if event_sim < 0.0 or event_sim > cutoff_sim + 0.001:
+			continue
+
+		var exit_key: String = String(event.get("exit_id", ""))
+
+		if exit_key.is_empty():
+			continue
+
+		var duration: float = maxf(0.0, float(event.get("evacuation_time", 0.0)))
+		var wait_time: float = maxf(0.0, float(event.get("wait_time", 0.0)))
+		var distance: float = maxf(0.0, float(event.get("distance", 0.0)))
+		var stuck_time: float = maxf(0.0, float(event.get("stuck_time", 0.0)))
+		var stuck_strikes: int = maxi(0, int(event.get("stuck_strikes", 0)))
+		var peak_density: float = maxf(0.0, float(event.get("peak_density", 0.0)))
+		var peak_force: float = maxf(
+			0.0, float(event.get("peak_contact_force", 0.0))
+		)
+		var pre_wait: float = maxf(
+			0.0, float(event.get("pre_movement_wait", 0.0))
+		)
+		var now_ms: int = int(round(event_sim * 1000.0))
+		var spawn_ms: int = now_ms - int(round(duration * 1000.0))
+
+		_peak_density = maxf(_peak_density, peak_density)
+		_peak_contact_force = maxf(_peak_contact_force, peak_force)
+		_total_distance += distance
+		_total_stuck_time += stuck_time
+		_total_stuck_strikes += stuck_strikes
+		_total_pre_movement += pre_wait
+
+		var exit: Dictionary = _exits.get(exit_key, {})
+
+		if exit.is_empty():
+			exit = {
+				"exit_id": exit_key,
+				"name": String(event.get("exit_name", "")),
+				"arrivals": 0,
+				"total_time": 0.0,
+				"min_time": duration,
+				"max_time": duration,
+				"first_ms": now_ms,
+				"last_ms": now_ms,
+				"total_wait": 0.0,
+				"max_wait": 0.0,
+			}
+			_exits[exit_key] = exit
+
+		exit["arrivals"] = int(exit["arrivals"]) + 1
+		exit["total_time"] = float(exit["total_time"]) + duration
+		exit["min_time"] = minf(float(exit["min_time"]), duration)
+		exit["max_time"] = maxf(float(exit["max_time"]), duration)
+		exit["first_ms"] = mini(int(exit["first_ms"]), now_ms)
+		exit["last_ms"] = maxi(int(exit["last_ms"]), now_ms)
+		exit["total_wait"] = float(exit["total_wait"]) + wait_time
+		exit["max_wait"] = maxf(float(exit["max_wait"]), wait_time)
+
+		_arrivals.append(duration)
+		_evacuations.append({
+			"agent_id": -1,
+			"agent_serial": int(event.get("agent", -1)),
+			"exit_id": exit_key,
+			"exit_name": String(event.get("exit_name", "")),
+			"spawn_ms": spawn_ms,
+			"evacuated_ms": now_ms,
+			"evacuation_time": duration,
+			"wait_time": wait_time,
+			"desired_speed": float(event.get("desired_speed", 0.0)),
+			"distance": distance,
+			"stuck_time": stuck_time,
+			"stuck_strikes": stuck_strikes,
+			"peak_density": peak_density,
+			"peak_contact_force": peak_force,
+			"pre_movement_wait": pre_wait,
+			"route_changes": int(event.get("route_changes", 0)),
+			"route_switches": int(event.get("route_switches", 0)),
+		})
+		restored += 1
+
+	if restored > 0:
+		_last_activity_ms = maxi(
+			_last_activity_ms, int(round(cutoff_sim * 1000.0))
+		)
+		metrics_changed.emit()
+
+	return restored
+
+
 ## Called by the spawner (and by Member itself, so direct spawns are counted).
 func register_npc(npc: Node) -> void:
 	if npc == null or not is_instance_valid(npc):
@@ -148,6 +258,24 @@ func register_npc(npc: Node) -> void:
 		"evacuated": false,
 	}
 	_last_activity_ms = now
+
+
+## Re-anchors an imported agent's spawn clock to the recorded simulation time,
+## so its measured evacuation time continues from the demo instead of starting
+## at the moment the state was loaded.
+func restore_agent_spawn_time(npc: Node, spawn_sim: float) -> void:
+	if npc == null or not is_instance_valid(npc) or spawn_sim < 0.0:
+		return
+
+	var record := _record_for(npc)
+
+	if record.is_empty():
+		return
+
+	var age_ms: int = int(
+		round(maxf(0.0, GlobalData.sim_now() - spawn_sim) * 1000.0)
+	)
+	record["spawn_ms"] = _now_ms() - age_ms
 
 
 func notify_evacuation_target_chosen(target: Vector3, npc: Node) -> void:
@@ -281,7 +409,10 @@ func register_evacuation(
 			"stuck_time": float(snapshot.get("stuck_time", 0.0)),
 			"stuck_strikes": int(snapshot.get("stuck_strikes", 0)),
 			"peak_density": float(snapshot.get("peak_density", 0.0)),
+			"peak_contact_force": float(snapshot.get("peak_contact_force", 0.0)),
 			"pre_movement_wait": float(snapshot.get("pre_movement_wait", 0.0)),
+			"route_changes": int(snapshot.get("route_changes", 0)),
+			"route_switches": int(snapshot.get("route_switches", 0)),
 		}
 		_evacuations.append(evacuation_record)
 		evacuation_recorded.emit(evacuation_record.duplicate(true))
@@ -300,6 +431,8 @@ func register_evacuation(
 			"stuck_strikes": int(snapshot.get("stuck_strikes", 0)),
 			"peak_density": float(snapshot.get("peak_density", 0.0)),
 			"pre_movement_wait": float(snapshot.get("pre_movement_wait", 0.0)),
+			"route_changes": int(snapshot.get("route_changes", 0)),
+			"route_switches": int(snapshot.get("route_switches", 0)),
 		})
 
 	_records.erase(id)
@@ -617,6 +750,29 @@ func get_summary() -> Dictionary:
 	if crowd != null and crowd.has_method("get_contact_force_stats"):
 		contact_stats = crowd.get_contact_force_stats()
 
+	var late_agents: Array = []
+	var late_sorted: Array = _evacuations.duplicate()
+	late_sorted.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool:
+			return float(a.get("evacuation_time", 0.0)) > float(
+				b.get("evacuation_time", 0.0)
+			)
+	)
+
+	for index: int in range(mini(5, late_sorted.size())):
+		var record: Dictionary = late_sorted[index]
+		late_agents.append({
+			"agent_serial": int(record.get("agent_serial", -1)),
+			"exit_id": String(record.get("exit_id", "")),
+			"evacuation_time": float(record.get("evacuation_time", 0.0)),
+			"desired_speed": float(record.get("desired_speed", 0.0)),
+			"pre_movement_wait": float(record.get("pre_movement_wait", 0.0)),
+			"distance": float(record.get("distance", 0.0)),
+			"stuck_time": float(record.get("stuck_time", 0.0)),
+			"route_changes": int(record.get("route_changes", 0)),
+			"route_switches": int(record.get("route_switches", 0)),
+		})
+
 	return {
 		"running": running,
 		"complete": complete,
@@ -653,6 +809,7 @@ func get_summary() -> Dictionary:
 		"queue_full_rejections": queue_full_rejections,
 		"retained_agents": _retained.size(),
 		"evacuations_recorded": _evacuations.size(),
+		"late_agents": late_agents,
 		"exits": exits,
 	}
 

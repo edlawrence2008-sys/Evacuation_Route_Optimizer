@@ -38,6 +38,8 @@ var grid_map: NavGridMap
 var build_items: PackedInt32Array = PackedInt32Array()
 var inventory_open: bool = false
 var build_mode_active: bool = true
+signal inventory_toggled(open: bool)
+var _last_inventory_signal: bool = false
 
 enum BuildPlane { FLOOR, WALL }
 ## Toggled by the `switch_axis` action. Floors are the default.
@@ -1693,8 +1695,35 @@ func _toggle_inventory() -> void:
 
 	_update_build_ui()
 
+
+## Opens the inventory without requiring the player to press its key. Used after
+## loading a demo state so the Simulation/Optimizer tools are immediately
+## available while time stays paused.
+func open_inventory() -> void:
+	if not build_mode_active:
+		build_mode_active = true
+	if inventory_open:
+		return
+	inventory_open = true
+	_cancel_build_drag()
+	_get_grid_map()
+	_update_build_ui()
+
+
+## Closes the inventory from script. The inventory_toggled signal fires through
+## _update_build_ui, which lets the Load State flow resume time.
+func close_inventory() -> void:
+	if not inventory_open:
+		return
+	inventory_open = false
+	_update_build_ui()
+
 func _update_build_ui() -> void:
 	if not hud_manager: return
+
+	if inventory_open != _last_inventory_signal:
+		_last_inventory_signal = inventory_open
+		inventory_toggled.emit(inventory_open)
 
 	var item_name = ""
 	var active_palette := _active_palette_id()

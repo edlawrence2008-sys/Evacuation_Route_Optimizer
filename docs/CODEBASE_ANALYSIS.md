@@ -42,18 +42,20 @@ Simulation/Agents panel → spawn NPCs → choose an exit → path/flow to it �
 
 The game scene starts with a bare **80-cell platform** (10 × 8 at x = −5…4, z = −3…4) and three false-boid emitters with four perches. Flat-floor generation is **disabled**: `ChunkStreamer` loads only chunks that already exist in `user://world/chunks`, out to a 20-chunk script radius (Low/Medium/High presets use 12/20/40). The last recorded live store was **8 chunk columns / 1,100 cells**; a fresh store leaves empty space. The nine spawners and the evac point exist only in the save slot `testing_testing_things_just_got_interesting` (10 placeables); the active `verity` slot is a blank 8-chunk map. The **placeable catalogue** now contains **15 placeable scenes** (Sim 4, Device 2, Foliage 9), but the generated-icon manifest still has **13** entries, so the two false-boid placeables show scene-preview fallbacks until `VoxelItemGenerator.generate_all()` is re-run.
 
-**What is measured.** `EvacuationManager` records per-NPC spawn/arrival times, chosen exit, distance travelled, stuck time, failed paths, and peak local density. It derives average, median, p95, min/max evacuation time, per-exit arrivals, share, average time, and throughput per minute. Finite exits additionally report queue length/peak, average and maximum wait, service rate, receiving occupancy/peak/capacity, capacity waits and rejections, queue-full rejections, retained-agent count, and a per-agent evacuation record (spawn/evacuation timestamps, exit id, wait, desired speed). `SimRecorder` turns that into per-run files: 0.25 s agent/exit/simulation samples, route assignments, evacuation events, environment/disruption events with before/after routes, initial layout and navigation snapshots. See `docs/SIM_MEASUREMENTS.md`. The archived 2026-11-02 run (60 NPCs, 42 evacuated by ~26 s, average 22.5 s, p95 24.8 s) was measured on the old 4,674-cell map; the demo save restores a comparable spawner/exit layout.
+**What is measured.** `EvacuationManager` records per-NPC spawn/arrival times, chosen exit, distance travelled, stuck time, failed paths, and peak local density. It derives average, median, p95, min/max evacuation time, per-exit arrivals, share, average time, and throughput per minute. Finite exits additionally report queue length/peak, average and maximum wait, service rate, receiving occupancy/peak/capacity, capacity waits and rejections, queue-full rejections, retained-agent count, and a per-agent evacuation record (spawn/evacuation timestamps, exit id, wait, desired speed, distance, stuck time/strikes, peak density/contact, pre-movement, route changes/switches). It also exposes the **top 5 latest agents** with speed, pre-movement wait, distance, stuck time and route changes, so a late tail can be diagnosed from the summary and F4 panel. `SimRecorder` turns that into per-run files: 0.25 s agent/exit/simulation samples, per-tick spawner counters/timers, route assignments, evacuation events, environment/disruption events with before/after routes, initial layout and navigation snapshots. See `docs/SIM_MEASUREMENTS.md`. The archived 2026-11-02 run (60 NPCs, 42 evacuated by ~26 s, average 22.5 s, p95 24.8 s) was measured on the old 4,674-cell map; the demo save restores a comparable spawner/exit layout.
 
-**What is still missing.** The optimizer's later phases: ACO, the multi-objective
-terms and modes, disruption-driven re-solve, and the hazard layer. There is also
-no automatic layout ranking, no obstacle-rich authored level, and no general test
-suite beyond the optimizer harnesses. `SimRecorder` captures replay-ready runs,
+**What is still missing.** The optimizer's later phases: the multi-objective terms
+and modes, disruption-driven re-solve, the hazard layer, and Pareto/robustness
+analysis. ACO itself is implemented as a hybrid (local-search seed + ACS ants +
+polish); see `docs/OPTIMIZER.md` §8.2. There is also no automatic layout ranking,
+no obstacle-rich authored level, and no general test suite beyond the optimizer
+harnesses. `SimRecorder` captures replay-ready runs,
 the pause menu has a Demo Player and a synchronized **Demo Comparer** (metrics,
 trajectories, exit assignments, disruption responses and configuration deltas),
 but nothing ranks or chooses a layout. The Statistics subview renders congestion
 heat and ideal A* routes, but there is no per-cell measured bottleneck heatmap.
 
-The decision layer is **implemented through phase 3** ([`OPTIMIZER.md`](OPTIMIZER.md)): `optimization/` contains the snapshot/request/result contracts, a spatial cohort builder, per-exit path analysis, a deterministic FIFO queue model, a demand-to-capacity congestion predictor, the objective function, `nearest` / `equal_split` / `greedy` / `exhaustive` / `local_search` / `aco`, and a pure manager. `OptimizerBridge` captures a live snapshot, validates the result, applies it through `Member.set_optimizer_assignment()`, and adopts late spawns from the last result. The right-side **Optimizer** panel (beside the inventory, like the property tab) owns the bridge and describes every method and objective. The recorder writes the optimizer configuration, event and measured summary into the demo. Six harnesses pass **175 assertions**; a 600-agent scale test solves 28 cohorts in 73–86 ms and applies 600/600 assignments (`tests/README.md`).
+The decision layer is **implemented through phase 3** ([`OPTIMIZER.md`](OPTIMIZER.md)): `optimization/` contains the snapshot/request/result contracts, a spatial cohort builder, per-exit path analysis, a deterministic FIFO queue model, a demand-to-capacity congestion predictor, the objective function, `nearest` / `equal_split` / `greedy` / `exhaustive` / `local_search` / `aco`, and a pure manager. `OptimizerBridge` captures a live snapshot, validates the result, applies it through `Member.set_optimizer_assignment()`, and adopts late spawns from the last result. The right-side **Optimizer** panel (beside the inventory, like the property tab) owns the bridge and describes every method and objective. The recorder writes the optimizer configuration, event and measured summary into the demo. Eight harnesses pass **236 assertions**; a 600-agent scale test solves 28 cohorts in 73-86 ms and applies 600/600 assignments (`tests/README.md`).
 
 What remains: the multi-objective terms and modes (contact force, switching, hazard), automatic disruption re-solve with hysteresis, hazard routing, Pareto/robustness analysis, and a measured predicted-congestion-vs-actual-density study. ACO is a hybrid (local-search seed + ants + polish) and must be reported as such. Until phase 5, a disabled exit invalidates stale results and releases its agents, but the operator must press **Run once**.
 
@@ -64,7 +66,7 @@ What remains: the multi-objective terms and modes (contact force, switching, haz
 - **2026-11-20 — optimizer phase 3, side panel, comparer readability.** ACO (`aco_optimizer.gd`) uses a local-search seed, ACS construction (16 ants / 40 iterations), pheromone updates and a short polish; it never returns worse than its seed, matched exact in 3/5 seeded 6-cohort instances, is deterministic per seed and respects a 250 ms default budget. The optimizer UI moved from a runtime popup to a **right-side panel** beside the inventory, modelled on the property tab, with descriptions for every method and objective and ACO parameters. Late spawns are adopted by the nearest cohort of the last result within 8 m. The Demo Comparer gained per-demo cursor/delta tables and collapsed detail differences; the player and comparer transport bars now scroll horizontally. Tests: 27 ACO assertions, 23 demo-UI assertions, 52 phase-2 assertions.
 
 - **2026-11-20 — optimizer phase 2.** `OptimizerBridge` captures a live snapshot, validates and applies assignments through the new `Member.set_optimizer_assignment()` override; `GlobalData` gains `optimizer_enabled` and `environment_version`; `EvacPoint` and `GlobalData.report_environment_change()` invalidate stale results. The optimizer panel exposes enable, algorithm, objective, cohort size, auto-solve, Run once and status. `SimRecorder` now writes the optimizer configuration into `manifest.metadata.optimizer`, an `optimizer` event per solve and an optimizer summary block; route rows carry reason `optimizer`. Tests: 52 phase-2 assertions (real agents/exits, adoption, recorded run, side panel) and a 600-agent scale test (28 cohorts, 73–86 ms solve, 600/600 applied).
-- **2026-11-20 — optimizer phase 1.** `optimization/` contains the pure analysis layer: `SimulationSnapshot`/`OptimizationRequest`/`OptimizationResult`, `CohortBuilder`, `PathAnalyzer`, `CongestionEstimator`, `ExitCostAnalyzer`, `ObjectiveFunction`, five algorithms (`nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`) and `OptimizerManager`. `NavGridMap` gained read-only `build_cost_field_to()`, `get_path_cells()` and `get_nav_point_count()`. Headless tests: 48 pure assertions + 18 real-nav assertions, all passing; benchmark at 600 agents / 40 cohorts: nearest 15 ms, greedy 185 ms, local search ~0.95 s.
+- **2026-11-20 — optimizer phase 1.** `optimization/` contains the pure analysis layer: `SimulationSnapshot`/`OptimizationRequest`/`OptimizationResult`, `CohortBuilder`, `PathAnalyzer`, `CongestionEstimator`, `ExitCostAnalyzer`, `ObjectiveFunction`, five algorithms (`nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`) and `OptimizerManager`. `NavGridMap` gained read-only `build_cost_field_to()`, `get_path_cells()` and `get_nav_point_count()`. Headless tests: 51 pure assertions + 18 real-nav assertions, all passing; benchmark at 600 agents / 40 cohorts: nearest 15 ms, greedy 185 ms, local search ~0.95 s.
 
 - **2026-11-20 — optimizer design and doc refresh.** `docs/OPTIMIZER.md` records the gap analysis against the proposed feature set, the simulation/optimization boundary, the data contracts, the objective function, the algorithm order (baselines before ACO), the dynamic-reoptimization guards, the roadmap and the risks. No runtime behaviour changed by the design pass.
 
@@ -128,13 +130,14 @@ A second layer of intent is visible in the assets: a 1970s/PSX aesthetic (CRT ad
 | `LogicNetwork` | `scripts/logic/logic_network.gd` | Event-driven logic graph: bounded change queue plus registered timers |
 | `PerformanceSettings` | `scripts/performance_settings.gd` | Persisted Low/Medium/High presets plus live graphics/audio/system and water-simulation tuning (flow/equalize steps, update budget, mesh rate, waves, splash/drop toggles, wave detail, wake style), including a separate music level |
 | `MusicManager` | `scripts/music_manager.gd` | Central BGM player, menu-theme playlist, credits.json catalog, live music-level setting, same-track guard, now-playing metadata signals for the BGM pop-up |
-| `SaveManager` | `scripts/save_manager.gd` | Map save slots under `user://saves`: save/save-as/load/delete/duplicate/rename, new blank-platform map, chunk-store copy, isometric thumbnail, manifest of player/time/placeables and a world descriptor (`existing`/`blank`/future `procgen`) |
-| `SimRecorder` | `scripts/sim_recorder.gd` | Per-run measurement recorder: timed agent/exits/simulation ticks, route/evacuation/queue/contact/nav events, environment/disruption records, layout/nav snapshots, metadata; writes to the active save's demo library |
+| `SaveManager` | `scripts/save_manager.gd` | Map save slots under `user://saves`: save/save-as/load/delete/duplicate/rename, new blank-platform map, chunk-store copy, isometric thumbnail, manifest of player/time/placeables, `runtime_exports` and a world descriptor (`existing`/`blank`/future `procgen`) |
+| `SimRecorder` | `scripts/sim_recorder.gd` | Per-run measurement recorder: timed agent/exits/simulation ticks, route/evacuation/queue/contact/nav events, environment/disruption records, layout/nav snapshots, metadata; manual/automatic start/stop, completion finalization and Load State continuation; writes to the active save's demo library |
+| `RuntimeExports` | `scripts/runtime_exports.gd` | Per-save player-changeable exports (`runtime_exports` in `save.json`) plus the global `user://export_defaults.json` used by new saves |
 | `DemoStore` | `scripts/demo_store.gd` | Per-save demo library: create/list/rename/describe/folder/duplicate/delete demo folders under `user://saves/<slug>/demos` |
 | `DemoPlayer` | `scripts/demo_player.gd` | In-map playback of a recorded demo: timeline, speed, stepping, noclip free-flight camera, agent inspector, route/exit/density/contact views, event timeline |
 | `DemoComparer` | `scripts/demo_comparer.gd` | Synchronized comparison of 2–6 recordings: shared timeline/speed, overlaid agents, metric charts, trajectory/exit/disruption/config differences |
 
-All eleven are registered in `project.godot` and are present in any live tree (`GlobalData`, `CrowdManager`, `EvacuationManager`, `LogicNetwork`, `PerformanceSettings`, `MusicManager`, `SaveManager`, `DemoStore`, `SimRecorder`, `DemoPlayer`, `DemoComparer`).
+All twelve are registered in `project.godot` and are present in any live tree (`GlobalData`, `CrowdManager`, `EvacuationManager`, `LogicNetwork`, `PerformanceSettings`, `MusicManager`, `SaveManager`, `DemoStore`, `SimRecorder`, `RuntimeExports`, `DemoPlayer`, `DemoComparer`).
 
 `DialogueManager` is **not** an autoload. It is a plain `Node` with `class_name DialogueManager`, instanced under `scenes/dialogue/consul_dialogue.tscn`. Dialogue flags are stored on `GlobalData.dialogue_flags`, so every scene-local manager writes to the same in-memory dictionary.
 
@@ -177,7 +180,7 @@ At runtime the grid creates a sibling `ChunkMeshes` node (`ChunkMesher`) and a s
 ```
 root children : GlobalData, CrowdManager, EvacuationManager, LogicNetwork,
                 PerformanceSettings, MusicManager, SaveManager, DemoStore,
-                SimRecorder, DemoPlayer, Test
+                SimRecorder, RuntimeExports, DemoPlayer, Test
 Test children : CycleController, GridMap, ChunkMeshes, Player, ChunkStreamer,
                 MinecraftClouds, WaterSystem, PlacementGhost, FaceIndicator,
                 FalseBoidEmitter x3, FalseBoidPerch x4
@@ -391,6 +394,8 @@ dv/dt = (v⁰ − v)/τ + a_social + a_wall
 
 **Optimizer override.** `set_optimizer_assignment(exit_id, target)` stores an external assignment and suppresses the per-cycle logit choice while it is valid. It cancels pending path requests and calls `request_evacuation_target(target, "optimizer")`, so the route row's `reason` is `optimizer`. Pre-movement agents store the assignment and keep their delay; the assignment is used when the delay expires. The override clears on rejection, path failure, exit unavailability, admission and `set_evacuation_mode()`. With the optimizer disabled this path is never taken and the logit model above is unchanged.
 
+**Tail stability (2026-11-20).** Exit-failure cooldowns now persist across a successful path request; previously every successful path cleared them, so an agent could alternate between two exits every retry. When every exit is on cooldown the agent waits for the earliest expiry (0.5–2 s) instead of clearing all cooldowns. A navigation refresh re-paths to the **same** target (optimizer assignment first, then the last target) rather than re-running the exit choice. These changes do not alter the baseline model; they remove a repath/flip-flop loop that could cost a late agent 10–30 s.
+
 **Arrival.** `_finish_path` / `_complete_flow_arrival` set `ARRIVED`, wait `evac_confirm_timeout = 3 s`, and notify `EvacuationManager`. Actual admission is done by the `EvacPoint` area. If the exit has a finite service rate or is at receiving capacity, the point calls `begin_exit_hold()`: the agent stays `ARRIVED` with `_exit_hold_active` and keeps its queue position instead of timing out, so the normal 3 s confirmation cannot make it abandon a valid queue. `on_exit_area_exited()` clears the hold if the agent leaves the trigger, `reject_evacuation()` puts the exit on cooldown and retries elsewhere, and `max_exit_hold_time` (120 s) expires the hold through `resume_evacuation()`. If the area misses the body entirely, the `ARRIVED` timeout clears `has_evacuation_target` so the NPC can try again instead of wandering forever.
 
 **Flow-field mode.** When `gridmap.enable_flow_fields` is true:
@@ -485,12 +490,12 @@ The agent stays `IDLE` until the delay expires. Waiting time is recorded in the 
 - Records are erased on evacuation and death; an NPC freed by other means leaks a record until reset.
 
 **`SimulationPanel`** (`scenes/inventory/SimulationPanel.gd`, 195 lines):
-- Start, Reset, **Pause Spawning**, Evacuation Mode toggle, **Record Run** toggle.
+- Start, Reset, **Pause Spawning**, Evacuation Mode toggle, **Record On Start** and **Start/Stop Recording**.
 - Pause keeps the run, counters, quotas, and live crowd intact but stops spawners; Start clears the pause, and Reset removes every live NPC.
 - Global quota and active cap spin boxes.
-- **Seed** spin box + **Random** button. Start applies the seed and, on a clean run, calls `GlobalData.reset_determinism()`; Populate reseeds before candidate selection, so the same seed/layout/parameters reproduce serials, speeds and spawn cells. The seed is written to the run metadata and to the save manifest (`sim_seed`) and restored on load.
-- Random Populate: member count, start mode (evacuation/wandering), “needs exit path” filter, Populate button, status line.
-- Syncs from `GlobalData` and listens to spawn/pause/reset/evacuation signals; the status line shows `spawning`, `paused`, or `stopped`.
+- **Seed** spin box + **Random** button. Start applies the seed and, on a clean run, calls `GlobalData.reset_determinism()`; Populate reseeds before candidate selection, so the same seed/layout/parameters reproduce serials, speeds and spawn cells. The seed is written to the run metadata and to the save manifest (`sim_seed`/`runtime_exports`) and restored on load.
+- Random Populate: member count, start mode (evacuation/wandering), “needs exit path” filter, Populate button, status line. These settings are per-save.
+- Syncs from `GlobalData` and listens to spawn/pause/reset/evacuation/recording signals; the status line shows `spawning`, `paused`, or `stopped`, plus the recording state.
 - The panel lives inside the inventory (`toggle_inventory`, `R` by default), not on the HUD itself.
 
 **`AgentPanel`** (`scenes/inventory/AgentPanel.gd`, 307 lines):
@@ -780,7 +785,7 @@ The menu is animated but deliberately restrained:
 
 `scripts/save_manager.gd` is autoloaded as `SaveManager`. Saves live in `user://saves/<slug>/`:
 
-- `save.json`: version, display name, created/modified timestamps, map scene path, player position/yaw/pitch, cycle time, **`sim_seed`** (the Simulation panel's run seed, restored on load), thumbnail filename, a forward-compatible `world` descriptor (`type` = `existing`/`blank`/future `procgen`, plus `generator`, `seed`, `size` and `options`), and every node in the `placeables` group (scene path, 12-float transform, and simple exported properties such as `spawn_quota`, `spawn_interval`, `spawn_section`).
+- `save.json`: version, display name, created/modified timestamps, map scene path, player position/yaw/pitch, cycle time, **`sim_seed`** (the Simulation panel's run seed, restored on load), **`runtime_exports`** (cap/quota/seed/mode, agent overrides, Random Populate and optimizer configuration), thumbnail filename, a forward-compatible `world` descriptor (`type` = `existing`/`blank`/future `procgen`, plus `generator`, `seed`, `size` and `options`), and every node in the `placeables` group (scene path, 12-float transform, and simple exported properties such as `spawn_quota`, `spawn_interval`, `spawn_section`).
 - `chunks/`: a copy of the live world chunk store (`user://world/chunks`).
 - `thumb.png`: a generated **isometric topographic snapshot** of the map, shown in the Saves panel.
 
@@ -824,10 +829,15 @@ The Statistics subview shows the top-down image on a `QuadMesh`, the formatted m
 ### 4.18 Simulation recorder — `scripts/sim_recorder.gd` (autoload `SimRecorder`)
 
 The measurement layer for the demo player and comparer. It starts
-on `GlobalData.spawning_started`, samples at `sampling_interval` (default 0.25 s
-of simulation time), and writes `recording.jsonl`, `demo.json`,
-`manifest.json`, and `summary.json` under
-`user://saves/<save_slug>/demos/<demo_id>/`. It records:
+automatically on `GlobalData.spawning_started` when **Record On Start** is
+enabled, or immediately through `start_manual_recording()`; `stop_manual_recording()`
+finalizes it. It samples at `sampling_interval` (default 0.25 s of simulation
+time) and writes `recording.jsonl`, `demo.json`, `manifest.json`, and
+`summary.json` under `user://saves/<save_slug>/demos/<demo_id>/`. A run
+auto-finalizes once every configured quota has been spawned and no member is
+alive. Load State uses `prepare_continuation()` to copy the source recording
+through the load tick into a new demo, then appends the live continuation. It
+records:
 
 - **Agents:** position/velocity/speed/acceleration, destination exit (with an
   event at the moment it changes), route id plus path cells and polyline,
@@ -969,6 +979,84 @@ matched exact in 3/5 seeded 6-cohort instances; it should be reported as a hybri
 not as pure pheromone search. At 600 agents / 40 cohorts `nearest` takes ~15 ms,
 `greedy` ~185 ms and `local_search` ~0.95 s; see [`OPTIMIZER.md`](OPTIMIZER.md)
 §8.4.
+
+### 4.22 Demo state import - `DemoPlayer` Load State
+
+The Demo Player's **Load State** button imports the current playback tick into
+the live scene:
+
+- It confirms with a dialog, then calls `GlobalData.kill_all_npcs()` so the
+  crowd is removed **without stopping spawners or clearing their quotas**.
+- It replays the recorder's earlier `evacuation` events through
+  `EvacuationManager.restore_evacuation_history()`, restores each exit's
+  admission totals with `EvacPoint.restore_counters()`, and restores each
+  spawner's spawned count, section count and interval phase with
+  `Spawner.restore_measurement_state()`.
+- It instantiates `Member` nodes for every live recorded row, skipping
+  `evacuated`/`dead` agents. `Member.apply_demo_state()` restores the recorded
+  serial, position, desired speed, state, chosen exit, pre-movement remainder,
+  distance, stuck time/strikes, route changes/switches, peak density/contact,
+  spawn time and optimizer assignment. Missing recorded exits fall back to the
+  local choice.
+- It sets `GlobalData.npcs_spawned`/`npcs_evacuated` from the tick, raises the
+  serial floor, and calls `GlobalData.start_spawning()`. With imported agents
+  alive, the serial counter stays monotonic and the spawners continue from their
+  restored counts.
+- It prepares a continuation recording before Start: `SimRecorder` copies the
+  source demo through the load tick into a new demo, then records live from
+  there. The source demo is untouched; the new run header carries
+  `resumed_from`/`resumed_at`.
+- It closes the player, hides the pause menu, freezes simulation time with
+  `Engine.time_scale = 0`, and opens the inventory so the Simulation/Optimizer
+  tools are available. Closing the inventory restores `time_scale` and resumes
+  time. The loaded popup is a clamped, scrollable window, so its buttons stay
+  on screen.
+- `tests/recording_control_test.tscn` covers manual/automatic recording,
+  continuation prefix copy and completion finalization (31 assertions).
+
+Limits: this is a best-effort restore, not a bit-exact replay. Exact path
+geometry, queue order, velocity-dependent contact state and clones of
+already-evacuated agents are not recreated. The live layout should match the
+demo. It is a scenario-editing/optimizer-testing tool, not a replay.
+`tests/demo_restore_test.tscn` covers the restore semantics (22 assertions),
+including a spawner that keeps spawning after the crowd is replaced.
+
+The pause menu's demo list also accepts the **mouse wheel** (one row per notch),
+so libraries longer than the four visible rows are reachable without paging.
+
+### 4.23 Per-save runtime exports - `RuntimeExports`
+
+`scripts/runtime_exports.gd` (autoload `RuntimeExports`) owns the exports the
+player can change during a session and stores them with the map:
+
+- `RuntimeExports.collect_live()` captures the global simulation limits
+  (`global_unit_cap`, `global_spawn_quota`, `rng_seed`, evacuation mode,
+  record-on-start), `GlobalData.agent_overrides`, the Random Populator settings
+  and the optimizer bridge configuration.
+- `SaveManager` writes that object to `save.json` as `runtime_exports` and
+  applies it after `reset_spawning()` on load. Old saves without the block fall
+  back to the global defaults.
+- Vector and Color values are encoded as tagged `{__export_type, value}`
+  objects so JSON round-trips them; `apply_live()` revives them before calling
+  `GlobalData.set_agent_overrides()` or the placeable/optimizer setters.
+- `user://export_defaults.json` holds the defaults for *new* saves. Settings →
+  Gameplay → **Export Defaults** opens a scrollable editor with the global
+  fields and the full Member export list; the inventory Agents panel resets to
+  these defaults instead of hard-coded scene values.
+- Placeable exports are stored per node too. `_collect_child_script_properties()`
+  reads scripts on child nodes, so an EvacPoint's `exit_service_rate`,
+  `max_queue_length`, `receiving_capacity`, `operational` and related exports
+  survive a save even though the script lives on its `Area3D` child.
+
+`SimRecorder` recording control:
+
+- `start_manual_recording()` / `stop_manual_recording()` capture without using
+  Start; the Simulation panel exposes **Start/Stop Recording**.
+- **Record On Start** keeps the original behaviour: `spawning_started` begins a
+  demo. A manual recording survives a later Start.
+- A run finalizes automatically when `GlobalData.get_total_max_spawns()` is
+  non-negative, every quota has been spawned and the `npc` group is empty.
+  Unlimited-quota runs stay open until the player stops them.
 
 ---
 
@@ -1390,8 +1478,9 @@ it as a hybrid. Measured cost at 600 agents / 40 cohorts: 15 ms `nearest`, 185 m
 | Evacuation metrics (time, rate, bottlenecks) | **Partial** | Timing, per-exit throughput/share, distance, failures, queue/occupancy/capacity events and contact-force distributions; the Statistics subview draws route heat and ideal routes, but there is no measured bottleneck heatmap |
 | Map save/load | **Yes** | `SaveManager` slots persist chunks, placeables, player transform, cycle time, sim seed, and a world descriptor; no full-run replay or baseline comparison |
 | Run measurement / recording | **Yes** | `SimRecorder` writes per-save demos with timed agent/exit/simulation rows, route/queue/contact/nav events, environment/disruptions, layout/nav snapshots |
-| Demo library and player | **Yes** | Pause menu Demos tab: rename, description, folders/filter, duplicate, delete, compare; in-map player with timeline, speed, stepping, noclip camera, agent history, routes/exits/density/contact |
-| Demo comparer | **Yes** | Compare 2–6 demos on one timeline: overlaid agents, six metric charts, per-demo cursor/delta tables, collapsed detail differences, exit-assignment/disruption/config differences; no optimizer ranking or grid-geometry diff |
+| Demo library and player | **Yes** | Pause menu Demos tab: rename, description, folders/filter, duplicate, delete, compare; wheel scrolls the list; in-map player with timeline, speed, stepping, noclip camera, agent history, routes/exits/density/contact, and **Load State** to import a tick into the live map |
+| Demo comparer | **Yes** | Compare 2-6 demos on one timeline: overlaid agents, six metric charts, per-demo cursor/delta tables, final-summary table, verdict line, collapsed detail differences, exit-assignment/disruption/config differences; no optimizer ranking or grid-geometry diff |
+| Editable demos | **Partial** | Load State restores agent identity/position/exit/speed/pre-movement/counters, evacuation history, exit totals and spawner counts, and keeps spawners running; exact paths, queue order and contact state are rebuilt |
 | Boot menu, saves browser, music, credits | **Yes** | 3D `main_menu.tscn` boot scene, `saves_only` pause-menu overlay, `MusicManager` autoload with `credits.json`, BGM pop-up, 3D credits/search |
 | Comparison / optimization loop | **Partial** | Demo Comparer reports per-run differences; no baseline selection or layout ranking. The decision layer is documented in `docs/OPTIMIZER.md` and implemented through phase 2 |
 | NPC audio/personality | **Abandoned** | `SoundManager` targets removed systems |
@@ -1423,7 +1512,7 @@ The gap is still clearest in the name: routing is optimised locally (per-path co
 10. Budget or defer `RandomPopulator` path queries; make Populate set a target population.
 11. Derive `COMPLETE` from spawned/evacuated/alive and a “spawning finished” flag.
 12. Add one real floor plan (classrooms, corridors, two stairwells, a blocked alternative); map save/load now exists, so use it to ship the plan as a starter slot.
-13. Add a **layout ranking** pass on top of the comparer: freeze a baseline, edit, re-run, and score deltas from summaries, trajectories, exit use and disruption responses. **Then continue the optimizer in the order described in [`OPTIMIZER.md`](OPTIMIZER.md).** Phases 1–3 are done: cohort→exit assignment, five baselines + ACO, the bridge, Member overrides, late-spawn adoption, recording and the right-side panel, with 175 assertions across six harnesses. Phase 4 adds contact/switching terms and modes; phase 5 adds disruption-driven reoptimization with hysteresis; phase 6 adds a hazard input. Do not add RL/GA/PSO or a voxel hazard layer first.
+13. Add a **layout ranking** pass on top of the comparer: freeze a baseline, edit, re-run, and score deltas from summaries, trajectories, exit use and disruption responses. **Then continue the optimizer in the order described in [`OPTIMIZER.md`](OPTIMIZER.md).** Phases 1-3 are done: cohort→exit assignment, five baselines + ACO, the bridge, Member overrides, late-spawn adoption, recording and the right-side panel, with 236 assertions across eight harnesses. Phase 4 adds contact/switching terms and modes; phase 5 adds disruption-driven reoptimization with hysteresis; phase 6 adds a hazard input. Do not add RL/GA/PSO or a voxel hazard layer first.
 14. Finish decoupling Consul: mark `consul_intro_seen` only after `finished`, persist `dialogue_flags` to `user://`, and remove the duplicate `_build_intro()` copy. (The inventory now only rings the bell; pressing it summons him.)
 15. Re-run `VoxelItemGenerator.generate_all()` after adding placeables; the false-boid pair is the only missing icon entry.
 16. ~~Build the demo player: read a `recording.jsonl`, interpolate agent transforms between ticks, and overlay exits/events from the same file.~~ **Done:** `DemoPlayer` (in-map playback) and `DemoComparer` (synchronized multi-run comparison).
@@ -1454,11 +1543,14 @@ Current-revision checks, condensed. The complete table (2026-11-06 → 2026-11-2
 
 | Check | Result |
 |---|---|
+| Late-agent investigation (2026-11-20) | Data analysis of the 332-agent test-map recordings plus the phase‑1 slow-tail test. Mean speed 1.338 m/s; the latest agents were 0.64–0.88 m/s with 58–83 m routes and 75–113 s expected travel. Agent 304: 0.643 m/s, 72.9 m, 4.0 s pre-movement, 11.2 s stuck → 130.0 s. The optimizer averaged the tail into faster cohorts; a successful path also cleared all cooldowns and nav refreshes re-ran exit choice, causing ~0.5 s exit flips. Fixed by per-agent arrivals (makespan uses each speed), persistent cooldowns, wait-for-earliest-cooldown and same-target re-path. |
+| Per-save exports + recording control (2026-11-20) | `recording_control_test.tscn`: **31/31 PASS**. Runtime exports capture/restore cap, quota, seed, evacuation mode and agent overrides; Vector3 exports round-trip through tagged JSON; the save manifest carries `runtime_exports`. A source demo is continued into a new demo: the run header gets `resumed_from`/`resumed_at`, one tick and one evacuation are copied, the source `end` is dropped, and the combined summary keeps the earlier evacuation. Manual start/stop works without Start; a met quota with no live member auto-finalizes. 0 script errors. |
+| Demo state restore + spawner continuation (2026-11-20) | `demo_restore_test.tscn`: **22/22 PASS**. Verifies the 42-field agent schema mirror, restores serial/speed/position/route counters/distance/spawn time, keeps an exit target, preserves a 3.0 s pre-movement remainder, replays only evacuation events up to the cutoff (average 25 s, max 30 s), restores exit counters, enforces a serial floor, and shows a restored spawner keeps spawning from quota 3 / spawned 1 and stops at its quota. Recording is disabled in the harness; 0 script errors. |
 | Optimizer phase 2 (2026-11-20) | `optimizer_phase2_test.tscn`, real scene: **52/52 PASS**. A real `NavGridMap`, two `EvacPoint`s and 25 `Member`s went through bridge capture → greedy solve → apply; applied+skipped covered every assignment; override routes were labelled `optimizer`; a late spawn was adopted by the nearest cohort; exit B disabled mid-run was never assigned in the next solve; a pre-movement agent stored the assignment, stayed `pre_movement`, and used it after the delay; a block edit bumped `environment_version`; a recorded run wrote `manifest.metadata.optimizer`, an `optimizer` event, optimizer route rows and measured admissions, then the demo was deleted; the right-side Optimizer panel found its bridge, exposed the controls and descriptions, and opened/closed. 0 script errors. |
 | Optimizer 600-agent scale (2026-11-20) | `optimizer_scale_test.tscn`, 600 real agents, 40 × 20 m floor, 4 exits: **7/7 PASS**. 28 cohorts, solve **73–86 ms**, **600/600** assignments applied, wall time **309–417 ms** including capture, two idle frames and application. |
 | Optimizer phase 3 — ACO (2026-11-20) | `optimizer_phase3_test.gd`: **27/27 PASS**. Fixed 3-cohort instance: ACO equals the exact optimum and beats nearest. Five seeded 6-cohort instances: ACO is never worse than local search, never better than exact, and **matched exact in 3/5**. Same seed → same cost and assignments. A 50 ms budget stops before all iterations and still returns a feasible plan. A 28-cohort instance with the default 250 ms budget solved within the planning bound. 0 script errors. |
-| Demo UI — scroll + comparer tables (2026-11-20) | `demo_ui_test.gd`: **23/23 PASS**. Both the Demo Player and Demo Comparer transport bars contain a horizontal auto-scroll container; the player's bottom panel reserves the extra height; the comparer has values/deltas table boxes, a collapsed details section, a 3-column values grid (21 cells) and a 2-column delta grid (14 cells); the table shows A=10, B=12 and Δ=+2 for a synthetic pair. 0 script errors. |
-| Optimizer phase 1 (2026-11-20) | Headless, no scene, no autoloads. `optimizer_phase1_test.gd`: **48/48 PASS** (3 cohorts × 20 agents; exhaustive = analytic minimum and ≤ nearest/equal/greedy; local search between exhaustive and greedy; queue wait 190 s at 1/s; rate 0 → 0 wait; congestion delay > 0 for 60 agents on one exit; unreachable cohort leaves 40 assigned and reports `unreachable`; unavailable exit never assigned; deterministic cost/assignments; cohort cap merges 3 → 2; exhaustive refuses a capped search space; weight presets merge overrides). `optimizer_nav_api_test.gd`: **18/18 PASS** on a real `NavGridMap` (50-cell cost field, zero-cost target, weighted distance matches A* at 2.00 m, `cell_limit = 5`, 4-cell disconnected island, unreachable point returns empty field/path). Benchmark, 600 agents / 40 cohorts / 4 exits: `nearest` 15 ms / 1 eval, `greedy` 185 ms / 200 evals, `local_search` 953 ms / 709 evals, exhaustive refused 4^40. 0 script errors. |
+| Demo UI — scroll + comparer tables (2026-11-20) | `demo_ui_test.gd`: **28/28 PASS**. Both the Demo Player and Demo Comparer transport bars contain a horizontal auto-scroll container; the player's bottom panel reserves the extra height and exposes **Load State**; the comparer has values/deltas table boxes, a **Final Summary** table, a **Verdict** line, a collapsed details section, a 3-column values grid (21 cells) and a 2-column delta grid (14 cells); the table shows A=10, B=12 and Δ=+2 for a synthetic pair. 0 script errors. |
+| Optimizer phase 1 (2026-11-20) | Headless, no scene, no autoloads. `optimizer_phase1_test.gd`: **51/51 PASS** (3 cohorts × 20 agents; slow-tail makespan uses a 0.6 m/s agent's own arrival, not the cohort mean; exhaustive = analytic minimum and ≤ nearest/equal/greedy; local search between exhaustive and greedy; queue wait 190 s at 1/s; rate 0 → 0 wait; congestion delay > 0 for 60 agents on one exit; unreachable cohort leaves 40 assigned and reports `unreachable`; unavailable exit never assigned; deterministic cost/assignments; cohort cap merges 3 → 2; exhaustive refuses a capped search space; weight presets merge overrides). `optimizer_nav_api_test.gd`: **18/18 PASS** on a real `NavGridMap` (50-cell cost field, zero-cost target, weighted distance matches A* at 2.00 m, `cell_limit = 5`, 4-cell disconnected island, unreachable point returns empty field/path). Benchmark, 600 agents / 40 cohorts / 4 exits: `nearest` 15 ms / 1 eval, `greedy` 185 ms / 200 evals, `local_search` 953 ms / 709 evals, exhaustive refused 4^40. 0 script errors. |
 | Optimizer design audit (2026-11-20) | Source-checked only; no runtime change. Confirmed the contracts the design relies on: `EvacPoint.get_exit_status()` exposes id/availability/service rate/queue/capacity/occupancy; `Member.request_evacuation_target()` is public while `_choose_evacuation_point()` and `choose_next_action()` re-choose each cycle; `NavGridMap.estimate_path_distance()` is synchronous A* while `get_path_distance()` requires a baked flow field and `ensure_flow_field_cell()` returns false while `enable_flow_fields = false`; `CrowdManager.get_density_per_m2()` is a 1.4 m same-floor probe; `SimRecorder.record_optimizer_execution()` and the manifest `optimizer` block exist but nothing emits them. |
 | Source audit (2026-11-17) | 52 project scenes / 97 scripts (excluding `addons/`); 11 autoloads; 15 placeable scenes (Sim 4, Device 2, Foliage 9); MeshLibrary **316 items / 7,720,939 bytes** referencing all **51** `textures/autoblocks/` PNGs; 13 voxel-icon entries; boot scene `scenes/menu/main_menu.tscn`; `Maps/test.tscn` has 80 cells + 3 emitters + 4 perches and no congestion override. |
 | Simulation recorder + demos (2026-11-18) | Live 1–6 agent runs wrote per-save `demo.json`, `recording.jsonl`, `manifest.json`, and `summary.json` under `user://saves/<slug>/demos/`; ticks carried agent/exit/simulation rows; event streams included route/queue/contact/nav/environment records, and route changes carried before/after paths and disruption ids. Rename, description, folder, duplicate, and delete persisted in metadata; the Demos tab listed them and the in-map player played/closed the recording. |
@@ -1718,7 +1810,7 @@ Bindings above are the **`project.godot` defaults**. The pause menu's Controls p
 | Window | mode 2 (maximised), stretch `viewport` | |
 | Custom cursor | `cursor.png` | |
 | File logging | on | feeds `Outputgetter` |
-| Autoloads | `GlobalData`, `CrowdManager`, `EvacuationManager`, `LogicNetwork`, `PerformanceSettings`, `MusicManager`, `SaveManager`, `DemoStore`, `SimRecorder`, `DemoPlayer`, `DemoComparer` | `DialogueManager` is scene-local, not an autoload |
+| Autoloads | `GlobalData`, `CrowdManager`, `EvacuationManager`, `LogicNetwork`, `PerformanceSettings`, `MusicManager`, `SaveManager`, `DemoStore`, `SimRecorder`, `RuntimeExports`, `DemoPlayer`, `DemoComparer` | `DialogueManager` is scene-local, not an autoload |
 | Persisted settings | `user://settings.cfg`, `user://active_save.cfg` | quality preset/water/system/audio, and the active save slug |
 | Editor plugins | `crt`, `day_and_night_cycle` | CRT unused; day/night used |
 | Shader globals | `psx_affine_strength`, `psx_bit_depth`, `psx_fog_*`, `psx_snap_distance`; `sprite_sun_dir`, `sprite_sun_color`, `sprite_bounce_color` | PSX globals unused; sprite globals feed `realistic_sprite_rim.gdshader` (`sun_color.a` = rim strength, `bounce_color.rgb/a` = tint/strength) |

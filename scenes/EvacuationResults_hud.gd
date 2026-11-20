@@ -89,6 +89,40 @@ func _refresh() -> void:
 			_format_duration(float(summary.get("max_time", 0.0))),
 		]
 	)
+
+	var late_agents: Array = summary.get("late_agents", [])
+
+	if not late_agents.is_empty():
+		var late_parts: Array[String] = []
+
+		for index: int in range(mini(3, late_agents.size())):
+			var entry: Dictionary = late_agents[index]
+			late_parts.append(
+				"#%d %s · %.2f m/s · pre %s · stuck %s · %d changes"
+				% [
+					int(entry.get("agent_serial", -1)),
+					_format_duration(float(entry.get("evacuation_time", 0.0))),
+					float(entry.get("desired_speed", 0.0)),
+					_format_duration(float(entry.get("pre_movement_wait", 0.0))),
+					_format_duration(float(entry.get("stuck_time", 0.0))),
+					int(entry.get("route_changes", 0)),
+				]
+			)
+
+		lines.append("Latest: " + "  |  ".join(late_parts))
+
+	if GlobalData.optimizer_last_estimate > 0.0:
+		var measured_max: float = float(summary.get("max_time", 0.0))
+		lines.append(
+			"Optimizer: %s/%s · predicted T %.1f s · measured max %.1f s (%+.1f s)"
+			% [
+				GlobalData.optimizer_last_algorithm,
+				GlobalData.optimizer_last_mode,
+				GlobalData.optimizer_last_estimate,
+				measured_max,
+				measured_max - GlobalData.optimizer_last_estimate,
+			]
+		)
 	lines.append(
 		"Failed paths: %d   Deaths: %d   Peak density: %.1f"
 		% [

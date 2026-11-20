@@ -37,6 +37,7 @@ func _initialize() -> void:
 	_test_exact_reference()
 	_test_equal_split()
 	_test_queue_model()
+	_test_slow_tail_arrival()
 	_test_congestion_prediction()
 	_test_unreachable_cohort()
 	_test_unavailable_exit()
@@ -202,6 +203,68 @@ func _test_queue_model() -> void:
 			0.5
 		),
 		str(free_exit.get("completion", -1.0))
+	)
+
+
+func _test_slow_tail_arrival() -> void:
+	var snapshot := SimulationSnapshot.new()
+	snapshot.sim_time = 10.0
+	snapshot.rng_seed = 11
+	snapshot.environment_version = 1
+	snapshot.nav = {"cell_size": Vector3.ONE, "cost_fields": {}}
+
+	var exit_cell := Vector3i(2, 0, 2)
+	snapshot.exits.append({
+		"exit_id": "A",
+		"name": "Exit A",
+		"position": Vector3(exit_cell) + Vector3(0.5, 1.0, 0.5),
+		"cell": exit_cell,
+		"available": true,
+		"service_rate": 0.0,
+		"max_queue_length": 0,
+		"receiving_capacity": 0,
+		"retain_evacuated": false,
+		"queue_length": 0,
+		"receiving_occupancy": 0,
+		"accepted": 0,
+		"average_wait": 0.0,
+	})
+	var fields: Dictionary = snapshot.nav["cost_fields"]
+	fields["A"] = _build_field(exit_cell)
+
+	var agent_cell := Vector3i(5, 0, 2)
+
+	for agent_index: int in range(2):
+		snapshot.agents.append({
+			"serial": agent_index + 1,
+			"position": Vector3(agent_cell) + Vector3(0.5, 0.75, 0.5),
+			"cell": agent_cell,
+			"desired_speed": 0.6 if agent_index == 0 else 1.4,
+			"state": "seeking_exit",
+			"has_target": false,
+			"exit_id": "",
+			"path_remaining": 0.0,
+		})
+
+	var result: OptimizationResult = _solve(snapshot, "nearest")
+	var distance: float = float(fields["A"].get(agent_cell, -1.0))
+	var slow_time: float = distance / 0.6
+	var fast_time: float = distance / 1.4
+
+	_expect("slow tail: feasible", result.feasible, result.get_violation_summary())
+	_expect(
+		"slow tail: makespan uses the slowest agent",
+		_is_close(result.estimated_completion_time, slow_time, 0.01),
+		"%.3f vs %.3f" % [result.estimated_completion_time, slow_time]
+	)
+	_expect(
+		"slow tail: average uses each speed",
+		_is_close(
+			result.estimated_average_time, (slow_time + fast_time) / 2.0, 0.01
+		),
+		"%.3f vs %.3f" % [
+			result.estimated_average_time, (slow_time + fast_time) / 2.0
+		]
 	)
 
 

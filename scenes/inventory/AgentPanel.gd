@@ -14,6 +14,10 @@ const SPRITE_LIBRARY = preload(
 @export var agent_scene: PackedScene = preload(
 	"res://scenes/npcs/Member.tscn"
 )
+## When true this panel edits the global export defaults used by new saves
+## instead of the live agent overrides. It is instantiated by the pause menu's
+## Export Defaults page with this flag on.
+@export var defaults_mode: bool = false
 
 @onready var properties: VBoxContainer = $PropertiesScroll/Properties
 @onready var apply_button: Button = $Actions/Apply
@@ -28,8 +32,27 @@ var _defaults: Dictionary = {}
 func _ready() -> void:
 	apply_button.pressed.connect(_on_apply_pressed)
 	reset_button.pressed.connect(_on_reset_pressed)
+	RuntimeExports.runtime_exports_applied.connect(_sync_from_state)
+	RuntimeExports.defaults_changed.connect(_on_defaults_changed)
 	_build_rows()
 	_sync_from_state()
+
+	if defaults_mode:
+		apply_button.text = "Save Defaults"
+		reset_button.text = "Reset to Scene"
+		var title := get_node_or_null("Title") as Label
+		var info := get_node_or_null("Info") as Label
+
+		if title != null:
+			title.text = "Agent Export Defaults"
+		if info != null:
+			info.text = (
+				"Values a new save starts from. Existing saves keep their own "
+				+ "agent exports."
+			)
+		_set_status("Edit values, then Apply to save as defaults.")
+	else:
+		_set_status("Edit values, then Apply to live and future agents.")
 
 
 func _build_rows() -> void:
@@ -71,13 +94,20 @@ func _build_rows() -> void:
 			label.text = property_name.capitalize()
 
 		var value: Variant = temp.get(prop.name)
+		var effective: Variant = RuntimeExports.get_default(
+			"agents", property_name, value
+		)
 		row.set_meta("var_name", property_name)
 		row.set_meta("var_type", prop.type)
-		_apply_row_value(row, value, prop.type)
-		_defaults[property_name] = value
+		_apply_row_value(row, effective, prop.type)
+		_defaults[property_name] = effective
 
 	temp.free()
-	_set_status("Edit values, then Apply to live and future agents.")
+	_set_status(
+		"Edit values, then Apply to save as defaults."
+		if defaults_mode
+		else "Edit values, then Apply to live and future agents."
+	)
 
 
 ## Refreshes the fields from the currently applied overrides (or scene defaults).
@@ -88,10 +118,16 @@ func _sync_from_state() -> void:
 
 		var property_name: String = row.get_meta("var_name")
 		var property_type: int = row.get_meta("var_type")
-		var value: Variant = GlobalData.agent_overrides.get(
-			property_name,
-			_defaults.get(property_name)
-		)
+		var value: Variant
+
+		if defaults_mode:
+			value = _defaults.get(property_name)
+		else:
+			value = GlobalData.agent_overrides.get(
+				property_name,
+				_defaults.get(property_name)
+			)
+
 		_apply_row_value(row, value, property_type)
 
 
@@ -139,6 +175,15 @@ func _collect_overrides() -> Dictionary:
 
 func _on_apply_pressed() -> void:
 	var overrides: Dictionary = _collect_overrides()
+
+	if defaults_mode:
+		RuntimeExports.set_section_defaults("agents", overrides)
+		_set_status(
+			"Saved %d agent export default%s for new saves."
+			% [overrides.size(), "" if overrides.size() == 1 else "s"]
+		)
+		return
+
 	var live_count: int = GlobalData.set_agent_overrides(overrides)
 
 	_set_status(
@@ -152,7 +197,14 @@ func _on_apply_pressed() -> void:
 
 
 func _on_reset_pressed() -> void:
-	GlobalData.clear_agent_overrides()
+	if defaults_mode:
+		RuntimeExports.clear_section_defaults("agents")
+		_build_rows()
+		_sync_from_state()
+		_set_status("Reset agent export defaults to the agent scene.")
+		return
+
+	GlobalData.set_agent_overrides(_defaults)
 
 	var live_count: int = 0
 
@@ -163,9 +215,21 @@ func _on_reset_pressed() -> void:
 
 	_sync_from_state()
 	_set_status(
-		"Reset %d live agent%s to scene defaults."
+		"Reset %d live agent%s to export defaults."
 		% [live_count, "" if live_count == 1 else "s"]
 	)
+
+
+## Rebuilds the rows from the current agent scene and defaults. Used by the
+## Settings overlay after the defaults file changes.
+func rebuild() -> void:
+	_build_rows()
+	_sync_from_state()
+
+
+func _on_defaults_changed() -> void:
+	_build_rows()
+	_sync_from_state()
 
 
 func _set_status(message: String) -> void:

@@ -24,6 +24,7 @@ const UI_SOUND_TYPING_FINISH := preload("res://sounds/ui/typing_input_finish.wav
 const TRANSITION_ACTIONS := [
 	"settings", "stats", "saves", "water_tuning", "back_main", "back_settings",
 	"settings_graphics", "settings_gameplay", "settings_audio", "settings_controls",
+	"export_defaults",
 ]
 
 ## Actions shown in the dedicated Controls page. Internal ui_* actions that are
@@ -55,6 +56,14 @@ var _hud: CanvasLayer = null
 var _hands: Node3D = null
 var _dialog_layer: CanvasLayer = null
 var _save_manager: Node = null
+var _defaults_layer: CanvasLayer = null
+var _defaults_agent_panel: Node = null
+var _defaults_cap: SpinBox = null
+var _defaults_quota: SpinBox = null
+var _defaults_seed: SpinBox = null
+var _defaults_evac: CheckBox = null
+var _defaults_record: CheckBox = null
+var _defaults_status: Label = null
 
 @onready var _panel: Node3D = $Panel
 @onready var _dim: MeshInstance3D = $Dim
@@ -311,6 +320,12 @@ func _input(event: InputEvent) -> void:
 		_handle_keybind_input(event)
 		return
 
+	if _defaults_layer != null and _defaults_layer.visible:
+		if event.is_action_pressed("ui_cancel"):
+			_defaults_layer.visible = false
+			get_viewport().set_input_as_handled()
+		return
+
 	if _view == "controls":
 		if not _binding_action.is_empty():
 			_handle_keybind_capture(event)
@@ -351,6 +366,17 @@ func _input(event: InputEvent) -> void:
 				_save_start = mini(maxi(0, _saves.size() - 1), _save_start + 1)
 				_refresh_save_list()
 				get_viewport().set_input_as_handled()
+		elif _demos_panel != null and _demos_panel.visible and event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_demo_start = maxi(0, _demo_start - 1)
+				_refresh_demo_list()
+				get_viewport().set_input_as_handled()
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_demo_start = mini(
+					maxi(0, _filtered_demo_count() - 1), _demo_start + 1
+				)
+				_refresh_demo_list()
+				get_viewport().set_input_as_handled()
 
 
 func set_paused(value: bool) -> void:
@@ -389,6 +415,8 @@ func set_paused(value: bool) -> void:
 			_cancel_demo_compare(false)
 		_play_ui(UI_SOUND_TRANSITION, -11.0)
 		_reset_sway()
+		if _defaults_layer != null and is_instance_valid(_defaults_layer):
+			_defaults_layer.visible = false
 		get_tree().paused = false
 		Input.set_mouse_mode(_saved_mouse_mode)
 		if _hands != null:
@@ -618,6 +646,9 @@ func _ensure_settings_ui() -> void:
 	var gameplay_left := _ensure_water_column(
 		_gameplay_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
+	var gameplay_right := _ensure_water_column(
+		_gameplay_panel, "RightColumn", Vector3(0.68, 0, 0.035)
+	)
 	var audio_left := _ensure_water_column(
 		_audio_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
@@ -637,6 +668,13 @@ func _ensure_settings_ui() -> void:
 	_move_settings_button("AgentLimit", gameplay_left, 0.35)
 	_ensure_water_button(
 		gameplay_left, "ViewRoll", "view_roll", "View Roll", 0.05
+	)
+	_ensure_water_button(
+		gameplay_right,
+		"ExportDefaults",
+		"export_defaults",
+		"Export Defaults",
+		0.35
 	)
 
 	_move_settings_button("Volume", audio_left, 0.10)
@@ -1292,6 +1330,19 @@ func _ensure_demos_ui() -> void:
 	_demo_folder_button = _demos_panel.get_node_or_null("FolderFilter")
 	_demo_compare_button = _demos_panel.get_node_or_null("RightActions/Compare")
 	_sync_compare_button()
+
+
+func _filtered_demo_count() -> int:
+	var count: int = 0
+
+	for demo: Dictionary in _demos:
+		if (
+			_demo_folder_filter.is_empty()
+			or String(demo.get("folder", "")) == _demo_folder_filter
+		):
+			count += 1
+
+	return count
 
 
 func _refresh_demo_list() -> void:
@@ -2195,6 +2246,8 @@ func _click_at(position: Vector2) -> void:
 			_show_view("audio")
 		"settings_controls":
 			_show_view("controls")
+		"export_defaults":
+			_open_export_defaults()
 		"keybinds":
 			_show_view("controls")
 		"back_controls":
@@ -2839,3 +2892,236 @@ func _dialog_theme(font_size: int = 16) -> Theme:
 	theme.default_font_size = font_size
 	theme.default_base_scale = 1.0
 	return theme
+
+
+# ---------------------------------------------------------------------------
+# Export defaults (Settings > Gameplay)
+# ---------------------------------------------------------------------------
+
+func _open_export_defaults() -> void:
+	_ensure_defaults_layer()
+	_sync_export_defaults_fields()
+	_defaults_layer.visible = true
+	_play_ui(UI_SOUND_TRANSITION, -10.0)
+
+
+func _ensure_defaults_layer() -> void:
+	if _defaults_layer != null and is_instance_valid(_defaults_layer):
+		return
+
+	_defaults_layer = CanvasLayer.new()
+	_defaults_layer.name = "ExportDefaults"
+	_defaults_layer.layer = 24
+	_defaults_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_defaults_layer)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.02, 0.02, 0.74)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_defaults_layer.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_defaults_layer.add_child(center)
+
+	var view := get_viewport().get_visible_rect().size
+	var panel := PanelContainer.new()
+	panel.theme = _dialog_theme(15)
+	panel.custom_minimum_size = Vector2(
+		minf(780.0, view.x * 0.92),
+		minf(620.0, view.y * 0.88)
+	)
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 16)
+	margin.add_theme_constant_override("margin_right", 16)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	panel.add_child(margin)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	margin.add_child(column)
+
+	var title := Label.new()
+	title.text = "EXPORT DEFAULTS"
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color(1.0, 0.84, 0.32))
+	column.add_child(title)
+
+	var info := Label.new()
+	info.text = (
+		"New saves start from these values. An existing save keeps the exports "
+		+ "stored in its own save file, so changing a default does not rewrite it."
+	)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_theme_font_size_override("font_size", 14)
+	info.add_theme_color_override("font_color", Color(0.75, 0.75, 0.7))
+	column.add_child(info)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 6)
+	scroll.add_child(content)
+
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 4)
+	content.add_child(grid)
+
+	_defaults_cap = _defaults_spin(grid, "Active Cap", 1, 100000, 1)
+	_defaults_quota = _defaults_spin(grid, "Spawn Quota", -1, 100000, 1)
+	_defaults_seed = _defaults_spin(grid, "Seed", 0, 2147483647, 1)
+
+	_defaults_evac = _defaults_check(grid, "Evacuation Mode")
+	_defaults_record = _defaults_check(grid, "Record On Start")
+
+	_defaults_cap.value_changed.connect(func(_v: float) -> void: _save_global_defaults())
+	_defaults_quota.value_changed.connect(func(_v: float) -> void: _save_global_defaults())
+	_defaults_seed.value_changed.connect(func(_v: float) -> void: _save_global_defaults())
+	_defaults_evac.toggled.connect(func(_v: bool) -> void: _save_global_defaults())
+	_defaults_record.toggled.connect(func(_v: bool) -> void: _save_global_defaults())
+
+	var separator := HSeparator.new()
+	content.add_child(separator)
+
+	var agent_info := Label.new()
+	agent_info.text = (
+		"Agent exports are the same Member properties as the inventory's Agents "
+		+ "panel. Apply there to save the defaults."
+	)
+	agent_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	agent_info.add_theme_font_size_override("font_size", 13)
+	agent_info.add_theme_color_override("font_color", Color(0.75, 0.75, 0.7))
+	content.add_child(agent_info)
+
+	var agent_scene: PackedScene = load("res://scenes/inventory/AgentPanel.tscn")
+	_defaults_agent_panel = agent_scene.instantiate()
+	_defaults_agent_panel.set("defaults_mode", true)
+	_defaults_agent_panel.custom_minimum_size = Vector2(0, 340)
+	_defaults_agent_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(_defaults_agent_panel)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	column.add_child(actions)
+
+	var reset := Button.new()
+	reset.text = "Reset All Defaults"
+	reset.pressed.connect(_reset_export_defaults)
+	actions.add_child(reset)
+
+	var close := Button.new()
+	close.text = "Close"
+	close.pressed.connect(func() -> void: _defaults_layer.visible = false)
+	actions.add_child(close)
+
+
+func _defaults_spin(
+	grid: GridContainer, label_text: String, minimum: float,
+	maximum: float, step: float
+) -> SpinBox:
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 14)
+	grid.add_child(label)
+
+	var spin := SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.step = step
+	spin.allow_greater = true
+	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(spin)
+	return spin
+
+
+func _defaults_check(grid: GridContainer, label_text: String) -> CheckBox:
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 14)
+	grid.add_child(label)
+
+	var check := CheckBox.new()
+	check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(check)
+	return check
+
+
+func _sync_export_defaults_fields() -> void:
+	if _defaults_cap == null:
+		return
+
+	_defaults_cap.set_value_no_signal(
+		float(
+			RuntimeExports.get_default(
+				"global", "global_unit_cap", GlobalData.global_unit_cap
+			)
+		)
+	)
+	_defaults_quota.set_value_no_signal(
+		float(
+			RuntimeExports.get_default(
+				"global", "global_spawn_quota", GlobalData.global_spawn_quota
+			)
+		)
+	)
+	_defaults_seed.set_value_no_signal(
+		float(RuntimeExports.get_default("global", "rng_seed", GlobalData.rng_seed))
+	)
+	_defaults_evac.set_pressed_no_signal(
+		bool(
+			RuntimeExports.get_default(
+				"global", "evacuation_mode", GlobalData.evacuation_mode
+			)
+		)
+	)
+	_defaults_record.set_pressed_no_signal(
+		bool(
+			RuntimeExports.get_default(
+				"global",
+				"recording_enabled",
+				SimRecorder.recording_enabled
+			)
+		)
+	)
+
+	if (
+		_defaults_agent_panel != null
+		and _defaults_agent_panel.has_method("rebuild")
+	):
+		_defaults_agent_panel.call("rebuild")
+
+
+func _save_global_defaults() -> void:
+	if _defaults_cap == null:
+		return
+
+	RuntimeExports.set_default(
+		"global", "global_unit_cap", int(_defaults_cap.value)
+	)
+	RuntimeExports.set_default(
+		"global", "global_spawn_quota", int(_defaults_quota.value)
+	)
+	RuntimeExports.set_default("global", "rng_seed", int(_defaults_seed.value))
+	RuntimeExports.set_default(
+		"global", "evacuation_mode", _defaults_evac.button_pressed
+	)
+	RuntimeExports.set_default(
+		"global", "recording_enabled", _defaults_record.button_pressed
+	)
+
+
+func _reset_export_defaults() -> void:
+	RuntimeExports.clear_all_defaults()
+	_sync_export_defaults_fields()
+	_play_ui(UI_SOUND_ACCEPT, -9.0)

@@ -36,6 +36,7 @@ MusicManager="*res://scripts/music_manager.gd"
 SaveManager="*res://scripts/save_manager.gd"
 DemoStore="*res://scripts/demo_store.gd"
 SimRecorder="*res://scripts/sim_recorder.gd"
+RuntimeExports="*res://scripts/runtime_exports.gd"
 DemoPlayer="*res://scripts/demo_player.gd"
 DemoComparer="*res://scripts/demo_comparer.gd"
 

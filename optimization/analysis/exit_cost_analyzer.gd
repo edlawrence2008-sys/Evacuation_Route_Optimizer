@@ -49,11 +49,21 @@ func evaluate(
 			continue
 
 		var arrival: float = maxf(float(route.get("time", 0.0)), 0.0)
+		var distance: float = maxf(float(route.get("distance", 0.0)), 0.0)
 		var count: int = int(cohort.get("count", 0))
 		var exit_row: Dictionary = per_exit[exit_id]
+		var speeds: Array = cohort.get("speeds", [])
 
-		for _agent: int in range(count):
-			(exit_row["arrivals"] as Array).append(arrival)
+		# Use each member's own desired speed when the builder provided it: a
+		# 0.65 m/s walker must not be averaged into a 1.34 m/s cohort and
+		# predicted to arrive early. The slow tail defines the makespan.
+		if speeds.size() == count and distance > 0.0:
+			for speed_value: Variant in speeds:
+				var member_speed: float = maxf(float(speed_value), 0.2)
+				(exit_row["arrivals"] as Array).append(distance / member_speed)
+		else:
+			for _agent: int in range(count):
+				(exit_row["arrivals"] as Array).append(arrival)
 
 		exit_row["count"] = int(exit_row["count"]) + count
 
