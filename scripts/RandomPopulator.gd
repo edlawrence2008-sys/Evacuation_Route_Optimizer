@@ -62,7 +62,7 @@ func populate() -> Dictionary:
 			}
 
 	var candidates: Array[Vector3i] = []
-	for cell: Vector3i in grid.get_used_cells():
+	for cell: Vector3i in grid.get_used_block_cells():
 		if grid.is_nav_cell_valid(cell):
 			candidates.append(cell)
 

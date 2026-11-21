@@ -14,6 +14,7 @@ signal congestion_changed(affected_cells: Array[Vector3i])
 signal nav_refresh_measured(duration_usec: int, changed_cells: int)
 
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
+const VoxelSectionStoreScript := preload("res://scripts/world/VoxelSectionStore.gd")
 
 ## Body radius used for navigation clearance checks. The spawned NPC body is a
 ## 0.25 m sphere; matching it here keeps path validation honest.
@@ -162,9 +163,13 @@ const GROUND_PROBE_DY: Array[int] = [1, 0, -1, -2]
 ## two-block face. The smaller side tolerance used for ledge checks is separate.
 const GROUND_HEIGHT_TOLERANCE: float = 1.35
 
-## Chunks are CHUNK_SIZE x CHUNK_SIZE columns in X/Z and span every Y level.
+## Chunks are CHUNK_SIZE x CHUNK_SIZE columns in X/Z. Storage is split into
+## 16 x 16 x 16 sections inside each column, so a one-storey floor costs one
+## section and a ten-storey building costs ten. See VoxelSectionStore.
 const CHUNK_SIZE: int = 16
-const CHUNK_DATA_VERSION: int = 1
+## v1 = flat 5-int cells, v2 = compressed 3D sections. v1 is still loadable.
+const CHUNK_DATA_VERSION: int = 2
+const LEGACY_CHUNK_DATA_VERSION: int = 1
 const INTS_PER_BLOCK: int = 5
 const NO_CHUNK_FLOOR: int = -2147483647
 
@@ -185,8 +190,12 @@ var last_path_request_usec: int = 0
 var path_request_total_usec: int = 0
 var path_request_count: int = 0
 
-## chunk -> { cell: true }
-var _chunk_cells: Dictionary = {}
+## Packed sparse 3D section storage. Replaces the old per-cell
+## Dictionary[chunk][Vector3i] index: cost follows content, not build height.
+var _sections = VoxelSectionStoreScript.new()
+## True when GridMap keeps its own cells for collision (chunk meshing off).
+## When the mesher owns collision, the runtime mirror is dropped entirely.
+var _grid_mirror_enabled: bool = true
 ## chunk -> lowest occupied Y. Maintained incrementally so the NPC fall check
 ## does not scan a whole chunk every frame.
 var _chunk_min_y: Dictionary = {}
@@ -237,6 +246,11 @@ var _step_lengths: Array[float] = []
 ## Item-id caches for navigation surface height and traversal cost.
 var _surface_low_by_item: Dictionary = {}
 var _surface_cost_kind_by_item: Dictionary = {}
+## Lazily filled block-item cache for one chunk navigation build. Wall/gap
+## penalties query ~24 neighbours per cell; without this each query goes through
+## the packed section store.
+var _nav_snapshot_active: bool = false
+var _nav_snapshot_items: Dictionary = {}
 
 ## Recent deadlock heat per nav cell (0..1). Hot cells cost more to enter, so
 ## later A* requests and flow bakes route around a jam instead of feeding it.
@@ -297,6 +311,11 @@ func _ready() -> void:
 
 	if auto_generate_stairs:
 		_generate_auto_stairs()
+
+	# The mesher provides per-chunk trimesh collision, so GridMap's duplicate
+	# cell grid can be dropped. Without the mesher (disabled, or no MeshLibrary
+	# to build from), GridMap stays authoritative for collision.
+	_grid_mirror_enabled = not enable_greedy_meshing or mesh_library == null
 
 	initialize_navigation()
 	_build_ctm_items()
@@ -482,7 +501,7 @@ func initialize_navigation() -> void:
 	_id_to_cell.clear()
 	free_ids.clear()
 	next_id = 1
-	_chunk_cells.clear()
+	_sections.clear()
 	_chunk_min_y.clear()
 	_nav_chunks.clear()
 	_dirty_chunks.clear()
@@ -495,11 +514,29 @@ func initialize_navigation() -> void:
 	_rebuild_surface_profiles()
 	_build_step_lengths()
 
-	var used_cells: Array[Vector3i] = get_used_cells()
+	# The packed store is the runtime source of truth. On the first run the
+	# scene's GridMap cells are copied into it; after that the grid is only a
+	# coordinate/mesh-library host and is cleared so collision can be owned by
+	# the chunk meshes instead of a duplicate cell grid.
+	var used_cells: Array[Vector3i]
+
+	if _sections.cell_count() == 0:
+		used_cells = _seed_sections_from_gridmap()
+	else:
+		used_cells = get_used_block_cells()
+
+	if not _grid_mirror_enabled:
+		clear()
+
+	for chunk: Vector2i in _sections.get_column_chunks():
+		var lowest: int = _sections.get_column_min_y(chunk)
+		_chunk_min_y[chunk] = (
+			lowest
+			if lowest != VoxelSectionStoreScript.NO_HEIGHT
+			else NO_CHUNK_FLOOR
+		)
 
 	for cell in used_cells:
-		_track_cell(cell)
-
 		if not _is_walkable(cell):
 			continue
 
@@ -515,8 +552,44 @@ func initialize_navigation() -> void:
 	for cell: Vector3i in cell_to_id_map:
 		_connect_cell_neighbors(cell)
 
-	for chunk: Vector2i in _chunk_cells:
+	for chunk: Vector2i in _sections.get_column_chunks():
 		_nav_chunks[chunk] = true
+
+
+## Copies the scene's authored GridMap cells into the packed store. Only the
+## first initialize_navigation() call needs this; afterwards the store is the
+## source of truth and the grid is empty at runtime.
+func _seed_sections_from_gridmap() -> Array[Vector3i]:
+	var cells: Array[Vector3i] = get_used_cells()
+
+	for cell in cells:
+		var item: int = get_cell_item(cell)
+
+		if item < 0:
+			continue
+
+		_sections.set_cell(cell, item, get_cell_item_orientation(cell))
+
+	return cells
+
+
+## Drops every stored cell and rebuilds an empty navigation graph. Used when a
+## save is replaced by a generated world, so the scene's starter cells do not
+## survive into the new world.
+func reset_world() -> void:
+	_sections.clear()
+	_chunk_min_y.clear()
+	_dirty_chunks.clear()
+	_nav_chunks.clear()
+
+	if _grid_mirror_enabled:
+		clear()
+
+	initialize_navigation()
+
+	if _mesher != null:
+		_mesher.stop()
+		_mesher.start()
 
 
 func _build_step_lengths() -> void:
@@ -584,7 +657,7 @@ func _wall_penalty_scale(cell: Vector3i) -> float:
 	var open_count: int = 0
 
 	for dir in WALL_CHECK_DIRS:
-		if not has_block(cell + Vector3i.UP + dir):
+		if not _nav_has_block(cell + Vector3i.UP + dir):
 			open_count += 1
 
 	var openness: float = float(open_count) / float(WALL_CHECK_DIRS.size())
@@ -634,13 +707,43 @@ func _rebuild_surface_profiles() -> void:
 		_surface_cost_kind_by_item[id] = cost_kind
 
 
+## Item read used by navigation hot paths. During a chunk build, neighbours are
+## memoized so the 24 wall/gap probes per cell become dictionary reads.
+func _nav_block_item(cell: Vector3i) -> int:
+	if _nav_snapshot_active:
+		var cached: Variant = _nav_snapshot_items.get(cell)
+
+		if cached != null:
+			return int(cached)
+
+		var item: int = _sections.get_cell_item(cell)
+		_nav_snapshot_items[cell] = item
+		return item
+
+	return _sections.get_cell_item(cell)
+
+
+func _nav_has_block(cell: Vector3i) -> bool:
+	return _nav_block_item(cell) != GridMap.INVALID_CELL_ITEM
+
+
+func _nav_snapshot_begin() -> void:
+	_nav_snapshot_items.clear()
+	_nav_snapshot_active = true
+
+
+func _nav_snapshot_end() -> void:
+	_nav_snapshot_active = false
+	_nav_snapshot_items.clear()
+
+
 func _surface_is_low(cell: Vector3i) -> bool:
-	return bool(_surface_low_by_item.get(get_cell_item(cell), false))
+	return bool(_surface_low_by_item.get(_nav_block_item(cell), false))
 
 
 func _surface_weight_scale(cell: Vector3i) -> float:
 	var kind: int = int(
-		_surface_cost_kind_by_item.get(get_cell_item(cell), 0)
+		_surface_cost_kind_by_item.get(_nav_block_item(cell), 0)
 	)
 
 	match kind:
@@ -835,8 +938,8 @@ func _gap_exposure(cell: Vector3i) -> float:
 	var exposed_count: int = 0
 
 	for dir in WALL_CHECK_DIRS:
-		var has_wall: bool = has_block(cell + Vector3i.UP + dir)
-		var has_floor: bool = has_block(cell + dir)
+		var has_wall: bool = _nav_has_block(cell + Vector3i.UP + dir)
+		var has_floor: bool = _nav_has_block(cell + dir)
 
 		if not has_wall and not has_floor:
 			exposed_count += 1
@@ -2108,7 +2211,7 @@ func _segment_clear_light(
 # ---------------------------------------------------------------------------
 
 func _is_walkable(cell: Vector3i) -> bool:
-	return has_block(cell) and not has_block(cell + Vector3i.UP)
+	return _nav_has_block(cell) and not _nav_has_block(cell + Vector3i.UP)
 
 
 func _nav_point_position(cell: Vector3i) -> Vector3:
@@ -2194,7 +2297,7 @@ func get_block_direction(cell: Vector3i, kind: DirectionalKind) -> Vector3i:
 
 	return get_direction_for_orientation(
 		kind,
-		get_cell_item_orientation(cell)
+		get_block_orientation(cell)
 	)
 
 
@@ -2493,13 +2596,12 @@ func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 		return false
 
 	if (
-		get_cell_item(cell) == item
-		and get_cell_item_orientation(cell) == orientation
+		get_block_item(cell) == item
+		and get_block_orientation(cell) == orientation
 	):
 		return false
 
-	set_cell_item(cell, item, orientation)
-	_track_cell(cell)
+	_track_cell_values(cell, item, orientation)
 	mark_chunk_dirty(cell_to_chunk(cell))
 	_refresh_nav_around(cell)
 	block_placed.emit(cell, item)
@@ -2508,10 +2610,9 @@ func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 
 
 func remove_block(cell: Vector3i) -> bool:
-	if get_cell_item(cell) == GridMap.INVALID_CELL_ITEM:
+	if get_block_item(cell) == GridMap.INVALID_CELL_ITEM:
 		return false
 
-	set_cell_item(cell, GridMap.INVALID_CELL_ITEM)
 	_untrack_cell(cell)
 	mark_chunk_dirty(cell_to_chunk(cell))
 	_refresh_nav_around(cell)
@@ -2543,8 +2644,7 @@ func place_blocks(
 		if has_block(cell):
 			continue
 
-		set_cell_item(cell, item, orientation)
-		_track_cell(cell)
+		_track_cell_values(cell, item, orientation)
 		placed_cells.append(cell)
 
 	if placed_cells.is_empty():
@@ -2560,6 +2660,54 @@ func place_blocks(
 	return placed_cells.size()
 
 
+## Adds a bottom slab above every column that is one block lower than an
+## orthogonal neighbour. This retrofits the half-step risers onto an existing
+## saved world; new terrain gets them from `HeightmapTerrainGenerator`.
+## Idempotent: a cell is only added when `top + 1` is empty.
+func add_step_slabs(item: int = 46) -> int:
+	if mesh_library == null or not mesh_library.get_item_list().has(item):
+		return 0
+
+	var tops: Dictionary = {}
+	var missing_top: int = -2147483648
+
+	for cell: Vector3i in get_used_block_cells():
+		# Existing step slabs must not become the terrain top, otherwise a
+		# second call would stack another slab on top of them.
+		if get_block_item(cell) == item:
+			continue
+
+		var column := Vector2i(cell.x, cell.z)
+		var previous: int = int(tops.get(column, missing_top))
+
+		if cell.y > previous:
+			tops[column] = cell.y
+
+	var additions: Array[Vector3i] = []
+
+	for column: Vector2i in tops:
+		var top: int = int(tops[column])
+		var higher: bool = (
+			int(tops.get(column + Vector2i(1, 0), missing_top)) > top
+			or int(tops.get(column + Vector2i(-1, 0), missing_top)) > top
+			or int(tops.get(column + Vector2i(0, 1), missing_top)) > top
+			or int(tops.get(column + Vector2i(0, -1), missing_top)) > top
+		)
+
+		if not higher:
+			continue
+
+		var slab := Vector3i(column.x, top + 1, column.y)
+
+		if not has_block(slab):
+			additions.append(slab)
+
+	if additions.is_empty():
+		return 0
+
+	return place_blocks(additions, item, 0)
+
+
 ## Removes every existing cell in `cells` with a single navigation refresh.
 func remove_blocks(cells: Array[Vector3i]) -> int:
 	var removed: Array[Vector3i] = []
@@ -2568,7 +2716,6 @@ func remove_blocks(cells: Array[Vector3i]) -> int:
 		if not has_block(cell):
 			continue
 
-		set_cell_item(cell, GridMap.INVALID_CELL_ITEM)
 		_untrack_cell(cell)
 		removed.append(cell)
 
@@ -2599,7 +2746,7 @@ func _mark_chunks_dirty(cells: Array[Vector3i]) -> void:
 
 
 func has_block(cell: Vector3i) -> bool:
-	return get_cell_item(cell) != GridMap.INVALID_CELL_ITEM
+	return get_block_item(cell) != GridMap.INVALID_CELL_ITEM
 
 
 func _refresh_point_weights_around(changed_cell: Vector3i) -> void:
@@ -2797,12 +2944,31 @@ func position_to_chunk(world_pos: Vector3) -> Vector2i:
 
 
 func _track_cell(cell: Vector3i) -> void:
+	_track_cell_values(
+		cell,
+		get_block_item(cell),
+		get_block_orientation(cell)
+	)
+
+
+## Indexes a cell whose item and orientation are already known. Bulk placement
+## and chunk loading pass them so they do not re-query GridMap for every cell.
+func _track_cell_values(
+	cell: Vector3i,
+	item: int,
+	orientation: int
+) -> void:
 	var chunk: Vector2i = cell_to_chunk(cell)
 
-	if not _chunk_cells.has(chunk):
-		_chunk_cells[chunk] = {}
+	if item < 0:
+		_sections.remove_cell(cell)
+		_untrack_min_y(chunk, cell.y)
+		return
 
-	_chunk_cells[chunk][cell] = true
+	_sections.set_cell(cell, item, orientation)
+
+	if _grid_mirror_enabled:
+		set_cell_item(cell, item, orientation)
 
 	var lowest: int = int(_chunk_min_y.get(chunk, NO_CHUNK_FLOOR))
 	if lowest == NO_CHUNK_FLOOR or cell.y < lowest:
@@ -2812,24 +2978,28 @@ func _track_cell(cell: Vector3i) -> void:
 func _untrack_cell(cell: Vector3i) -> void:
 	var chunk: Vector2i = cell_to_chunk(cell)
 
-	if not _chunk_cells.has(chunk):
-		return
+	_sections.remove_cell(cell)
 
-	_chunk_cells[chunk].erase(cell)
+	if _grid_mirror_enabled:
+		set_cell_item(cell, GridMap.INVALID_CELL_ITEM)
 
-	if _chunk_cells[chunk].is_empty():
-		_chunk_cells.erase(chunk)
+	_untrack_min_y(chunk, cell.y)
+
+
+func _untrack_min_y(chunk: Vector2i, removed_y: int) -> void:
+	if not _sections.has_column(chunk):
 		_chunk_min_y.erase(chunk)
 		return
 
-	if int(_chunk_min_y.get(chunk, NO_CHUNK_FLOOR)) != cell.y:
+	if int(_chunk_min_y.get(chunk, NO_CHUNK_FLOOR)) != removed_y:
 		return
 
-	var lowest: int = 2147483647
-	for remaining: Vector3i in _chunk_cells[chunk]:
-		lowest = mini(lowest, remaining.y)
-
-	_chunk_min_y[chunk] = lowest
+	var lowest: int = _sections.get_column_min_y(chunk)
+	_chunk_min_y[chunk] = (
+		lowest
+		if lowest != VoxelSectionStoreScript.NO_HEIGHT
+		else NO_CHUNK_FLOOR
+	)
 
 
 func get_chunk_lowest_block_y(chunk: Vector2i) -> int:
@@ -2861,6 +3031,30 @@ func get_mesher() -> ChunkMesher:
 	return _mesher
 
 
+## Number of per-chunk collision bodies currently built by the mesher.
+func get_chunk_collision_body_count() -> int:
+	if _mesher == null:
+		return 0
+
+	return _mesher.get_collision_body_count()
+
+
+## Collision build stats: bodies, number of trimesh builds, total build usec.
+func get_chunk_collision_stats() -> Dictionary:
+	if _mesher == null:
+		return {"bodies": 0, "builds": 0, "build_usec": 0}
+
+	return _mesher.get_collision_stats()
+
+
+## LOD mesh counts and collision body count.
+func get_chunk_lod_stats() -> Dictionary:
+	if _mesher == null:
+		return {"lod0": 0, "lod1": 0, "lod2": 0, "meshed": 0, "collision": 0}
+
+	return _mesher.get_lod_stats()
+
+
 func _ensure_water_system() -> WaterSystem:
 	if _water_system == null or not is_instance_valid(_water_system):
 		_water_system = WaterSystem.new()
@@ -2881,12 +3075,7 @@ func get_water_system() -> WaterSystem:
 
 
 func get_populated_chunks() -> Array[Vector2i]:
-	var result: Array[Vector2i] = []
-
-	for chunk: Vector2i in _chunk_cells:
-		result.append(chunk)
-
-	return result
+	return _sections.get_column_chunks()
 
 
 ## Chunks that currently have built navigation. This is the active/loaded set
@@ -2901,54 +3090,89 @@ func get_active_chunks() -> Array[Vector2i]:
 
 
 func get_chunk_highest_block_y(chunk: Vector2i) -> int:
-	var cells: Dictionary = _chunk_cells.get(chunk, {})
-	var highest: int = -2147483647
+	if not _sections.has_column(chunk):
+		return 0
 
-	for cell: Vector3i in cells:
-		if cell.y > highest:
-			highest = cell.y
-
-	return highest if highest != -2147483647 else 0
+	return _sections.get_column_max_y(chunk)
 
 
 func get_chunk_cell_count(chunk: Vector2i) -> int:
-	return _chunk_cells.get(chunk, {}).size()
+	return _sections.get_column_cell_count(chunk)
 
 
 ## The set of cells in a chunk (cell -> true). Treat it as read-only.
+## Prefer `get_chunk_cell_list()` on hot paths: it does not allocate entries.
 func get_chunk_cells(chunk: Vector2i) -> Dictionary:
-	return _chunk_cells.get(chunk, {})
+	var result: Dictionary = {}
+
+	for cell: Vector3i in _sections.get_column_cell_list(chunk):
+		result[cell] = true
+
+	return result
+
+
+## The cells in a chunk as a flat list. Used by the mesher and map renderer.
+func get_chunk_cell_list(chunk: Vector2i) -> Array[Vector3i]:
+	return _sections.get_column_cell_list(chunk)
+
+
+## Cells plus parallel item ids in one pass. Hot mesher path: avoids one
+## section lookup per cell.
+func get_chunk_cells_and_items(
+	chunk: Vector2i,
+	out_cells: Array,
+	out_items: Array
+) -> void:
+	_sections.get_column_cells_and_items(chunk, out_cells, out_items)
+
+
+## Cell entries with item and orientation, for serialization and tooling.
+func get_chunk_entries(chunk: Vector2i) -> Array[Dictionary]:
+	return _sections.get_column_entries(chunk)
+
+
+## Source-of-truth cell reads. GridMap's native `get_cell_item()` is emptied at
+## runtime once the mirror is cleared, so game code must use these.
+func get_block_item(cell: Vector3i) -> int:
+	return _sections.get_cell_item(cell)
+
+
+func get_block_orientation(cell: Vector3i) -> int:
+	return _sections.get_cell_orientation(cell)
+
+
+## Every stored cell. Use this instead of `GridMap.get_used_cells()`.
+func get_used_block_cells() -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+
+	for chunk: Vector2i in _sections.get_column_chunks():
+		result.append_array(_sections.get_column_cell_list(chunk))
+
+	return result
+
+
+## In-memory estimate for the packed section index (excludes GridMap's own copy).
+func get_section_index_memory_bytes() -> int:
+	return _sections.memory_bytes()
+
+
+func get_section_count() -> int:
+	return _sections.section_count()
 
 
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
 
-## Packs one chunk into a plain Dictionary. "cells" is a flat PackedInt32Array, 5 ints
-## per block: [local_x, y, local_z, item, orientation, ...]. X and Z are relative to the
-## chunk origin so the data doesn't depend on where the chunk sits in the world.
+## Packs one chunk into a plain Dictionary. Version 2 stores a compressed blob
+## of 3D sections (see VoxelSectionStore); version 1's flat 5-int cell array is
+## still accepted by `load_chunk` for old saves.
 func serialize_chunk(chunk: Vector2i) -> Dictionary:
-	var cells: Dictionary = _chunk_cells.get(chunk, {})
-	var origin: Vector2i = chunk_origin(chunk)
-
-	var packed: PackedInt32Array = PackedInt32Array()
-	packed.resize(cells.size() * INTS_PER_BLOCK)
-
-	var index: int = 0
-
-	for key: Vector3i in cells:
-		packed[index] = key.x - origin.x
-		packed[index + 1] = key.y
-		packed[index + 2] = key.z - origin.y
-		packed[index + 3] = get_cell_item(key)
-		packed[index + 4] = get_cell_item_orientation(key)
-		index += INTS_PER_BLOCK
-
 	return {
 		"version": CHUNK_DATA_VERSION,
 		"chunk_x": chunk.x,
 		"chunk_z": chunk.y,
-		"cells": packed,
+		"sections": _sections.serialize_column_compressed(chunk),
 	}
 
 
@@ -2965,27 +3189,18 @@ func load_chunk(
 		push_error("NavGridMap.load_chunk: no MeshLibrary assigned.")
 		return
 
-	if int(data.get("version", 0)) != CHUNK_DATA_VERSION:
-		push_error("NavGridMap.load_chunk: unsupported chunk data version.")
+	var version: int = int(data.get("version", 0))
+
+	if version != CHUNK_DATA_VERSION and version != LEGACY_CHUNK_DATA_VERSION:
+		push_error(
+			"NavGridMap.load_chunk: unsupported chunk data version %d." % version
+		)
 		return
 
 	var chunk := Vector2i(
 		int(data.get("chunk_x", 0)),
 		int(data.get("chunk_z", 0))
 	)
-	var origin: Vector2i = chunk_origin(chunk)
-
-	var packed_value: Variant = data.get("cells", PackedInt32Array())
-
-	if packed_value is not PackedInt32Array:
-		push_error("NavGridMap.load_chunk: cells must be PackedInt32Array.")
-		return
-
-	var packed: PackedInt32Array = packed_value
-
-	if packed.size() % INTS_PER_BLOCK != 0:
-		push_error("NavGridMap.load_chunk: malformed cell data size.")
-		return
 
 	var valid_items: PackedInt32Array = mesh_library.get_item_list()
 	var had_navigation: bool = _nav_chunks.has(chunk)
@@ -2997,6 +3212,81 @@ func load_chunk(
 		# non-navigable streaming version.
 		_refresh_nav_region(touched)
 		_nav_chunks.erase(chunk)
+
+	if version == LEGACY_CHUNK_DATA_VERSION:
+		skipped = _load_legacy_cells(chunk, data, valid_items, touched)
+	else:
+		# Fast path: generated/saved v2 blobs can be imported section-by-section
+		# instead of decoding every cell and re-inserting it. Only used when no
+		# navigation rebuild needs the touched-cell list.
+		var blob_value: Variant = data.get("sections", PackedByteArray())
+		var imported: bool = false
+
+		if (
+			not build_navigation
+			and blob_value is PackedByteArray
+			and _sections.import_column_compressed(
+				chunk,
+				blob_value,
+				valid_items,
+				min_block_y,
+				max_block_y
+			)
+		):
+			var lowest: int = _sections.get_column_min_y(chunk)
+
+			if lowest != VoxelSectionStoreScript.NO_HEIGHT:
+				_chunk_min_y[chunk] = lowest
+
+			imported = true
+
+		if not imported:
+			skipped = _load_section_cells(chunk, data, valid_items, touched)
+
+	if skipped > 0:
+		push_warning(
+			"NavGridMap.load_chunk: skipped %d invalid cell(s) in chunk %s."
+			% [skipped, chunk]
+		)
+
+	var affected: Array[Vector3i] = []
+
+	if build_navigation:
+		affected = _refresh_nav_region(touched)
+		_nav_chunks[chunk] = true
+	else:
+		_nav_chunks.erase(chunk)
+
+	_dirty_chunks.erase(chunk)
+
+	if emit_nav_signal and not affected.is_empty():
+		navigation_changed.emit(affected)
+
+	chunk_loaded.emit(chunk)
+
+
+## Version-1 loader: flat 5-int cells. Kept so old saves and the current
+## ChunkStreamer flat-floor path keep working through the same entry point.
+func _load_legacy_cells(
+	chunk: Vector2i,
+	data: Dictionary,
+	valid_items: PackedInt32Array,
+	touched: Array[Vector3i]
+) -> int:
+	var packed_value: Variant = data.get("cells", PackedInt32Array())
+
+	if packed_value is not PackedInt32Array:
+		push_error("NavGridMap.load_chunk: cells must be PackedInt32Array.")
+		return 0
+
+	var packed: PackedInt32Array = packed_value
+
+	if packed.size() % INTS_PER_BLOCK != 0:
+		push_error("NavGridMap.load_chunk: malformed cell data size.")
+		return 0
+
+	var origin: Vector2i = chunk_origin(chunk)
+	var skipped: int = 0
 
 	for index in range(0, packed.size(), INTS_PER_BLOCK):
 		var local_x: int = packed[index]
@@ -3024,30 +3314,48 @@ func load_chunk(
 			origin.y + local_z
 		)
 
-		set_cell_item(cell, item, orientation)
-		_track_cell(cell)
+		_track_cell_values(cell, item, orientation)
 		touched.append(cell)
 
-	if skipped > 0:
-		push_warning(
-			"NavGridMap.load_chunk: skipped %d invalid cell(s) in chunk %s."
-			% [skipped, chunk]
-		)
+	return skipped
 
-	var affected: Array[Vector3i] = []
 
-	if build_navigation:
-		affected = _refresh_nav_region(touched)
-		_nav_chunks[chunk] = true
-	else:
-		_nav_chunks.erase(chunk)
+## Version-2 loader: compressed 3D section blob.
+func _load_section_cells(
+	chunk: Vector2i,
+	data: Dictionary,
+	valid_items: PackedInt32Array,
+	touched: Array[Vector3i]
+) -> int:
+	var blob_value: Variant = data.get("sections", PackedByteArray())
 
-	_dirty_chunks.erase(chunk)
+	if blob_value is not PackedByteArray:
+		push_error("NavGridMap.load_chunk: sections must be PackedByteArray.")
+		return 0
 
-	if emit_nav_signal and not affected.is_empty():
-		navigation_changed.emit(affected)
+	var entries: Array[Dictionary] = VoxelSectionStoreScript.decode_column_compressed(
+		chunk,
+		blob_value
+	)
+	var skipped: int = 0
 
-	chunk_loaded.emit(chunk)
+	for entry: Dictionary in entries:
+		var cell: Vector3i = entry.get("position", Vector3i.ZERO)
+		var item: int = int(entry.get("item", -1))
+		var orientation: int = int(entry.get("orientation", 0))
+
+		if cell.y < min_block_y or cell.y > max_block_y:
+			skipped += 1
+			continue
+
+		if not valid_items.has(item):
+			skipped += 1
+			continue
+
+		_track_cell_values(cell, item, orientation)
+		touched.append(cell)
+
+	return skipped
 
 
 ## Adds a loaded chunk's cells to the AStar graph. Use this when a chunk first
@@ -3059,20 +3367,73 @@ func build_chunk_navigation(
 	if _nav_chunks.has(chunk):
 		return
 
-	var cells: Array[Vector3i] = []
-	var source: Dictionary = _chunk_cells.get(chunk, {})
-
-	for cell: Vector3i in source:
-		cells.append(cell)
+	var cells: Array[Vector3i] = _sections.get_column_cell_list(chunk)
 
 	if cells.is_empty():
 		return
 
-	var affected: Array[Vector3i] = _refresh_nav_region(cells)
+	# This is an initial build, not an edit: add the chunk's walkable cells and
+	# connect them to existing neighbours. Refreshing the full expanded region
+	# here was ~134 ms per chunk because every cell recomputed 24 wall/gap
+	# lookups. Only the chunk border needs a weight refresh for old neighbours.
+	var origin: Vector2i = NavGridMap.chunk_origin(chunk)
+	var border: Array[Vector3i] = []
+	_nav_snapshot_begin()
+
+	for cell: Vector3i in cells:
+		var walkable: bool = _is_walkable(cell)
+		var registered: bool = cell_to_id_map.has(cell)
+
+		if walkable and not registered:
+			_add_nav_cell(cell)
+		elif not walkable and registered:
+			_remove_nav_cell(cell)
+		elif walkable and registered:
+			_refresh_nav_cell(cell)
+
+		var local_x: int = cell.x - origin.x
+		var local_z: int = cell.z - origin.y
+
+		if (
+			local_x == 0
+			or local_x == NavGridMap.CHUNK_SIZE - 1
+			or local_z == 0
+			or local_z == NavGridMap.CHUNK_SIZE - 1
+		):
+			border.append(cell)
+
+	for cell: Vector3i in border:
+		_refresh_point_weights_around(cell)
+
+	# Re-check connections for the first ring outside the new chunk: a new block
+	# at the border can invalidate a diagonal between two older nav points.
+	var outer: Dictionary = {}
+
+	for cell: Vector3i in border:
+		for offset: Vector3i in [
+			Vector3i.LEFT,
+			Vector3i.RIGHT,
+			Vector3i.FORWARD,
+			Vector3i.BACK,
+		]:
+			var neighbor: Vector3i = cell + offset
+
+			if cell_to_id_map.has(neighbor):
+				outer[neighbor] = true
+
+	if not outer.is_empty():
+		var outer_cells: Array[Vector3i] = []
+		for cell: Vector3i in outer:
+			outer_cells.append(cell)
+		_rebuild_nav_connections(outer_cells)
+
+	_invalidate_flow_fields(cells)
+	_nav_snapshot_end()
+
 	_nav_chunks[chunk] = true
 
-	if emit_nav_signal and not affected.is_empty():
-		navigation_changed.emit(affected)
+	if emit_nav_signal and not cells.is_empty():
+		navigation_changed.emit(cells)
 
 
 func is_chunk_navigation_loaded(chunk: Vector2i) -> bool:
@@ -3126,7 +3487,7 @@ func save_dirty_chunks(writer: Callable) -> int:
 func save_all_chunks(writer: Callable) -> int:
 	var chunks_to_save: Dictionary = {}
 
-	for chunk: Vector2i in _chunk_cells:
+	for chunk: Vector2i in _sections.get_column_chunks():
 		chunks_to_save[chunk] = true
 
 	for chunk: Vector2i in _dirty_chunks:
@@ -3142,17 +3503,16 @@ func save_all_chunks(writer: Callable) -> int:
 	return saved
 
 
-## Clears every block in a chunk from the GridMap and the index. Returns the cells
-## that were removed so the caller can refresh navigation for them.
+## Clears every block in a chunk from the packed index. Returns the cells that
+## were removed so the caller can refresh navigation for them.
 func _wipe_chunk(chunk: Vector2i) -> Array[Vector3i]:
-	var removed: Array[Vector3i] = []
-	var cells: Dictionary = _chunk_cells.get(chunk, {})
+	var removed: Array[Vector3i] = _sections.get_column_cell_list(chunk)
 
-	for key: Vector3i in cells:
-		removed.append(key)
-		set_cell_item(key, GridMap.INVALID_CELL_ITEM)
+	if _grid_mirror_enabled:
+		for key: Vector3i in removed:
+			set_cell_item(key, GridMap.INVALID_CELL_ITEM)
 
-	_chunk_cells.erase(chunk)
+	_sections.clear_column(chunk)
 	_chunk_min_y.erase(chunk)
 
 	return removed

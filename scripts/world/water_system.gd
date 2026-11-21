@@ -92,6 +92,9 @@ const VIVID_PALETTE: Array[Color] = [
 ## World-space distance between wave samples.
 @export var wave_step: float = 0.125
 @export var wave_update_interval: float = 0.05
+## Crest/wake mesh updates are cheaper than simulation but still cost ~3 ms on
+## a large pool. 10 Hz looks continuous against 20 Hz simulation.
+@export var wave_mesh_interval: float = 0.1
 @export var wave_speed: float = 1.4
 @export_range(0.9, 1.0, 0.001) var wave_damping: float = 0.995
 @export var wave_crest_threshold: float = 0.005
@@ -132,6 +135,16 @@ var _tick_accum: float = 0.0
 var _mesh_accum: float = 0.0
 var _global_accum: float = 0.0
 var _global_dirty: bool = true
+## Incremental hydrostatic pass state. A large body is scanned over several
+## frames instead of one 17–30 ms spike.
+var _eq_active: bool = false
+var _eq_keys: Array = []
+var _eq_key_index: int = 0
+var _eq_visited: Dictionary = {}
+var _eq_queue: Array[Vector3i] = []
+var _eq_body: Array[Vector3i] = []
+var _eq_start_y: int = 0
+var _eq_expanded: bool = false
 ## One water/foam/corner mesh pair per 16x16 grid chunk, so a change only
 ## rebuilds the chunks it touches and the renderer can frustum-cull them
 ## independently.
@@ -164,6 +177,7 @@ var _wave_layer_y: int = 0
 var _wave_bounds_min := Vector2i.ZERO
 var _wave_bounds_max := Vector2i.ZERO
 var _wave_accum: float = 0.0
+var _wave_mesh_accum: float = 0.0
 var _wave_layout_accum: float = 0.0
 var _ambient_wave_accum: float = 0.0
 var _brush_accum: float = 0.0
@@ -176,6 +190,7 @@ var _splash_nodes: Array[Sprite3D] = []
 var _splash_ripples: Array[Dictionary] = []
 var _splash_ripple_instance: MeshInstance3D = null
 var _splash_surface_accum: float = 0.0
+var _splash_ripple_accum: float = 0.0
 var _air_y: Dictionary = {}
 
 
@@ -192,7 +207,7 @@ func setup(grid) -> void:
 func _on_block_changed(cell: Vector3i, _item: int = -1) -> void:
 	_bounds_scratch.clear()
 	# A full block placed into a water cell displaces the water.
-	if _grid.get_cell_item(cell) != -1 and not _is_waterloggable(cell):
+	if _grid.get_block_item(cell) != -1 and not _is_waterloggable(cell):
 		if _cells.erase(cell):
 			_mark_cell_dirty(cell)
 			_dirty = true
@@ -229,14 +244,21 @@ func _process(delta: float) -> void:
 	# a large body. A periodic hydrostatic pass removes any leftover gradient
 	# in one step: lower layers fill first, the top layer evens out.
 	_global_accum += delta
-	if _global_accum >= global_equalize_interval:
+	if _eq_active:
+		_equalize_all_bodies()
+	elif _global_accum >= global_equalize_interval:
 		_global_accum = 0.0
 		if _global_dirty:
 			_equalize_all_bodies()
 
 	_update_waves(delta)
 	_update_splash_particles(delta)
-	_update_splash_ripples(delta)
+	_splash_ripple_accum += delta
+
+	if _splash_ripple_accum >= 0.05:
+		var ripple_step: float = _splash_ripple_accum
+		_splash_ripple_accum = 0.0
+		_update_splash_ripples(ripple_step)
 
 	_splash_surface_accum += delta
 	if (
@@ -276,7 +298,7 @@ func _update_waves(delta: float) -> void:
 		return
 
 	_wave_layout_accum += delta
-	if _wave_layout_accum >= 0.5:
+	if _wave_layout_accum >= 1.0:
 		_wave_layout_accum = 0.0
 		var info := _dominant_layer_info()
 		if info.is_empty():
@@ -305,6 +327,7 @@ func _update_waves(delta: float) -> void:
 		_inject_entity_brushes()
 
 	_wave_accum += delta
+	_wave_mesh_accum += delta
 	var stepped := false
 	var steps := 0
 	while _wave_accum >= wave_update_interval and steps < 3:
@@ -313,7 +336,8 @@ func _update_waves(delta: float) -> void:
 		steps += 1
 		stepped = true
 
-	if stepped:
+	if stepped and _wave_mesh_accum >= wave_mesh_interval:
+		_wave_mesh_accum = 0.0
 		_rebuild_wave_crest_mesh()
 
 
@@ -1073,7 +1097,7 @@ func _add_splash_ripple(
 		"strength": 0.85,
 		"max_radius": 0.55 * ripple_scale,
 	})
-	while _splash_ripples.size() > 24:
+	while _splash_ripples.size() > 12:
 		_splash_ripples.pop_front()
 
 
@@ -1201,9 +1225,13 @@ func _spawn_surface_water_particles() -> void:
 	if _cells.is_empty():
 		return
 
-	var candidates: Array[Vector3i] = []
-	for key in _cells.keys():
-		var candidate_cell: Vector3i = key
+	# Ambient droplets only need one valid surface cell. Scanning every water
+	# cell here cost ~17 ms on a 2,000-cell pool; sample a few candidates.
+	var keys: Array = _cells.keys()
+	var attempts: int = mini(8, keys.size())
+
+	for _attempt in attempts:
+		var candidate_cell: Vector3i = keys[randi() % keys.size()]
 		var height := get_height(candidate_cell)
 		if height < 0.9 or height > 1.1:
 			continue
@@ -1213,16 +1241,12 @@ func _spawn_surface_water_particles() -> void:
 			continue
 		if _is_covered_above(candidate_cell):
 			continue
-		candidates.append(candidate_cell)
 
-	if candidates.is_empty():
+		var local: Vector3 = _grid.map_to_local(candidate_cell)
+		local.y = _water_top(candidate_cell, _grid.cell_size)
+		var world: Vector3 = _grid.to_global(local)
+		_spawn_splash(world, 2, 0.12, 0.015)
 		return
-
-	var cell: Vector3i = candidates[randi() % candidates.size()]
-	var local: Vector3 = _grid.map_to_local(cell)
-	local.y = _water_top(cell, _grid.cell_size)
-	var world: Vector3 = _grid.to_global(local)
-	_spawn_splash(world, 2, 0.12, 0.015)
 
 
 # ---------------------------------------------------------------------------
@@ -1384,7 +1408,7 @@ func get_pick_item(cell: Vector3i) -> int:
 func _is_covered_above(cell: Vector3i) -> bool:
 	if get_height(cell + Vector3i.UP) > 0:
 		return true
-	return _grid.get_cell_item(cell + Vector3i.UP) != -1
+	return _grid.get_block_item(cell + Vector3i.UP) != -1
 
 
 # ---------------------------------------------------------------------------
@@ -1721,61 +1745,108 @@ func _equalize(cell: Vector3i, height: float) -> void:
 		_dirty = true
 
 
-## Hydrostatic pass over every connected water body. Filling the lowest Y
-## layers first and then spreading the remainder across the top layer removes
-## wide gradients that per-cell diffusion would take a long time to flatten.
+## Hydrostatic pass over every connected water body, spread across frames. The
+## body BFS and levelling stop at a small time budget and resume next frame, so
+## a large pool cannot produce a 17–30 ms hitch.
 func _equalize_all_bodies() -> void:
 	if _cells.is_empty():
 		_global_dirty = false
+		_eq_reset()
 		return
 
-	_bounds_scratch.clear()
+	if not _eq_active:
+		_bounds_scratch.clear()
+		_eq_keys = _cells.keys()
+		_eq_key_index = 0
+		_eq_visited.clear()
+		_eq_queue.clear()
+		_eq_body.clear()
+		_eq_expanded = false
+		_eq_active = true
+		# Detect changes made while this pass runs.
+		_global_dirty = false
 
-	# The pass itself writes heights through _set_height, which marks the flag;
-	# clear it at the end so a settled body is not re-scanned every interval.
-	_global_dirty = false
-	var expanded := false
-	var visited: Dictionary = {}
-	for key in _cells.keys():
-		var start: Vector3i = key
-		if visited.has(start):
-			continue
-		if get_height(start) <= 0.0001:
-			continue
+	var start_usec: int = Time.get_ticks_usec()
+	var budget_usec: int = 2000
+	var processed: int = 0
 
-		var body: Array[Vector3i] = []
-		var queue: Array[Vector3i] = [start]
-		visited[start] = true
+	while _eq_key_index < _eq_keys.size():
+		if _eq_queue.is_empty() and _eq_body.is_empty():
+			var start := NO_CELL
 
-		while not queue.is_empty():
-			var cell: Vector3i = queue.pop_back()
-			body.append(cell)
+			while _eq_key_index < _eq_keys.size():
+				var key: Vector3i = _eq_keys[_eq_key_index]
+				_eq_key_index += 1
+
+				if _eq_visited.has(key):
+					continue
+				if get_height(key) <= 0.0001:
+					continue
+
+				start = key
+				break
+
+			if start == NO_CELL:
+				break
+
+			_eq_start_y = start.y
+			_eq_visited[start] = true
+			_eq_queue.append(start)
+
+		while not _eq_queue.is_empty():
+			var cell: Vector3i = _eq_queue.pop_back()
+			_eq_body.append(cell)
+			processed += 1
 
 			# Only level water within the same Y layer. Vertical movement is
-			# gravity's job; connecting through higher layers made the global
-			# pass look like it was equalizing through walls.
+			# gravity's job; connecting through higher layers looked like
+			# equalizing through walls.
 			for direction: int in WALL_FACES:
 				var neighbour := cell + FACE_NORMALS[direction]
-				if neighbour.y != start.y:
+
+				if neighbour.y != _eq_start_y:
 					continue
-				if visited.has(neighbour):
+				if _eq_visited.has(neighbour):
 					continue
 				if not _cells.has(neighbour):
 					continue
-				if not _is_waterloggable(neighbour):
-					continue
 				if get_height(neighbour) <= 0.0001:
 					continue
-				visited[neighbour] = true
-				queue.append(neighbour)
 
-		if body.size() >= 2:
-			if _level_body(body):
-				expanded = true
+				_eq_visited[neighbour] = true
+				_eq_queue.append(neighbour)
 
-	# Adding a ring of cells can open up candidates for the next ring; keep the
-	# pass armed until the film has grown as far as its volume allows.
-	_global_dirty = expanded
+			if (
+				(processed & 63) == 0
+				and Time.get_ticks_usec() - start_usec >= budget_usec
+			):
+				_global_dirty = true
+				return
+
+		if _eq_body.size() >= 2:
+			if _level_body(_eq_body):
+				_eq_expanded = true
+
+		_eq_body.clear()
+
+		if Time.get_ticks_usec() - start_usec >= budget_usec:
+			_global_dirty = true
+			return
+
+	_eq_active = false
+	_eq_keys.clear()
+	_eq_visited.clear()
+	_global_dirty = _eq_expanded or _global_dirty
+
+
+func _eq_reset() -> void:
+	_eq_active = false
+	_eq_keys.clear()
+	_eq_key_index = 0
+	_eq_visited.clear()
+	_eq_queue.clear()
+	_eq_body.clear()
+	_eq_expanded = false
 
 
 func _level_body(body: Array[Vector3i]) -> bool:
@@ -1943,14 +2014,14 @@ func _is_below_world_floor(cell: Vector3i) -> bool:
 
 
 func _is_blocking(cell: Vector3i) -> bool:
-	var item: int = _grid.get_cell_item(cell)
+	var item: int = _grid.get_block_item(cell)
 	if item == -1:
 		return false
 	return not _is_waterloggable_item(item)
 
 
 func _is_waterloggable(cell: Vector3i) -> bool:
-	var item: int = _grid.get_cell_item(cell)
+	var item: int = _grid.get_block_item(cell)
 	return item == -1 or _is_waterloggable_item(item)
 
 
@@ -1985,7 +2056,7 @@ func _is_waterloggable_item(item: int) -> bool:
 func _water_bounds(cell: Vector3i) -> Vector2:
 	if _bounds_scratch.has(cell):
 		return _bounds_scratch[cell]
-	var bounds := _water_bounds_for_item(_grid.get_cell_item(cell))
+	var bounds := _water_bounds_for_item(_grid.get_block_item(cell))
 	_bounds_scratch[cell] = bounds
 	return bounds
 
@@ -2369,7 +2440,7 @@ func _add_horizontal_faces(
 	var bottom_hidden: bool = (
 		_water_base(cell) > 0.0001
 		or get_height(below) > 0
-		or _grid.get_cell_item(below) != -1
+		or _grid.get_block_item(below) != -1
 	)
 	if not bottom_hidden:
 		_add_quad(
@@ -2384,7 +2455,7 @@ func _add_horizontal_faces(
 	for direction: int in WALL_FACES:
 		var neighbour := cell + FACE_NORMALS[direction]
 		# Solid blocks hide their side of the water.
-		if _grid.get_cell_item(neighbour) != -1:
+		if _grid.get_block_item(neighbour) != -1:
 			continue
 
 		var neighbour_height := get_height(neighbour)

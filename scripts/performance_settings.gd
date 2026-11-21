@@ -241,13 +241,13 @@ func apply_all() -> void:
 		80.0 if quality == 0 else (120.0 if quality == 1 else 150.0)
 	)
 	FOLIAGE_SWAY_SCRIPT.max_view_distance = foliage_distance
+	FOLIAGE_SWAY_SCRIPT.mid_view_distance = foliage_distance * 0.5
 	for plant in tree.get_nodes_in_group("foliage"):
-		for sprite in plant.find_children("*", "Sprite3D", true, false):
-			sprite.visibility_range_end = foliage_distance
-			sprite.visibility_range_end_margin = minf(
-				20.0,
-				foliage_distance * 0.15
-			)
+		FOLIAGE_SWAY_SCRIPT.apply_distance_settings(
+			plant,
+			foliage_distance,
+			foliage_distance * 0.5
+		)
 
 	for node in tree.get_nodes_in_group("sun_light"):
 		if node is DirectionalLight3D:

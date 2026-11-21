@@ -190,6 +190,15 @@ func clear_all_defaults() -> void:
 	save_defaults()
 
 
+## Captures every live runtime export — global values, agent overrides, Random
+## Populate and optimizer configuration — as the defaults new saves start from.
+func save_live_as_defaults() -> void:
+	var live := collect_live()
+	live.erase("version")
+	defaults = live
+	save_defaults()
+
+
 # ---------------------------------------------------------------------------
 # Live capture and restore
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ how the evacuation went.
 ## Requirements
 
 - **Godot 4.7.2** (project features `4.7`, `mobile` renderer, Jolt physics).
+  `mobile` is a desktop GPU-cost choice, not a phone-port commitment.
 - Windows is the tested platform; the input map assumes keyboard + mouse.
 
 ## Run it
@@ -28,7 +29,8 @@ how the evacuation went.
 1. Open the project folder in Godot and press **F5**.
 2. The game boots into the 3D main menu.
    - **Saves** → pick a slot, then **Load Selected**, or **New Map...** for a
-     blank starter platform.
+     Blank Platform or Heightmap Terrain. **World Type** opens the shared World
+     Settings dialog (type, size, seed).
    - **Extras** → Credits · **Settings** → Graphics / Gameplay / Audio.
 3. In game, open the inventory (**R**) → **Placeables** and place a
    `Spawner` and an `Evac Point`.
@@ -104,10 +106,14 @@ godot --headless --path . res://tests/demo_restore_test.tscn
 godot --headless --path . res://tests/recording_control_test.tscn
 ```
 
-Expected: `51`, `18`, `27`, `52`, `7`, `28`, `22` and `31` checks with
-`failures=0` - 236 assertions in total. The phase-2 test records and deletes its
-own demo; the restore and recording tests use temporary demo folders and clean
-them up. Details in [`tests/README.md`](tests/README.md).
+Expected: `51`, `18`, `27`, `151`, `72`, `7`, `28`, `22` and `31` checks with
+`failures=0` - 407 optimizer/demo assertions. The phase-2 test records and
+deletes its own demo; the restore and recording tests use temporary demo folders
+and clean them up. Details in [`tests/README.md`](tests/README.md).
+
+Procgen foundation (124 assertions): `procgen_test.gd` 50,
+`chunk_store_test.gd` 38, `heightmap_generator_test.gd` 36 - run the same way
+with `--script res://tests/...`.
 
 ## Documentation
 
@@ -120,6 +126,7 @@ them up. Details in [`tests/README.md`](tests/README.md).
 - [`docs/DEMOS.md`](docs/DEMOS.md) — per-save demo library, in-map player and comparer.
 - [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md) — design for the missing decision layer: contracts, objective, algorithm order, roadmap.
 - [`docs/MAIN_MENU_AND_CREDITS.md`](docs/MAIN_MENU_AND_CREDITS.md) — menu, saves, music, credits.
+- [`docs/RENDERER_AND_ENGINE.md`](docs/RENDERER_AND_ENGINE.md) — renderer/engine decision: stay on `mobile`, profiler evidence, godot_voxel and rimworld3d review.
 - [`docs/archive/`](docs/archive/) — dated changelog, verification log, earlier analyses.
 
 ## Repository layout
@@ -144,4 +151,11 @@ them up. Details in [`tests/README.md`](tests/README.md).
   Phased plan in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md).
 - Kinematic agents do not collide with the world; contact is a soft force.
 - Exit throughput/capacity are policy models, not door geometry.
-- Full 64-chunk world generation is memory-bound and disabled.
+- Procgen: **New Map → World Type → World Settings** creates a bounded
+  `HeightmapTerrainGenerator` world (128/256/384) in both the main menu and the
+  pause menu. The cell store is packed 3D sections and the runtime GridMap mirror
+  is dropped. Distance LOD (full ≤8 chunks, 2× ≤14, 4× beyond) with far-collision
+  gating is **opt-in** via `/lod on`, so existing saves keep their full-detail
+  look. Generation and the final save flush are still main-thread, so a Large
+  (384×384) world takes ~17 s one-time; a 64-chunk generated distance still needs
+  worker threads.

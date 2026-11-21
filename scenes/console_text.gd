@@ -95,6 +95,8 @@ func _process_command(cmd_line: String) -> void:
 				out.print_to_console("  setglobalunitcap <int>   - Sets the global unit cap.")
 				out.print_to_console("  debug_greedy [on|off]   - Toggles debug greedy-mesh colours.")
 				out.print_to_console("  ao [on|off]             - Toggles baked voxel-corner ambient occlusion.")
+				out.print_to_console("  lod [on|off]            - Toggles distance LOD for the chunk mesher.")
+				out.print_to_console("  slabs                    - Adds half-step bottom slabs to the loaded world's risers.")
 				out.print_to_console("  path_mode [astar|flow]  - Switches between A* and baked flow fields.")
 				out.print_to_console("  show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
 				out.print_to_console("  clear                   - Clears the console window.")
@@ -140,6 +142,44 @@ func _process_command(cmd_line: String) -> void:
 					out.print_to_console(
 						"Baked voxel AO: %s"
 						% ("ON (greedy merging deferred)" if enabled else "OFF")
+					)
+
+		"lod", "lod_enabled":
+			var grid = get_tree().get_first_node_in_group("grid_map")
+			if grid == null:
+				if out:
+					out.print_to_console("Error: no grid map found.")
+			else:
+				var mesher = grid.get_mesher()
+
+				if mesher == null:
+					if out:
+						out.print_to_console("No chunk mesher is active.")
+				else:
+					var enabled: bool = _resolve_toggle(args, mesher.is_lod_enabled())
+					var streamer = get_tree().get_first_node_in_group("chunk_streamer")
+
+					if streamer != null:
+						streamer.lod_override = 1 if enabled else 0
+
+					mesher.set_lod_enabled(enabled)
+
+					if out:
+						out.print_to_console(
+							"Distance LOD: %s" % ("ON" if enabled else "OFF")
+						)
+
+		"slabs", "step_slabs":
+			var grid = get_tree().get_first_node_in_group("grid_map")
+			if grid == null:
+				if out:
+					out.print_to_console("Error: no grid map found.")
+			else:
+				var placed: int = grid.add_step_slabs(46)
+
+				if out:
+					out.print_to_console(
+						"Step slabs: %d added." % placed
 					)
 
 		"path_mode", "pathfinding", "flowfields", "flow_fields":

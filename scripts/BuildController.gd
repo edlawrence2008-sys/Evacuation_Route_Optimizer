@@ -637,14 +637,14 @@ func _placeable_has_voxel_support(hit: Dictionary) -> bool:
 	var normal: Vector3 = hit.get("normal", Vector3.DOWN)
 	if normal.y <= 0.5:
 		return false
-	if hit.get("collider") != grid_map:
+	if not _is_grid_collider(hit.get("collider")):
 		return false
 
 	var support_cell: Vector3i = grid_map.get_hit_cell(
 		hit.get("position", Vector3.ZERO),
 		normal
 	)
-	return grid_map.get_cell_item(support_cell) != GridMap.INVALID_CELL_ITEM
+	return grid_map.get_block_item(support_cell) != GridMap.INVALID_CELL_ITEM
 
 
 func _scene_grid_offset(instance: Node) -> Vector2:
@@ -671,7 +671,7 @@ func _update_face_indicator() -> void:
 			return
 
 	var hit := _get_build_hit()
-	if hit.is_empty() or hit.collider != grid_map:
+	if hit.is_empty() or not _is_grid_collider(hit.collider):
 		_hide_face_indicator()
 		return
 
@@ -897,7 +897,7 @@ func _begin_area(destroying: bool) -> void:
 			_area_anchor = grid_map.local_to_map(
 				grid_map.to_local((placeable as Node3D).global_position)
 			)
-		elif hit.collider == grid_map:
+		elif _is_grid_collider(hit.collider):
 			_area_anchor = hit_cell
 		else:
 			return
@@ -1664,6 +1664,21 @@ func _cell_preview_origin(cell: Vector3i) -> Vector3:
 
 	return position
 
+## Grid collision comes from the GridMap itself (editor/preview) or from a
+## per-chunk StaticBody3D tagged with the owning grid.
+func _is_grid_collider(collider: Object) -> bool:
+	if collider == null:
+		return false
+
+	if collider == grid_map:
+		return true
+
+	if collider is Node and (collider as Node).has_meta("nav_grid"):
+		return (collider as Node).get_meta("nav_grid") == grid_map
+
+	return false
+
+
 func _find_placeable_ancestor(collider: Object) -> Node:
 	var node: Node = collider as Node
 
@@ -1956,11 +1971,11 @@ func _pick_aimed() -> void:
 		_update_build_ui()
 		return
 
-	if hit.collider != grid_map:
+	if not _is_grid_collider(hit.collider):
 		return
 
 	var cell: Vector3i = grid_map.get_hit_cell(hit.position, hit.normal)
-	var item: int = grid_map.get_cell_item(cell)
+	var item: int = grid_map.get_block_item(cell)
 	var water := _get_water_system()
 	var water_item: int = water.get_pick_item(cell) if water != null else -1
 	var picked := -1

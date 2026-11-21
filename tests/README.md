@@ -16,6 +16,9 @@ godot --headless --path . res://tests/optimizer_scale_test.tscn
 godot --headless --path . --script res://tests/demo_ui_test.gd
 godot --headless --path . res://tests/demo_restore_test.tscn
 godot --headless --path . res://tests/recording_control_test.tscn
+godot --headless --path . --script res://tests/procgen_test.gd
+godot --headless --path . --script res://tests/chunk_store_test.gd
+godot --headless --path . --script res://tests/heightmap_generator_test.gd
 godot --headless --path . --script res://tests/optimizer_benchmark.gd
 ```
 
@@ -30,9 +33,12 @@ godot --headless --path . --script res://tests/optimizer_benchmark.gd
 | `demo_ui_test.gd` | Demo Player/Comparer transport-bar horizontal scroll, comparer per-demo/final tables, verdict and collapsed details | `checks=28 failures=0` |
 | `demo_restore_test.tscn` | Load State restore: serials/speeds/positions/pre-movement/counters, exit totals, evacuation-history replay, serial floor, and a spawner that keeps spawning within its restored quota; verifies the player row-index mirror | `checks=22 failures=0` |
 | `recording_control_test.tscn` | Runtime-export capture/restore (including Vector3 JSON round-trip), per-save manifest block, placeable child-script and Vector3 exports, continuation demo prefix copy, combined summary, manual start/stop and quota-completion auto-finalize | `checks=31 failures=0` |
+| `procgen_test.gd` | `VoxelSectionStore`: sparse and dense encodings, palette growth and >256 overflow, dense↔sparse hysteresis, negative/extreme Y, min/max, deterministic serialization, ZSTD round-trip, malformed blobs, memory ceilings; `FlatGenerator`'s 80-cell platform; `WorldRecipe` determinism and manifest | `checks=50 failures=0` |
+| `chunk_store_test.gd` | Real `NavGridMap` v2 section round-trip, v1 legacy load and upgrade-on-save, `WorldRecipe` → `load_chunk`, `ChunkFileStore` disk round-trip, section-index memory, dropped runtime GridMap mirror, per-chunk collision body and physics ray, compressed section fast import (dense and sparse), cells+items read, and the `/slabs` retrofit (placement and idempotence) | `checks=38 failures=0` |
+| `heightmap_generator_test.gd` | Heightmap terrain: hard one-block-per-cell slope guarantee, half-step bottom-slab placement on every lower side of a step, footprint bounds, determinism across instances and repeated calls, `get_params`/`apply_params` round-trip, 256×256 generation cost, store size, per-chunk collision cost on a real grid, render LOD levels and far-collision gating, cross-chunk navigation, and end-to-end `ChunkStreamer.world_recipe` generation | `checks=36 failures=0`; prints generation, store and collision timings |
 | `optimizer_benchmark.gd` | Timing only: 600 agents in 40 cohorts against 4 exits | Prints setup/algorithm timings; no assertions |
 
-Total: **407 assertions** across nine harnesses.
+Total: **531 assertions** across twelve harnesses.
 
 Notes:
 

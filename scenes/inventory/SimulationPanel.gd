@@ -56,6 +56,33 @@ func _ready() -> void:
 	_sync_from_state()
 
 
+func _exit_tree() -> void:
+	# These autoloads outlive the panel. Disconnect while the node is still
+	# valid so a finalize/scene-change update cannot run after detaching, when
+	# `get_tree()` is already null.
+	if SimRecorder.recording_state_changed.is_connected(_on_recording_state_changed):
+		SimRecorder.recording_state_changed.disconnect(_on_recording_state_changed)
+
+	if RuntimeExports.runtime_exports_applied.is_connected(_on_run_state_changed):
+		RuntimeExports.runtime_exports_applied.disconnect(_on_run_state_changed)
+
+	for signal_ref: Signal in [
+		GlobalData.spawning_reset,
+		GlobalData.spawning_started,
+		GlobalData.spawning_stopped,
+		GlobalData.spawning_paused,
+		GlobalData.spawning_resumed,
+	]:
+		if signal_ref.is_connected(_on_run_state_changed):
+			signal_ref.disconnect(_on_run_state_changed)
+
+	if GlobalData.npc_spawned.is_connected(_on_npc_count_changed):
+		GlobalData.npc_spawned.disconnect(_on_npc_count_changed)
+
+	if GlobalData.npc_evacuated.is_connected(_on_npc_count_changed):
+		GlobalData.npc_evacuated.disconnect(_on_npc_count_changed)
+
+
 func _process(delta: float) -> void:
 	if not visible:
 		return
@@ -206,6 +233,9 @@ func _on_npc_count_changed(_total: int) -> void:
 
 func _update_status(keep_message: bool = false) -> void:
 	if keep_message:
+		return
+
+	if not is_inside_tree():
 		return
 
 	var quota: int = GlobalData.get_total_max_spawns()

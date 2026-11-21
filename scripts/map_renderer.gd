@@ -18,9 +18,9 @@ static func collect_columns(grid: NavGridMap) -> Dictionary:
 	var columns: Dictionary = {}
 
 	for chunk: Vector2i in grid.get_populated_chunks():
-		var cells: Dictionary = grid.get_chunk_cells(chunk)
+		var cells: Array[Vector3i] = grid.get_chunk_cell_list(chunk)
 		for cell: Vector3i in cells:
-			var item: int = grid.get_cell_item(cell)
+			var item: int = grid.get_block_item(cell)
 			if item == -1:
 				continue
 			var key := Vector2i(cell.x, cell.z)

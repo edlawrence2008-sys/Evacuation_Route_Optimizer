@@ -12,6 +12,7 @@ extends RefCounted
 ##   no runtime light cost). Greedy merging is skipped while AO is on.
 
 const CUBE_TOLERANCE: float = 0.02
+const NO_CHUNK: Vector2i = Vector2i(2147483647, 2147483647)
 
 ## Tiles per atlas axis for connected textures (16 x 16 = 256 masks).
 const CTM_ATLAS_GRID: int = 16
@@ -36,9 +37,29 @@ const NEIGHBOR_CHUNKS: Array[Vector2i] = [
 ]
 
 @export var build_budget_usec: int = 4000
+## Hard cap on chunks rebuilt in one process frame. 0 = only the time budget
+## applies. Generated worlds set 1 so a heavy chunk cannot pair with a second
+## chunk and double the frame cost.
+@export var max_builds_per_frame: int = 0
 ## 0 keeps every populated chunk meshed. A positive radius only meshes chunks
 ## within that many chunk columns of the current view centre.
 @export var mesh_radius_chunks: int = 0
+## Build a per-chunk trimesh collision body from the committed mesh. This is
+## what replaces GridMap's per-cell collision once the runtime mirror is
+## cleared. Collision follows the mesh radius, so it is always present for
+## chunks an agent or the player can reach.
+@export var build_collision: bool = true
+## Chunks within this distance render at full detail and own collision.
+@export var lod0_radius_chunks: int = 8
+## Full-detail chunks beyond this distance skip baked AO and merge greedily.
+@export var ao_radius_chunks: int = 3
+## Chunks within this distance render at mid detail (4x downsampled
+## heightfield, no collision). Beyond it they use far detail (8x).
+@export var lod1_radius_chunks: int = 14
+## Cheap far-LOD chunks built in addition to the one full-detail chunk per
+## frame, so the outer ring does not lag behind the player.
+@export var max_lod_builds_per_frame: int = 4
+@export var lod_build_budget_usec: int = 2500
 
 var debug_colors: bool = false
 ## Bakes classic voxel-corner AO into the chunk mesh vertex colours. While this
@@ -56,6 +77,21 @@ var _item_part_cache: Dictionary = {}
 var _item_ao_material_cache: Dictionary = {}
 var _running: bool = false
 var _view_center: Vector2i = Vector2i.ZERO
+var _collision_nodes: Dictionary = {}
+var _spawn_chunk_built: bool = false
+## LOD is opt-in: generated worlds enable it, ordinary maps keep the previous
+## all-full-detail look.
+var _lod_enabled: bool = false
+## chunk -> current LOD (0 full, 1 mid 4x, 2 far 8x).
+var _chunk_lod: Dictionary = {}
+## chunk -> {step: {local coarse key: {y, item}}}. Built once and reused when a
+## chunk changes LOD band; far LOD meshes should not rescan 16x16xN cells.
+var _lod_columns: Dictionary = {}
+## Suppresses baked AO for coarse heightfield LOD meshes.
+var _suppress_ao: bool = false
+## Collision instrumentation: total time spent in `create_trimesh_shape()`.
+var collision_build_usec: int = 0
+var collision_builds: int = 0
 
 var _debug_material: StandardMaterial3D = null
 var _debug_faces: int = 0
@@ -82,7 +118,7 @@ class MeshSurface:
 class ChunkSnapshot:
 	var chunk: Vector2i
 	var cells: Array[Vector3i] = []
-	var items: Dictionary = {}
+	var item_values: Array[int] = []
 
 
 func _init(grid: NavGridMap) -> void:
@@ -117,6 +153,15 @@ func start() -> void:
 
 	_grid.visible = false
 	_running = true
+	_spawn_chunk_built = false
+	_lod_columns.clear()
+
+	if not build_collision:
+		push_warning(
+			"ChunkMesher: build_collision is disabled. The runtime GridMap "
+			+ "mirror is dropped, so the world will have no collision."
+		)
+
 	queue_all()
 
 
@@ -137,6 +182,7 @@ func stop() -> void:
 		_root.queue_free()
 
 	_chunk_nodes.clear()
+	_collision_nodes.clear()
 	_dirty.clear()
 
 
@@ -147,21 +193,84 @@ func process() -> void:
 	if _root.global_transform != _grid.global_transform:
 		_root.global_transform = _grid.global_transform
 
+	# Build the spawn chunk immediately so the player has collision on the
+	# first frame after the runtime GridMap mirror is cleared.
+	if build_collision and not _spawn_chunk_built:
+		_spawn_chunk_built = true
+
+		if _within_mesh_radius(_view_center):
+			_dirty.erase(_view_center)
+			_rebuild_chunk(_view_center)
+
 	if _dirty.is_empty():
 		return
 
 	var start_usec: int = Time.get_ticks_usec()
-	var chunks: Array = _dirty.keys()
-	# Newest edits are queued last; process them first so placed/removed blocks
-	# show up immediately instead of waiting behind streamed chunks.
-	chunks.reverse()
+	var built: int = 0
 
-	for chunk: Vector2i in chunks:
+	# Full-detail chunks: nearest first, hard cap one for generated worlds.
+	while not _dirty.is_empty():
+		var chunk: Vector2i = _nearest_dirty_chunk(true)
+
+		if chunk == NO_CHUNK:
+			break
+
 		_dirty.erase(chunk)
 		_rebuild_chunk(chunk)
+		built += 1
+
+		if (
+			max_builds_per_frame > 0
+			and built >= max_builds_per_frame
+		):
+			break
 
 		if Time.get_ticks_usec() - start_usec >= build_budget_usec:
 			break
+
+	# Cheap far LOD: build a few cached heightfields per frame so the outer ring
+	# fills instead of lagging behind a moving player.
+	var lod_start: int = Time.get_ticks_usec()
+	var lod_built: int = 0
+
+	while not _dirty.is_empty() and lod_built < max_lod_builds_per_frame:
+		var chunk: Vector2i = _nearest_dirty_chunk(false)
+
+		if chunk == NO_CHUNK:
+			break
+
+		_dirty.erase(chunk)
+		_rebuild_chunk(chunk)
+		lod_built += 1
+
+		if Time.get_ticks_usec() - lod_start >= lod_build_budget_usec:
+			break
+
+
+## Nearest dirty chunk. `full_only` selects desired LOD 0 (and cleanup of
+## out-of-radius chunks); otherwise selects LOD 1/2.
+func _nearest_dirty_chunk(full_only: bool) -> Vector2i:
+	var best := NO_CHUNK
+	var best_distance: int = 2147483647
+
+	for chunk: Vector2i in _dirty:
+		var lod: int = _desired_lod(chunk)
+
+		if full_only:
+			if lod > 0:
+				continue
+		elif lod <= 0:
+			continue
+
+		var dx: int = chunk.x - _view_center.x
+		var dz: int = chunk.y - _view_center.y
+		var distance: int = dx * dx + dz * dz
+
+		if best == NO_CHUNK or distance < best_distance:
+			best_distance = distance
+			best = chunk
+
+	return best
 
 
 func rebuild_all() -> void:
@@ -221,11 +330,22 @@ func set_view_center(center: Vector2i, radius: int = -1) -> void:
 		if not _within_mesh_radius(chunk):
 			_remove_chunk_node(chunk)
 
+	# Only queue new chunks or chunks whose LOD band changed. The old code
+	# requeued every populated chunk in the radius on every chunk crossing,
+	# which rebuilt hundreds of meshes whenever the player moved 16 blocks.
 	for chunk: Vector2i in _grid.get_populated_chunks():
-		if _within_mesh_radius(chunk):
+		if not _within_mesh_radius(chunk):
+			if _chunk_nodes.has(chunk):
+				_remove_chunk_node(chunk)
+			continue
+
+		var desired: int = _desired_lod(chunk)
+
+		if (
+			not _chunk_nodes.has(chunk)
+			or int(_chunk_lod.get(chunk, -1)) != desired
+		):
 			_dirty[chunk] = true
-		elif _chunk_nodes.has(chunk):
-			_remove_chunk_node(chunk)
 
 
 func _within_mesh_radius(chunk: Vector2i) -> bool:
@@ -240,11 +360,13 @@ func _within_mesh_radius(chunk: Vector2i) -> bool:
 func queue_chunk(chunk: Vector2i, include_neighbors: bool = false) -> void:
 	_dirty.erase(chunk)
 	_dirty[chunk] = true
+	_lod_columns.erase(chunk)
 
 	if include_neighbors:
 		for offset: Vector2i in NEIGHBOR_CHUNKS:
 			_dirty.erase(chunk + offset)
 			_dirty[chunk + offset] = true
+			_lod_columns.erase(chunk + offset)
 
 
 func queue_cell(cell: Vector3i) -> void:
@@ -256,22 +378,27 @@ func queue_cell(cell: Vector3i) -> void:
 
 	_dirty.erase(chunk)
 	_dirty[chunk] = true
+	_lod_columns.erase(chunk)
 
 	if local_x == 0:
 		_dirty.erase(chunk + Vector2i(-1, 0))
 		_dirty[chunk + Vector2i(-1, 0)] = true
+		_lod_columns.erase(chunk + Vector2i(-1, 0))
 
 	if local_x == last:
 		_dirty.erase(chunk + Vector2i(1, 0))
 		_dirty[chunk + Vector2i(1, 0)] = true
+		_lod_columns.erase(chunk + Vector2i(1, 0))
 
 	if local_z == 0:
 		_dirty.erase(chunk + Vector2i(0, -1))
 		_dirty[chunk + Vector2i(0, -1)] = true
+		_lod_columns.erase(chunk + Vector2i(0, -1))
 
 	if local_z == last:
 		_dirty.erase(chunk + Vector2i(0, 1))
 		_dirty[chunk + Vector2i(0, 1)] = true
+		_lod_columns.erase(chunk + Vector2i(0, 1))
 
 
 func _on_block_placed(cell: Vector3i, _item: int) -> void:
@@ -461,11 +588,7 @@ func _create_chunk_snapshot(chunk: Vector2i) -> ChunkSnapshot:
 	var snapshot := ChunkSnapshot.new()
 	snapshot.chunk = chunk
 
-	var cells: Dictionary = _grid.get_chunk_cells(chunk)
-
-	for cell: Vector3i in cells:
-		snapshot.cells.append(cell)
-		snapshot.items[cell] = _grid.get_cell_item(cell)
+	_grid.get_chunk_cells_and_items(chunk, snapshot.cells, snapshot.item_values)
 
 	return snapshot
 
@@ -486,16 +609,16 @@ func _build_snapshot(
 	_snap_items.resize(total)
 	_snap_items.fill(-1)
 
-	for cell: Vector3i in snapshot.cells:
+	for index in snapshot.cells.size():
+		var cell: Vector3i = snapshot.cells[index]
 		var lx: int = cell.x - _snap_origin.x
 		var ly: int = cell.y - _snap_origin.y
 		var lz: int = cell.z - _snap_origin.z
-		_snap_items[lx + lz * _snap_dims.x + ly * _snap_slice] = int(
-			snapshot.items.get(cell, -1)
+		_snap_items[lx + lz * _snap_dims.x + ly * _snap_slice] = (
+			snapshot.item_values[index]
 		)
 
 	var end_x: int = origin.x + dims.x
-	var end_y: int = origin.y + dims.y
 	var end_z: int = origin.z + dims.z
 
 	for x: int in _snap_dims.x:
@@ -503,19 +626,18 @@ func _build_snapshot(
 		var border_x: bool = world_x < origin.x or world_x >= end_x
 		for z: int in _snap_dims.z:
 			var world_z: int = _snap_origin.z + z
-			var border: bool = (
-				border_x or world_z < origin.z or world_z >= end_z
-			)
+			var border_z: bool = world_z < origin.z or world_z >= end_z
+
+			if not border_x and not border_z:
+				# Interior columns are already filled from the snapshot. There
+				# cannot be a cell above/below `dims.y` inside this chunk, so the
+				# old unconditional y scan only repeated empty lookups.
+				continue
+
 			var column: int = x + z * _snap_dims.x
 			for y: int in _snap_dims.y:
 				var world_y: int = _snap_origin.y + y
-				if (
-					not border
-					and world_y >= origin.y
-					and world_y < end_y
-				):
-					continue
-				var item: int = _grid.get_cell_item(
+				var item: int = _grid.get_block_item(
 					Vector3i(world_x, world_y, world_z)
 				)
 				if item != -1:
@@ -540,14 +662,49 @@ func _snap_item(cell: Vector3i) -> int:
 	return _snap_items[lx + lz * _snap_dims.x + ly * _snap_slice]
 
 
-func _rebuild_chunk(chunk: Vector2i) -> void:
+func _desired_lod(chunk: Vector2i) -> int:
 	if not _within_mesh_radius(chunk):
+		return -1
+
+	if not _lod_enabled:
+		return 0
+
+	var dx: int = chunk.x - _view_center.x
+	var dz: int = chunk.y - _view_center.y
+	var distance_sq: int = dx * dx + dz * dz
+
+	if distance_sq <= lod0_radius_chunks * lod0_radius_chunks:
+		return 0
+
+	if distance_sq <= lod1_radius_chunks * lod1_radius_chunks:
+		return 1
+
+	return 2
+
+
+func _rebuild_chunk(chunk: Vector2i) -> void:
+	var lod: int = _desired_lod(chunk)
+
+	if lod < 0:
 		_remove_chunk_node(chunk)
 		return
+
+	_chunk_lod[chunk] = lod
+
+	if lod > 0:
+		_rebuild_chunk_heightfield(chunk, lod)
+		return
+
+	var dx: int = chunk.x - _view_center.x
+	var dz: int = chunk.y - _view_center.y
+	_suppress_ao = (
+		dx * dx + dz * dz > ao_radius_chunks * ao_radius_chunks
+	)
 
 	var snapshot: ChunkSnapshot = _create_chunk_snapshot(chunk)
 
 	if snapshot.cells.is_empty():
+		_suppress_ao = false
 		_remove_chunk_node(chunk)
 		return
 
@@ -628,6 +785,7 @@ func _rebuild_chunk(chunk: Vector2i) -> void:
 			dims
 		)
 
+	_suppress_ao = false
 	_commit_chunk(chunk, surfaces)
 
 	if debug_colors:
@@ -669,7 +827,7 @@ func _greedy_emit(
 
 			var width: int = 1
 
-			if not baked_ao_enabled or debug_colors:
+			if not baked_ao_enabled or _suppress_ao or debug_colors:
 				while (
 					u + width < u_dimension
 					and mask[u + width + v * u_dimension] == item
@@ -678,7 +836,7 @@ func _greedy_emit(
 
 			var height: int = 1
 
-			if not baked_ao_enabled or debug_colors:
+			if not baked_ao_enabled or _suppress_ao or debug_colors:
 				var can_grow: bool = true
 
 				while can_grow and v + height < v_dimension:
@@ -771,7 +929,7 @@ func _emit_quad(
 		Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE
 	]
 
-	if baked_ao_enabled and not debug_colors:
+	if baked_ao_enabled and not debug_colors and not _suppress_ao:
 		for index in corners.size():
 			ao_colors[index] = _corner_ao(
 				cell,
@@ -1023,7 +1181,12 @@ func _emit_item_mesh(
 
 	for part: Dictionary in parts:
 		var material: Material = part["material"]
-		if baked_ao_enabled and not debug_colors and material is BaseMaterial3D:
+		if (
+			baked_ao_enabled
+			and not debug_colors
+			and not _suppress_ao
+			and material is BaseMaterial3D
+		):
 			material = _item_ao_material(material as BaseMaterial3D)
 		var surface: MeshSurface = _get_surface(
 			surfaces,
@@ -1059,7 +1222,7 @@ func _emit_item_mesh(
 
 			if debug_colors:
 				surface.colors.append(Color.WHITE)
-			elif baked_ao_enabled:
+			elif baked_ao_enabled and not _suppress_ao:
 				surface.colors.append(
 					_item_vertex_ao(cell, local_vertex, local_normal)
 				)
@@ -1354,9 +1517,432 @@ func _commit_chunk(chunk: Vector2i, surfaces: Dictionary) -> void:
 
 	if mesh.get_surface_count() == 0:
 		_remove_chunk_node(chunk)
+		return
+
+	if _chunk_lod.get(chunk, 0) == 0:
+		_commit_collision(chunk, mesh)
+	else:
+		_remove_collision(chunk)
+
+
+## Cheap far LOD: one coarse column per `step` x `step` area (4x at LOD1,
+## 8x at LOD2), with top and side faces and heights snapped up to the step band.
+## It approximates overhangs and multi-storey interiors with a solid roof, which
+## is acceptable at distance. Collision is intentionally not built for LOD 1/2;
+## chunks switch back to LOD 0 before the player reaches them.
+func _rebuild_chunk_heightfield(chunk: Vector2i, lod: int) -> void:
+	var step: int = 4 if lod == 1 else 8
+	var columns: Dictionary = _lod_columns_for(chunk, step)
+
+	if columns.is_empty():
+		_remove_chunk_node(chunk)
+		return
+
+	# Keep this chunk's own columns for top faces; add a one-coarse-cell border
+	# from the adjacent chunk caches so chunk-edge sides connect instead of
+	# leaving black cracks.
+	var own_columns: Dictionary = columns.duplicate()
+	_build_lod_border_columns(chunk, step, columns)
+
+	var surfaces: Dictionary = {}
+	var size: Vector3 = _grid.cell_size
+	var per_axis: int = NavGridMap.CHUNK_SIZE / step
+	_suppress_ao = true
+
+	for key: Vector2i in own_columns:
+		var column: Dictionary = columns[key]
+		var info: Dictionary = _item_info.get(int(column["item"]), {})
+
+		if info.is_empty():
+			continue
+
+		var surface: MeshSurface = _get_surface(surfaces, info["material"])
+		# `_emit_quad` adds one cell along a +Y face, so pass the coarse cell's
+		# base Y (its top is base + 1).
+		var base := Vector3(
+			key.x * step * size.x,
+			int(column["y"]) * size.y,
+			key.y * step * size.z
+		)
+
+		_emit_quad(
+			surface,
+			1,
+			1,
+			0,
+			2,
+			base,
+			step,
+			step,
+			Color.WHITE,
+			Vector3i(key.x, int(column["y"]), key.y),
+			3
+		)
+		_emit_height_sides(surface, columns, key, step, size)
+
+		if (
+			key.x == 0
+			or key.y == 0
+			or key.x == per_axis - 1
+			or key.y == per_axis - 1
+		):
+			_emit_lod_skirt(surface, column, key, per_axis, step, size)
+
+	_suppress_ao = false
+	_commit_chunk(chunk, surfaces)
+
+
+## Returns cached coarse columns for this chunk and step. The columns are built
+## from the packed cells once; changing only the LOD band must not rescan the
+## whole chunk. Border columns keep exact heights so a finer neighbour meets
+## them; interior heights snap to `step`, producing visibly larger far voxels.
+func _lod_columns_for(chunk: Vector2i, step: int) -> Dictionary:
+	var bucket: Variant = _lod_columns.get(chunk)
+
+	if bucket is Dictionary and (bucket as Dictionary).has(step):
+		return (bucket as Dictionary)[step]
+
+	var columns: Dictionary = {}
+	var cells: Array = []
+	var items: Array = []
+	_grid.get_chunk_cells_and_items(chunk, cells, items)
+	var origin: Vector2i = NavGridMap.chunk_origin(chunk)
+
+	for index in cells.size():
+		var item: int = int(items[index])
+
+		if item < 0:
+			continue
+
+		var cell: Vector3i = cells[index]
+		var local_x: int = cell.x - origin.x
+		var local_z: int = cell.z - origin.y
+		var key := Vector2i(local_x / step, local_z / step)
+		var column_y: int = _snap_lod_y(cell.y, step)
+		var previous: Variant = columns.get(key)
+
+		if previous == null or column_y > int(previous["y"]):
+			columns[key] = {"y": column_y, "item": item}
+
+	if bucket is Dictionary:
+		(bucket as Dictionary)[step] = columns
+	else:
+		_lod_columns[chunk] = {step: columns}
+
+	return columns
+
+
+## Snaps a 1-block surface up to the next `step`-block band. Rounding up means
+## a coarser chunk never sits below a finer neighbour, so an edge skirt can hide
+## the transition. `step = 1` keeps exact heights.
+func _snap_lod_y(y: int, step: int) -> int:
+	if step <= 1:
+		return y
+
+	var surface: int = y + 1
+	var snapped := ceili(float(surface) / float(step)) * step
+	return snapped - 1
+
+
+## Adds the adjacent chunk's cached coarse columns just outside this chunk's
+## coarse grid, so `_emit_height_sides` can connect edges. Building the
+## neighbour columns once (on demand) is much cheaper than rescanning its cells
+## for every LOD rebuild.
+func _build_lod_border_columns(
+	chunk: Vector2i,
+	step: int,
+	columns: Dictionary
+) -> void:
+	var chunk_size: int = NavGridMap.CHUNK_SIZE
+	var per_axis: int = chunk_size / step
+
+	for direction: Vector2i in [
+		Vector2i(1, 0),
+		Vector2i(-1, 0),
+		Vector2i(0, 1),
+		Vector2i(0, -1),
+	]:
+		var neighbour_columns: Dictionary = _lod_columns_for(
+			chunk + direction,
+			step
+		)
+
+		if neighbour_columns.is_empty():
+			continue
+
+		for key: Vector2i in neighbour_columns:
+			var out_key: Vector2i
+
+			if direction.x == 1:
+				if key.x != 0:
+					continue
+				out_key = Vector2i(per_axis, key.y)
+			elif direction.x == -1:
+				if key.x != per_axis - 1:
+					continue
+				out_key = Vector2i(-1, key.y)
+			elif direction.y == 1:
+				if key.y != 0:
+					continue
+				out_key = Vector2i(key.x, per_axis)
+			else:
+				if key.y != per_axis - 1:
+					continue
+				out_key = Vector2i(key.x, -1)
+
+			var incoming: Dictionary = neighbour_columns[key]
+			var previous: Variant = columns.get(out_key)
+
+			if previous == null or int(incoming["y"]) > int(previous["y"]):
+				columns[out_key] = incoming
+
+
+func _emit_lod_skirt(
+	surface: MeshSurface,
+	column: Dictionary,
+	key: Vector2i,
+	per_axis: int,
+	step: int,
+	size: Vector3
+) -> void:
+	var top: int = int(column["y"]) + 1
+	var depth: int = step * 3
+	var base_y: int = top - depth
+	var epsilon: float = 0.002
+
+	if key.x == 0:
+		_emit_quad(
+			surface, 0, -1, 1, 2,
+			Vector3(
+				key.x * step * size.x - epsilon,
+				base_y * size.y,
+				key.y * step * size.z
+			),
+			depth, step, Color.WHITE,
+			Vector3i(key.x * step, base_y, key.y * step), 0
+		)
+
+	if key.x == per_axis - 1:
+		_emit_quad(
+			surface, 0, 1, 1, 2,
+			Vector3(
+				((key.x + 1) * step - 1) * size.x + epsilon,
+				base_y * size.y,
+				key.y * step * size.z
+			),
+			depth, step, Color.WHITE,
+			Vector3i((key.x + 1) * step, base_y, key.y * step), 1
+		)
+
+	if key.y == 0:
+		_emit_quad(
+			surface, 2, -1, 0, 1,
+			Vector3(
+				key.x * step * size.x,
+				base_y * size.y,
+				key.y * step * size.z - epsilon
+			),
+			step, depth, Color.WHITE,
+			Vector3i(key.x * step, base_y, key.y * step), 4
+		)
+
+	if key.y == per_axis - 1:
+		_emit_quad(
+			surface, 2, 1, 0, 1,
+			Vector3(
+				key.x * step * size.x,
+				base_y * size.y,
+				((key.y + 1) * step - 1) * size.z + epsilon
+			),
+			step, depth, Color.WHITE,
+			Vector3i(key.x * step, base_y, (key.y + 1) * step), 5
+		)
+
+
+func _emit_height_sides(
+	surface: MeshSurface,
+	columns: Dictionary,
+	key: Vector2i,
+	step: int,
+	size: Vector3
+) -> void:
+	var column: Dictionary = columns[key]
+	var top: int = int(column["y"]) + 1
+	var cx: int = key.x
+	var cz: int = key.y
+
+	var east: Variant = columns.get(Vector2i(cx + 1, cz))
+	if east != null:
+		var ny: int = int(east["y"]) + 1
+
+		if ny < top:
+			_emit_quad(
+				surface, 0, 1, 1, 2,
+				Vector3(
+					((cx + 1) * step - 1) * size.x,
+					ny * size.y,
+					cz * step * size.z
+				),
+				top - ny, step, Color.WHITE,
+				Vector3i((cx + 1) * step, ny, cz * step), 1
+			)
+
+	var west: Variant = columns.get(Vector2i(cx - 1, cz))
+	if west != null:
+		var ny: int = int(west["y"]) + 1
+
+		if ny < top:
+			_emit_quad(
+				surface, 0, -1, 1, 2,
+				Vector3(
+					cx * step * size.x,
+					ny * size.y,
+					cz * step * size.z
+				),
+				top - ny, step, Color.WHITE,
+				Vector3i(cx * step, ny, cz * step), 0
+			)
+
+	var south: Variant = columns.get(Vector2i(cx, cz + 1))
+	if south != null:
+		var ny: int = int(south["y"]) + 1
+
+		if ny < top:
+			_emit_quad(
+				surface, 2, 1, 0, 1,
+				Vector3(
+					cx * step * size.x,
+					ny * size.y,
+					((cz + 1) * step - 1) * size.z
+				),
+				step, top - ny, Color.WHITE,
+				Vector3i(cx * step, ny, (cz + 1) * step), 5
+			)
+
+	var north: Variant = columns.get(Vector2i(cx, cz - 1))
+	if north != null:
+		var ny: int = int(north["y"]) + 1
+
+		if ny < top:
+			_emit_quad(
+				surface, 2, -1, 0, 1,
+				Vector3(
+					cx * step * size.x,
+					ny * size.y,
+					cz * step * size.z
+				),
+				step, top - ny, Color.WHITE,
+				Vector3i(cx * step, ny, cz * step), 4
+			)
+
+
+## Mirrors the visual mesh as a static trimesh. The body lives under `_root`, so
+## it inherits the grid transform and the mesh's grid-local vertex space.
+func _commit_collision(chunk: Vector2i, mesh: ArrayMesh) -> void:
+	if not build_collision:
+		return
+
+	var body: StaticBody3D = _collision_nodes.get(chunk)
+
+	if body == null or not is_instance_valid(body):
+		body = StaticBody3D.new()
+		body.name = "ChunkBody_%d_%d" % [chunk.x, chunk.y]
+		body.collision_layer = _grid.collision_layer
+		body.collision_mask = _grid.collision_mask
+		body.set_meta("nav_grid", _grid)
+
+		var shape_node := CollisionShape3D.new()
+		shape_node.name = "Shape"
+		body.add_child(shape_node)
+
+		_root.add_child(body)
+		_collision_nodes[chunk] = body
+
+	var shape_start: int = Time.get_ticks_usec()
+	var shape: ConcavePolygonShape3D = mesh.create_trimesh_shape()
+	collision_build_usec += Time.get_ticks_usec() - shape_start
+	collision_builds += 1
+
+	if shape == null:
+		_remove_collision(chunk)
+		return
+
+	var shape_node: CollisionShape3D = body.get_node("Shape")
+	shape_node.shape = shape
+
+
+func _remove_collision(chunk: Vector2i) -> void:
+	var body: StaticBody3D = _collision_nodes.get(chunk)
+
+	if body != null and is_instance_valid(body):
+		body.queue_free()
+
+	_collision_nodes.erase(chunk)
+
+
+func get_collision_body_count() -> int:
+	return _collision_nodes.size()
+
+
+## Enables distance LOD. Ordinary maps leave this off; generated worlds turn it
+## on because their footprints can span more than the full-detail radius.
+func set_lod_enabled(enabled: bool) -> void:
+	if _lod_enabled == enabled:
+		return
+
+	_lod_enabled = enabled
+	queue_all()
+
+
+func is_lod_enabled() -> bool:
+	return _lod_enabled
+
+
+func get_collision_stats() -> Dictionary:
+	return {
+		"bodies": _collision_nodes.size(),
+		"builds": collision_builds,
+		"build_usec": collision_build_usec,
+	}
+
+
+## Frees every chunk mesh and collision body without stopping the mesher.
+func clear_chunks() -> void:
+	for chunk: Vector2i in _chunk_nodes.keys():
+		_remove_chunk_node(chunk)
+
+	_chunk_lod.clear()
+	_dirty.clear()
+
+
+func get_lod_stats() -> Dictionary:
+	var lod0: int = 0
+	var lod1: int = 0
+	var lod2: int = 0
+
+	for lod: int in _chunk_lod.values():
+		match int(lod):
+			0:
+				lod0 += 1
+			1:
+				lod1 += 1
+			_:
+				lod2 += 1
+
+	return {
+		"lod0": lod0,
+		"lod1": lod1,
+		"lod2": lod2,
+		"meshed": _chunk_nodes.size(),
+		"collision": _collision_nodes.size(),
+	}
 
 
 func _remove_chunk_node(chunk: Vector2i) -> void:
+	_remove_collision(chunk)
+	_chunk_lod.erase(chunk)
+	_lod_columns.erase(chunk)
+
 	var node: MeshInstance3D = _chunk_nodes.get(chunk)
 
 	if node != null and is_instance_valid(node):

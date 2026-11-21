@@ -150,6 +150,8 @@ var _ui_players: Array[AudioStreamPlayer] = []
 var _ui_play_index: int = 0
 var _ui_type_toggle: bool = false
 var _new_map_world_type: String = "blank"
+var _new_map_world_size: String = "medium"
+var _new_map_seed: int = 0
 var _pending_new_map_name: String = "New Map"
 
 
@@ -252,7 +254,6 @@ func _apply_saves_only_layout() -> void:
 	for path: String in [
 		"LeftActions/Save",
 		"LeftActions/SaveAs",
-		"WorldType",
 	]:
 		var node := _saves_panel.get_node_or_null(path)
 
@@ -260,6 +261,8 @@ func _apply_saves_only_layout() -> void:
 			node.set("visible", false)
 			if node is Area3D:
 				(node as Area3D).collision_layer = 0
+
+	# World Type stays available: New Map needs it in both menus.
 
 
 func _setup_ui_audio() -> void:
@@ -672,7 +675,7 @@ func _ensure_settings_ui() -> void:
 		gameplay_right,
 		"ExportDefaults",
 		"export_defaults",
-		"Export Defaults",
+		"Simulation Defaults",
 		0.35
 	)
 
@@ -1232,7 +1235,7 @@ func _ensure_saves_ui() -> void:
 	)
 	_ensure_water_button(
 		saves, "WorldType", "world_type", "World: Blank Platform", 0.58,
-		Vector3.ONE, 20, -0.68
+		Vector3.ONE, 18, -0.68
 	)
 
 
@@ -2119,11 +2122,7 @@ func _dynamic_caption(action: String) -> String:
 		"water_wake":
 			return "Wake: " + PerformanceSettings.water_wake_name()
 		"world_type":
-			return (
-				"World: Blank Platform"
-				if _new_map_world_type == "blank"
-				else "World: Proc Gen (Soon)"
-			)
+			return _world_caption()
 		"demo_folder_filter":
 			return "Folder: " + (_demo_folder_filter if not _demo_folder_filter.is_empty() else "All")
 		"volume":
@@ -2135,6 +2134,42 @@ func _dynamic_caption(action: String) -> String:
 		"view_roll":
 			return "View Roll: " + PerformanceSettings.view_roll_name()
 	return ""
+
+
+func _world_size_label(size_name: String) -> String:
+	match size_name:
+		"small":
+			return "Small (128)"
+		"large":
+			return "Large (384)"
+		_:
+			return "Medium (256)"
+
+
+func _world_size_short(size_name: String) -> String:
+	match size_name:
+		"small":
+			return "128"
+		"large":
+			return "384"
+		_:
+			return "256"
+
+
+func _generator_label(generator_id: String) -> String:
+	match generator_id:
+		"heightmap_v1":
+			return "Heightmap terrain"
+		_:
+			return "Procedural"
+
+
+## One-line caption for the shared World Type button.
+func _world_caption() -> String:
+	if _new_map_world_type == "blank":
+		return "World: Blank Platform"
+
+	return "World: Heightmap " + _world_size_short(_new_map_world_size)
 
 
 func _all_buttons() -> Array:
@@ -2341,10 +2376,7 @@ func _click_at(screen_position: Vector2) -> void:
 		"rename":
 			_prompt_rename()
 		"world_type":
-			_new_map_world_type = (
-				"procgen" if _new_map_world_type == "blank" else "blank"
-			)
-			_refresh_labels()
+			_prompt_world_settings()
 		"load":
 			_on_load()
 		"duplicate":
@@ -2487,10 +2519,17 @@ func _update_save_preview() -> void:
 
 	var modified := 0.0
 	var world_type := "existing"
+	var world_generator := ""
+	var world_seed := 0
+	var world_size := ""
+
 	for entry: Dictionary in _saves:
 		if String(entry.get("slug", "")) == _selected_slug:
 			modified = float(entry.get("modified", 0.0))
 			world_type = String(entry.get("world_type", "existing"))
+			world_generator = String(entry.get("world_generator", ""))
+			world_seed = int(entry.get("world_seed", 0))
+			world_size = String(entry.get("world_size", ""))
 			break
 
 	var lines: Array[String] = [
@@ -2502,6 +2541,18 @@ func _update_save_preview() -> void:
 			else ("Procedural" if world_type == "procgen" else "Existing map")
 		),
 	]
+
+	if world_type == "procgen":
+		var detail := "%s · seed %d" % [
+			_generator_label(world_generator),
+			world_seed,
+		]
+
+		if not world_size.is_empty():
+			detail += " · " + _world_size_label(world_size)
+
+		lines.append(detail)
+
 	_save_details.text = "\n".join(PackedStringArray(lines))
 
 	if selection_changed and texture != null and _paused:
@@ -2585,20 +2636,112 @@ func _finish_save_as(new_name: String) -> void:
 	_refresh_save_list()
 
 
+func _prompt_world_settings() -> void:
+	_ensure_dialog_layer()
+	_dialog_open = true
+	_play_ui(UI_SOUND_NOTIF, -11.0)
+
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "World Settings"
+	dialog.ok_button_text = "Apply"
+	dialog.process_mode = Node.PROCESS_MODE_ALWAYS
+	dialog.theme = _dialog_theme(16)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.custom_minimum_size = Vector2(400.0, 0.0)
+
+	var type_option := OptionButton.new()
+	type_option.add_item("Blank Platform", 0)
+	type_option.add_item("Heightmap Terrain", 1)
+	type_option.selected = 0 if _new_map_world_type == "blank" else 1
+	type_option.theme = _dialog_theme(16)
+	box.add_child(type_option)
+
+	var size_option := OptionButton.new()
+	size_option.add_item("Small (128)", 0)
+	size_option.add_item("Medium (256)", 1)
+	size_option.add_item("Large (384)", 2)
+
+	match _new_map_world_size:
+		"small":
+			size_option.selected = 0
+		"large":
+			size_option.selected = 2
+		_:
+			size_option.selected = 1
+
+	size_option.theme = _dialog_theme(16)
+	box.add_child(size_option)
+
+	var seed_edit := LineEdit.new()
+	seed_edit.text = "0" if _new_map_seed == 0 else str(_new_map_seed)
+	seed_edit.placeholder_text = "Seed (0 = random)"
+	seed_edit.custom_minimum_size = Vector2(400.0, 32.0)
+	seed_edit.theme = _dialog_theme(16)
+	box.add_child(seed_edit)
+
+	var procgen_selected := type_option.selected == 1
+	size_option.disabled = not procgen_selected
+	seed_edit.editable = procgen_selected
+
+	type_option.item_selected.connect(func(index: int) -> void:
+		size_option.disabled = index == 0
+		seed_edit.editable = index == 1
+	)
+
+	dialog.add_child(box)
+
+	_dialog_layer.add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_TYPING_FINISH, -9.0)
+		_new_map_world_type = "blank" if type_option.selected == 0 else "procgen"
+
+		match size_option.selected:
+			0:
+				_new_map_world_size = "small"
+			2:
+				_new_map_world_size = "large"
+			_:
+				_new_map_world_size = "medium"
+
+		var value := seed_edit.text.strip_edges().to_int()
+		_new_map_seed = value if value != 0 else (randi() & 0x7FFFFFFF)
+
+		dialog.queue_free()
+		_refresh_labels()
+	)
+	dialog.canceled.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_CLICK, -11.0)
+		dialog.queue_free()
+	)
+	dialog.popup_centered(Vector2i(500, 280))
+
+
 func _prompt_new_map() -> void:
-	if _new_map_world_type != "blank":
-		_set_status("Procedural generation is not available yet")
-		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
-		return
+	if _new_map_world_type == "procgen" and _new_map_seed == 0:
+		_new_map_seed = randi() & 0x7FFFFFFF
+		_refresh_labels()
+
 	_prompt_name("New Map", "New Map", _request_new_map_confirm)
 
 
 func _request_new_map_confirm(new_name: String) -> void:
 	_pending_new_map_name = new_name
+	var world_line := "Blank platform"
+
+	if _new_map_world_type == "procgen":
+		world_line = "Heightmap, %s, seed %d" % [
+			_world_size_label(_new_map_world_size),
+			_new_map_seed,
+		]
+
 	_confirm(
 		"Create New Map",
-		"Create \"%s\"?\nUnsaved changes to the current map will be lost."
-		% new_name,
+		"Create \"%s\"?\nWorld: %s\nUnsaved changes to the current map will be lost."
+		% [new_name, world_line],
 		_finish_new_map,
 		"Create"
 	)
@@ -2609,26 +2752,33 @@ func _finish_new_map() -> void:
 		_set_status("Save system unavailable")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
 		return
-	if _new_map_world_type != "blank":
-		_set_status("Procedural generation is not available yet")
-		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
-		return
+
+	var world_options: Dictionary = {
+		"type": _new_map_world_type,
+		"generator": "",
+		"seed": 0,
+		"size": "small",
+		"options": {},
+	}
+
+	if _new_map_world_type == "procgen":
+		if _new_map_seed == 0:
+			_new_map_seed = randi() & 0x7FFFFFFF
+
+		world_options = {
+			"type": "procgen",
+			"generator": "heightmap_v1",
+			"seed": _new_map_seed,
+			"size": _new_map_world_size,
+			"options": {},
+		}
 
 	if saves_only:
 		close_saves_only()
 	else:
 		set_paused(false)
 	save_loaded.emit()
-	_save_manager.new_blank_map(
-		_pending_new_map_name,
-		{
-			"type": "blank",
-			"generator": "",
-			"seed": 0,
-			"size": "small",
-			"options": {},
-		}
-	)
+	_save_manager.new_blank_map(_pending_new_map_name, world_options)
 
 
 func _prompt_rename() -> void:
@@ -2945,7 +3095,7 @@ func _ensure_defaults_layer() -> void:
 	margin.add_child(column)
 
 	var title := Label.new()
-	title.text = "EXPORT DEFAULTS"
+	title.text = "SIMULATION DEFAULTS"
 	title.add_theme_font_size_override("font_size", 22)
 	title.add_theme_color_override("font_color", Color(1.0, 0.84, 0.32))
 	column.add_child(title)
@@ -2994,8 +3144,10 @@ func _ensure_defaults_layer() -> void:
 
 	var agent_info := Label.new()
 	agent_info.text = (
-		"Agent exports are the same Member properties as the inventory's Agents "
-		+ "panel. Apply there to save the defaults."
+		"Simulation defaults are the runtime exports new saves start from: "
+		+ "active cap, spawn quota, seed, evacuation/recording flags, Random "
+		+ "Populate, optimizer and the Member properties below. "
+		+ "Use Current Session captures all of them at once."
 	)
 	agent_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	agent_info.add_theme_font_size_override("font_size", 13)
@@ -3013,6 +3165,11 @@ func _ensure_defaults_layer() -> void:
 	actions.alignment = BoxContainer.ALIGNMENT_END
 	actions.add_theme_constant_override("separation", 8)
 	column.add_child(actions)
+
+	var capture := Button.new()
+	capture.text = "Use Current Session"
+	capture.pressed.connect(_capture_export_defaults)
+	actions.add_child(capture)
 
 	var reset := Button.new()
 	reset.text = "Reset All Defaults"
@@ -3122,5 +3279,11 @@ func _save_global_defaults() -> void:
 
 func _reset_export_defaults() -> void:
 	RuntimeExports.clear_all_defaults()
+	_sync_export_defaults_fields()
+	_play_ui(UI_SOUND_ACCEPT, -9.0)
+
+
+func _capture_export_defaults() -> void:
+	RuntimeExports.save_live_as_defaults()
 	_sync_export_defaults_fields()
 	_play_ui(UI_SOUND_ACCEPT, -9.0)

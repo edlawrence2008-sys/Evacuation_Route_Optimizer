@@ -1,10 +1,11 @@
 # Main menu, saves, music and credits
 
-> **Status:** 2026-11-17 · **Applies to:** `scenes/menu/main_menu.*`,
+> **Status:** 2026-11-21 · **Applies to:** `scenes/menu/main_menu.*`,
 > `scenes/menu/menu_backdrop.gd`, `scenes/menu/credits.*`,
 > `scenes/ui/bgm_popup.*`, `scripts/music_manager.gd`,
 > `resources/credits/credits.json` · **Companions:**
-> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §3.2, §4.7, §4.13.
+> [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §3.2, §4.7, §4.13,
+> [`PROCGEN.md`](PROCGEN.md).
 
 ## Boot flow
 
@@ -15,7 +16,7 @@ menu. The old 2D logo scene at that path was replaced.
 |---|---|
 | **Saves** | Opens the pause menu's own Saves page as an overlay. |
 | **Load Selected** | Loads the selected save's map (normally `res://Maps/test.tscn`). |
-| **New Map...** | Creates a blank starter map through `SaveManager.new_blank_map()`. |
+| **New Map...** | Opens the name dialog, then creates the selected world: Blank Platform or Heightmap Terrain. **World Type** opens the shared World Settings dialog (type, size, seed). |
 | **Extras → Credits** | `res://scenes/menu/credits.tscn` |
 | **Credits → Back / Esc** | `res://scenes/menu/main_menu.tscn` |
 | **Quit** | `SceneTree.quit()` |
@@ -35,14 +36,36 @@ Backdrop: `scenes/menu/menu_backdrop.gd`
 - **Main panel:** Saves, Extras, Settings, Quit.
 - **Saves:** the main menu instances `scenes/menu/pause_menu.tscn` under its
   camera with `saves_only = true`. That overlay uses the pause menu's existing
-  save list, thumbnail, details and dialogs. Save / Save As / World Type are
-  hidden because no live world is loaded; Load, New Map, Rename, Duplicate,
-  Delete and Back remain.
+  save list, thumbnail, details and dialogs. **Save** and **Save As** are hidden
+  because no live world is loaded. **World Type** stays available so New Map can
+  choose Blank Platform or Heightmap Terrain; it opens a **World Settings**
+  dialog with type, size and seed. Load, New Map, Rename, Duplicate, Delete and
+  Back remain. Both menus therefore share one implementation of the save and
+  world-creation UI.
+
+### New Map and world settings
+
+- **World Type** shows `World: Blank Platform` or `World: Heightmap 128/256/384`.
+  Clicking it opens a dialog with:
+  - type: Blank Platform / Heightmap Terrain,
+  - size: Small (128), Medium (256), Large (384),
+  - seed: numeric, `0` means random.
+- **Blank** keeps the existing small starter platform.
+- **Heightmap** creates a bounded procedural terrain through
+  `HeightmapTerrainGenerator`, pins `generator`, `generator_version`, `seed`,
+  `size` and `options` in `save.json`, and regenerates missing chunks when the
+  save is loaded. The player is placed above the generated surface at the world
+  origin.
+- The save details panel adds `Heightmap terrain · seed <n> · <size>` for
+  procgen slots.
 - **Extras panel:** Credits, Back.
 - **Settings:** Graphics, Gameplay, Audio, Back. These reuse
   `scenes/menu/settings/*.tscn` and `PerformanceSettings`, so changes persist in
-  `user://settings.cfg` and apply to the game. **Audio** holds **Music** (BGM
-  level, applied live by `MusicManager`) and **Volume** (master).
+  `user://settings.cfg` and apply to the game. Gameplay includes **Simulation
+  Defaults** (`user://export_defaults.json`), where **Use Current Session**
+  captures global, agent, Random Populate and optimizer exports for new saves.
+  **Audio** holds **Music** (BGM level, applied live by `MusicManager`) and
+  **Volume** (master).
 - **Not included:** the Controls keybind editor and Water tuning pages. Those
   remain available in the in-game pause menu.
 

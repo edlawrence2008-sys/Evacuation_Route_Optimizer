@@ -12,6 +12,8 @@ and links to the code it describes.
 | [`SIMULATION_MODEL.md`](SIMULATION_MODEL.md) | What the crowd simulation computes: Social Force Model equations, parameters and provenance, numerical scheme, performance budget, limitations, tuning. |
 | [`EVACUATION_POINTS.md`](EVACUATION_POINTS.md) | Exit admission policy: service rate, queues, receiving capacity, retained agents, and the invariants around them. |
 | [`FALSE_BOIDS.md`](FALSE_BOIDS.md) | The hybrid ambient-bird system: particle clouds, boid leaders, promoted/perched birds, migration, tuning. |
+| [`PROCGEN.md`](PROCGEN.md) | Packed 3D section storage, the v2 chunk format, per-chunk collision with the runtime GridMap mirror dropped, the generator/recipe contract, the heightmap terrain generator and its measured cost, opt-in distance LOD with far-collision gating, New Map procgen in both menus, save pinning, and the roadmap. **P0 + P0b + P0c + P1 + heightmap + save/menu implemented.** |
+| [`RENDERER_AND_ENGINE.md`](RENDERER_AND_ENGINE.md) | Renderer and engine assessment: what `mobile` actually is, profiler evidence, the `forward_plus` experiment, and why `Zylann/godot_voxel` / `rimworld3d` do not justify a switch. **Decision: stay on Godot 4.7 `mobile`.** |
 | [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) | Every measurement the simulator records, the `SimRecorder` file format, disruption attribution, and what is not modelled. |
 | [`DEMOS.md`](DEMOS.md) | Per-save demo library, naming/descriptions/folders/duplication, the in-map Demo Player, and the synchronized Demo Comparer. |
 | [`OPTIMIZER.md`](OPTIMIZER.md) | The decision layer: gap analysis, boundary, data contracts, objective, measured cost, roadmap and risks. **Phases 1–3 implemented** (analysis layer, bridge, ACO, side panel); multi-objective terms, disruption re-solve and hazards pending. |
@@ -21,14 +23,30 @@ and links to the code it describes.
 
 | Page | Contents |
 |---|---|
-| [`archive/CHANGELOG.md`](archive/CHANGELOG.md) | Dated change history (2026-11-06 → 2026-11-20), newest first, including superseded entries. |
+| [`archive/CHANGELOG.md`](archive/CHANGELOG.md) | Dated change history (2026-11-06 → 2026-11-21), newest first, including superseded entries. |
 | [`archive/VERIFICATION_LOG.md`](archive/VERIFICATION_LOG.md) | Full dated verification table from the Godot MCP runtime bridge, newest first. |
 | [`archive/CODEBASE_ANALYSIS_2026-11-06.md`](archive/CODEBASE_ANALYSIS_2026-11-06.md) · [`2026-11-02`](archive/CODEBASE_ANALYSIS_2026-11-02.md) · [`2026-10-31`](archive/CODEBASE_ANALYSIS_2026-10-31.md) | Earlier full analyses, kept for the metrics and structures they describe. |
 
-## Current snapshot (2026-11-20)
+## Current snapshot (2026-11-21)
 
 - Godot **4.7.2**, `mobile` renderer, 30 Hz physics, source baseline `0df7d6a`
-  (working tree also contains optimizer phases 1–3).
+  (working tree also contains optimizer phases 1–3 and the procgen work).
+- Procgen: **New Map → World Type → World Settings** in both the main menu and
+  the pause menu creates a bounded heightmap world (128/256/384). The cell store
+  is packed 16³ sections with a v2 compressed chunk format, the runtime GridMap
+  mirror is dropped, and chunk collision is per-chunk trimesh. Heightmap slopes
+  get a half-step bottom slab on every lower side of a step. Distance LOD is
+  **opt-in** (`/lod on`) so existing saves keep full detail (`PROCGEN.md`).
+- Performance: a Large 384×384 fill now averages **~17.4 ms/frame (~57 FPS)**
+  instead of ~39 ms; creation runs at 55–95 FPS. Empty generated worlds skip
+  navigation entirely, and saved quality/radii settings are re-applied to New Map.
+  Water processing on a 1,600–2,000-cell pool is **0.59 ms/frame** (worst frame
+  38 → 10.8 ms), and chunk meshing rebuilds nearest-first.
+- Runtime exports are **per save**. Settings → Gameplay → **Simulation Defaults**
+  edits `user://export_defaults.json`; **Use Current Session** captures global,
+  agent, Random Populate and optimizer settings for new saves.
+- Renderer/engine: stay on `mobile`; the profiled fill cost is GDScript CPU, not
+  GPU. See [`RENDERER_AND_ENGINE.md`](RENDERER_AND_ENGINE.md).
 - Boot scene: `scenes/menu/main_menu.tscn`. Game scene: `Maps/test.tscn`.
 - Simulation: reciprocal Social Force Model, kinematic locomotion, deterministic
   per-agent RNG, lognormal pre-movement, logit exit choice; High preset 600 agents.

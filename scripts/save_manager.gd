@@ -13,6 +13,8 @@ const MANIFEST := "save.json"
 const THUMBNAIL := "thumb.png"
 const VERSION := 1
 const MAP_RENDERER := preload("res://scripts/map_renderer.gd")
+const WORLD_RECIPE_SCRIPT := preload("res://scripts/world/WorldRecipe.gd")
+const HEIGHTMAP_SCRIPT := preload("res://scripts/world/HeightmapTerrainGenerator.gd")
 const PLACEABLE_SKIP := [
 	"script", "owner", "name", "transform", "position", "rotation",
 	"rotation_degrees", "scale", "scene_file_path", "metadata",
@@ -59,6 +61,13 @@ func list_saves() -> Array:
 			"thumbnail": _thumbnail_path(slug),
 			"world_type": String(
 				manifest.get("world", {}).get("type", "existing")
+			),
+			"world_generator": String(
+				manifest.get("world", {}).get("generator", "")
+			),
+			"world_seed": int(manifest.get("world", {}).get("seed", 0)),
+			"world_size": String(
+				manifest.get("world", {}).get("size", "")
 			),
 		})
 	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -300,6 +309,43 @@ func new_blank_map(map_name: String, world_options: Dictionary = {}) -> String:
 	await tree.process_frame
 	await tree.process_frame
 
+	var world := _normalise_world_metadata(world_options, "blank")
+	var is_procgen := String(world.get("type", "")) == "procgen"
+
+	if is_procgen:
+		var version_recipe := _make_world_recipe(world)
+		if version_recipe != null:
+			var version_generator: Variant = version_recipe.get("generator")
+			if (
+				version_generator != null
+				and version_generator.has_method("get_version")
+			):
+				world["generator_version"] = int(
+					version_generator.get_version()
+				)
+
+	var new_streamer := tree.get_first_node_in_group("chunk_streamer")
+
+	if is_procgen:
+		# A generated world must not inherit the scene's starter platform.
+		grid.reset_world()
+
+		if new_streamer != null and new_streamer.has_method("reset_streaming"):
+			new_streamer.reset_streaming()
+
+	_apply_world_to_streamer(new_streamer, world)
+
+	# A scene reload creates fresh nodes with their inspector defaults. Re-apply
+	# the saved quality/radii here so a New Map uses the same draw distance and
+	# budgets as a loaded save instead of silently falling back to Medium.
+	var settings = get_node_or_null("/root/PerformanceSettings")
+	if settings != null and settings.has_method("apply_all"):
+		settings.apply_all()
+
+	if is_procgen and new_streamer != null:
+		# Bulk generation does not need A*; keep it out of the generation frames.
+		new_streamer.set("defer_navigation", true)
+
 	var gd := get_node_or_null("/root/GlobalData")
 
 	if gd != null and gd.has_method("reset_spawning"):
@@ -310,22 +356,49 @@ func new_blank_map(map_name: String, world_options: Dictionary = {}) -> String:
 		runtime.call("apply_defaults_to_live")
 
 	var player := tree.get_first_node_in_group("Player") as Node3D
-	var cell := Vector3i(0, 0, 0)
-	var platform_y := clampi(
-		0,
-		int(grid.min_block_y),
-		int(grid.max_block_y)
-	)
-	var block_id := _blank_platform_item(grid)
-	var platform_cells: Array[Vector3i] = []
-	for dx in range(-3, 4):
-		for dz in range(-3, 4):
-			platform_cells.append(Vector3i(cell.x + dx, platform_y, cell.z + dz))
-	grid.place_blocks(platform_cells, block_id, 0)
+	var spawn_cell := Vector3i.ZERO
+
+	if is_procgen:
+		# Find the terrain surface at the world origin and wait for the streamer
+		# to generate that chunk before dropping the player in.
+		var top: int = 0
+		var recipe := _make_world_recipe(world)
+
+		if recipe != null:
+			var generator: Variant = recipe.get("generator")
+
+			if generator != null and generator.has_method("sample_column"):
+				var column: Dictionary = generator.sample_column(0, 0)
+				top = int(column.get("height", 0))
+
+		spawn_cell = Vector3i(0, top, 0)
+
+		var deadline: int = Time.get_ticks_msec() + 5000
+
+		while not grid.has_block(spawn_cell) and Time.get_ticks_msec() < deadline:
+			await tree.process_frame
+
+		if not grid.has_block(spawn_cell):
+			push_warning(
+				"SaveManager: procgen spawn chunk did not generate in time."
+			)
+	else:
+		var platform_y := clampi(
+			0,
+			int(grid.min_block_y),
+			int(grid.max_block_y)
+		)
+		var block_id := _blank_platform_item(grid)
+		var platform_cells: Array[Vector3i] = []
+		for dx in range(-3, 4):
+			for dz in range(-3, 4):
+				platform_cells.append(Vector3i(dx, platform_y, dz))
+		grid.place_blocks(platform_cells, block_id, 0)
+		spawn_cell = Vector3i(0, platform_y, 0)
 
 	if player != null:
 		var center: Vector3 = grid.to_global(
-			grid.map_to_local(Vector3i(cell.x, platform_y, cell.z))
+			grid.map_to_local(spawn_cell)
 		)
 		player.global_position = Vector3(
 			center.x,
@@ -334,6 +407,69 @@ func new_blank_map(map_name: String, world_options: Dictionary = {}) -> String:
 		)
 		player.rotation = Vector3.ZERO
 		player.set("camera_x_rotation", 0.0)
+
+		# A generated world still has to stream/mesh its spawn chunk. Keep the
+		# player frozen so it cannot fall while the floor is being built; it is
+		# re-placed on the finished surface before the save is written.
+		if is_procgen:
+			player.set_physics_process(false)
+
+	if is_procgen:
+		# Fill the whole bounded footprint before saving. Otherwise the slot
+		# stores only the first few seconds of generation and every load shows
+		# holes until the rest regenerates.
+		var footprint_recipe := _make_world_recipe(world)
+		var expected_chunks: int = 0
+
+		if footprint_recipe != null:
+			if footprint_recipe.has_method("get_footprint_chunk_count"):
+				expected_chunks = int(
+					footprint_recipe.get_footprint_chunk_count()
+				)
+
+		if expected_chunks > 0:
+			var gen_deadline: int = Time.get_ticks_msec() + 25000
+
+			while (
+				grid.get_populated_chunks().size() < expected_chunks
+				and Time.get_ticks_msec() < gen_deadline
+			):
+				await tree.process_frame
+
+			if grid.get_populated_chunks().size() < expected_chunks:
+				push_warning(
+					"SaveManager: generated %d/%d world chunks before saving."
+					% [grid.get_populated_chunks().size(), expected_chunks]
+				)
+
+			# Also wait for the mesher to finish the initial LOD pass. The save
+			# itself only needs cells, but opening a world with unmeshed chunks
+			# looks like missing terrain.
+			var mesh_deadline: int = Time.get_ticks_msec() + 15000
+
+			while (
+				int(grid.get_chunk_lod_stats().get("meshed", 0)) < expected_chunks
+				and Time.get_ticks_msec() < mesh_deadline
+			):
+				await tree.process_frame
+
+		if new_streamer != null:
+			new_streamer.set("defer_navigation", false)
+
+		if player != null:
+			var spawn_center: Vector3 = grid.to_global(
+				grid.map_to_local(spawn_cell)
+			)
+			player.global_position = Vector3(
+				spawn_center.x,
+				spawn_center.y + grid.cell_size.y * 0.5 + 1.6,
+				spawn_center.z
+			)
+
+			if player is CharacterBody3D:
+				(player as CharacterBody3D).velocity = Vector3.ZERO
+
+			player.set_physics_process(true)
 
 	await tree.create_timer(0.35).timeout
 
@@ -344,7 +480,6 @@ func new_blank_map(map_name: String, world_options: Dictionary = {}) -> String:
 	_copy_dir(_live_chunks(), folder.path_join("chunks"))
 	_write_thumbnail(folder)
 
-	var world := _normalise_world_metadata(world_options, "blank")
 	var manifest := _build_manifest(display, world)
 	manifest["map"] = map_path
 	_write_manifest(folder, manifest)
@@ -438,6 +573,7 @@ func _default_world_metadata() -> Dictionary:
 	return {
 		"type": "existing",
 		"generator": "",
+		"generator_version": 0,
 		"seed": 0,
 		"size": "",
 		"options": {},
@@ -451,6 +587,7 @@ func _normalise_world_metadata(
 	var result := _default_world_metadata()
 	result["type"] = String(world.get("type", fallback_type))
 	result["generator"] = String(world.get("generator", ""))
+	result["generator_version"] = int(world.get("generator_version", 0))
 	result["seed"] = int(world.get("seed", 0))
 	result["size"] = String(world.get("size", ""))
 	result["options"] = world.get("options", {})
@@ -463,6 +600,104 @@ func _current_world_metadata() -> Dictionary:
 		if not manifest.is_empty() and manifest.has("world"):
 			return _normalise_world_metadata(manifest["world"])
 	return _default_world_metadata()
+
+
+## Builds the generator recipe pinned by a world descriptor. Returns null for
+## non-procgen worlds or an unknown generator id.
+func _make_world_recipe(world: Dictionary) -> Resource:
+	if String(world.get("type", "")) != "procgen":
+		return null
+
+	var generator_id := String(world.get("generator", "heightmap_v1"))
+
+	if generator_id != "heightmap_v1":
+		push_warning("SaveManager: unknown world generator '%s'." % generator_id)
+		return null
+
+	var generator = HEIGHTMAP_SCRIPT.new()
+	generator.apply_params(_heightmap_params(world))
+
+	var pinned_version := int(world.get("generator_version", 0))
+
+	if (
+		pinned_version != 0
+		and pinned_version != int(generator.get_version())
+	):
+		push_warning(
+			"SaveManager: world generator version changed (%d -> %d); "
+			% [pinned_version, int(generator.get_version())]
+			+ "unedited chunks will regenerate."
+		)
+
+	var recipe = WORLD_RECIPE_SCRIPT.new()
+	recipe.generator = generator
+	return recipe
+
+
+## Size presets are UI-level names; the generator stores blocks.
+func _heightmap_params(world: Dictionary) -> Dictionary:
+	var size_name := String(world.get("size", "medium"))
+	var extent := Vector2i(256, 256)
+
+	match size_name:
+		"small":
+			extent = Vector2i(128, 128)
+		"large":
+			extent = Vector2i(384, 384)
+
+	var params := {
+		"noise_seed": int(world.get("seed", 0)),
+		"footprint_origin": [-extent.x / 2, -extent.y / 2],
+		"footprint_size": [extent.x, extent.y],
+		"column_depth": 3,
+	}
+
+	var options: Variant = world.get("options", {})
+
+	if options is Dictionary:
+		for key: Variant in options:
+			params[key] = options[key]
+
+	return params
+
+
+## Applies a world descriptor to the live streamer. Procgen worlds get a recipe
+## and generation enabled; other worlds get neither. Refreshes streaming so the
+## recipe takes effect around the current player position.
+func _apply_world_to_streamer(streamer, world: Dictionary) -> void:
+	if streamer == null:
+		return
+
+	if String(world.get("type", "")) != "procgen":
+		streamer.world_recipe = null
+		streamer.generate_flat_floor = false
+		return
+
+	var recipe := _make_world_recipe(world)
+
+	if recipe == null:
+		return
+
+	streamer.world_recipe = recipe
+	streamer.generate_flat_floor = true
+
+	if streamer.has_method("refresh_streaming"):
+		streamer.refresh_streaming()
+
+
+## World descriptor for one save slot, for UI display.
+func get_world_metadata(slug: String) -> Dictionary:
+	var manifest := _read_manifest(slug)
+
+	if manifest.is_empty():
+		return {}
+
+	var value: Variant = manifest.get("world", {})
+
+	if value is not Dictionary:
+		return _default_world_metadata()
+
+	return _normalise_world_metadata(value)
 
 
 func _write_thumbnail(folder: String) -> void:
@@ -625,6 +860,20 @@ func _apply_manifest(manifest: Dictionary) -> void:
 		var camera := player.get_node_or_null("head/CameraSmooth/Camera3D") as Camera3D
 		if camera != null:
 			camera.rotation.x = pitch
+
+	# Apply the world recipe after the player is in its saved position so the
+	# streamer refreshes around the right chunk. Procgen saves keep generating
+	# outside their saved chunk area; blank/existing saves do not.
+	var world_value: Variant = manifest.get("world", {})
+	var world: Dictionary = (
+		_normalise_world_metadata(world_value)
+		if world_value is Dictionary
+		else _default_world_metadata()
+	)
+	_apply_world_to_streamer(
+		tree.get_first_node_in_group("chunk_streamer"),
+		world
+	)
 
 	var cycle := scene_root.get_node_or_null("CycleController") if scene_root != null else null
 	if cycle != null and manifest.has("cycle_time"):

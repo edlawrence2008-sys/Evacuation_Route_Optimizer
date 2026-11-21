@@ -2294,7 +2294,7 @@ func _collect_scenario() -> Dictionary:
 			})
 
 	if _grid != null and is_instance_valid(_grid):
-		used_cells = _grid.get_used_cells().size()
+		used_cells = _grid.get_used_block_cells().size()
 
 	var quality: String = ""
 
@@ -2378,7 +2378,7 @@ func _write_layout() -> void:
 	if _grid == null or not is_instance_valid(_grid):
 		return
 
-	var used: Array[Vector3i] = _grid.get_used_cells()
+	var used: Array[Vector3i] = _grid.get_used_block_cells()
 	var cells: Array = []
 	var truncated: bool = used.size() > layout_cell_limit
 
@@ -2386,7 +2386,7 @@ func _write_layout() -> void:
 		if cells.size() >= layout_cell_limit:
 			break
 
-		cells.append([cell.x, cell.y, cell.z, _grid.get_cell_item(cell)])
+		cells.append([cell.x, cell.y, cell.z, _grid.get_block_item(cell)])
 
 	_write({
 		"type": "layout",

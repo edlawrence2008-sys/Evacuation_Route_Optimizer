@@ -92,7 +92,7 @@ static func _remove_terrain(
 				)
 				if world_pos.distance_to(center) > radius:
 					continue
-				if grid.get_cell_item(cell) == GridMap.INVALID_CELL_ITEM:
+				if grid.get_block_item(cell) == GridMap.INVALID_CELL_ITEM:
 					continue
 
 				cells.append(cell)
