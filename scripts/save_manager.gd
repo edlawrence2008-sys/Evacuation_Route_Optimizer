@@ -14,7 +14,7 @@ const THUMBNAIL := "thumb.png"
 const VERSION := 1
 const MAP_RENDERER := preload("res://scripts/map_renderer.gd")
 const WORLD_RECIPE_SCRIPT := preload("res://scripts/world/WorldRecipe.gd")
-const HEIGHTMAP_SCRIPT := preload("res://scripts/world/HeightmapTerrainGenerator.gd")
+const WORLD_GENERATOR_REGISTRY := preload("res://scripts/world/WorldGeneratorRegistry.gd")
 const PLACEABLE_SKIP := [
 	"script", "owner", "name", "transform", "position", "rotation",
 	"rotation_degrees", "scale", "scene_file_path", "metadata",
@@ -609,13 +609,13 @@ func _make_world_recipe(world: Dictionary) -> Resource:
 		return null
 
 	var generator_id := String(world.get("generator", "heightmap_v1"))
+	var generator: WorldGenerator = WORLD_GENERATOR_REGISTRY.create(generator_id)
 
-	if generator_id != "heightmap_v1":
+	if generator == null:
 		push_warning("SaveManager: unknown world generator '%s'." % generator_id)
 		return null
 
-	var generator = HEIGHTMAP_SCRIPT.new()
-	generator.apply_params(_heightmap_params(world))
+	generator.apply_params(_generator_params(world))
 
 	var pinned_version := int(world.get("generator_version", 0))
 
@@ -634,23 +634,33 @@ func _make_world_recipe(world: Dictionary) -> Resource:
 	return recipe
 
 
-## Size presets are UI-level names; the generator stores blocks.
-func _heightmap_params(world: Dictionary) -> Dictionary:
-	var size_name := String(world.get("size", "medium"))
-	var extent := Vector2i(256, 256)
+## Size presets are UI-level names; the generator stores blocks. Non-heightmap
+## generators keep their own defaults and receive only `options`.
+func _generator_params(world: Dictionary) -> Dictionary:
+	var generator_id := String(world.get("generator", "heightmap_v1"))
+	var params := {}
 
-	match size_name:
-		"small":
-			extent = Vector2i(128, 128)
-		"large":
-			extent = Vector2i(384, 384)
+	if generator_id == "heightmap_v1":
+		var size_name := String(world.get("size", "medium"))
+		var extent := Vector2i(256, 256)
 
-	var params := {
-		"noise_seed": int(world.get("seed", 0)),
-		"footprint_origin": [-extent.x / 2, -extent.y / 2],
-		"footprint_size": [extent.x, extent.y],
-		"column_depth": 3,
-	}
+		match size_name:
+			"small":
+				extent = Vector2i(128, 128)
+			"large":
+				extent = Vector2i(384, 384)
+
+		params = {
+			"noise_seed": int(world.get("seed", 0)),
+			"footprint_origin": [-extent.x / 2, -extent.y / 2],
+			"footprint_size": [extent.x, extent.y],
+			"column_depth": 3,
+		}
+	elif generator_id == "flat_v1":
+		params = {
+			"noise_seed": int(world.get("seed", 0)),
+			"floor_y": 0,
+		}
 
 	var options: Variant = world.get("options", {})
 

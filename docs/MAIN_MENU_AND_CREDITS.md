@@ -58,7 +58,9 @@ Backdrop: `scenes/menu/menu_backdrop.gd`
   origin.
 - The save details panel adds `Heightmap terrain · seed <n> · <size>` for
   procgen slots.
-- **Extras panel:** Credits, Back.
+- **Extras panel:** Credits, Back. (A short-lived **Generators** tab was removed
+  on 2026-11-21; world generators remain selectable through **New Map → World
+  Settings**, which lists every entry in `WorldGeneratorRegistry`.)
 - **Settings:** Graphics, Gameplay, Audio, Back. These reuse
   `scenes/menu/settings/*.tscn` and `PerformanceSettings`, so changes persist in
   `user://settings.cfg` and apply to the game. Gameplay includes **Simulation

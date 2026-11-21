@@ -8,6 +8,10 @@
 > normalised the objective terms per agent, made the congestion term use peak
 > platoon flow, and let local search swap pairs. Multi-objective terms,
 > disruption-driven re-solve and hazards are still future work.
+> **Known scope limits (2026-11-21):** one solve 1 s after Start, 8 m late-spawn
+> adoption, and exit-only assignments over shared flow fields. Route authoring
+> and route alternatives do not exist. See
+> [`AUTHORED_EVACUATION_ROUTES.md`](AUTHORED_EVACUATION_ROUTES.md).
 > **Applies to (read-only contracts):** `scripts/NPCstuff/Member.gd`,
 > `scripts/gridmap.gd`, `scenes/evac_point.gd`, `scripts/CrowdManager.gd`,
 > `evacuation_manager.gd`, `scripts/GlobalData.gd`, `scripts/sim_recorder.gd`,
@@ -88,7 +92,7 @@ novelty statement.
 | Agent population and identity | Yes | `npc` group; `Member.agent_serial` (monotonic, deterministic), `global_position`, `desired_speed`, `current_state`, `has_evacuation_target`, `destination_exit_id`, `current_path` |
 | Cheap local crowding measurement | Yes | `CrowdManager.get_density_per_m2(pos, radius)` — same-floor count within `density_radius = 1.4 m`, vertical band 0.9 m |
 | Distance cost through the nav graph | Partly | `NavGridMap.estimate_path_distance(from, to)` runs a synchronous A\*; `get_path_distance()` only works **after a flow-field cost field has been baked** |
-| Cost field for many origins at once | Partly | Flow fields (`ensure_flow_field_cell`, budgeted bake) exist, but `enable_flow_fields = false` in the shipped scene and `ensure_flow_field_cell()` returns `false` while disabled |
+| Cost field for many origins at once | Yes | Flow fields (`ensure_flow_field_cell`, budgeted bake) exist and `NavGridMap.enable_flow_fields` defaults to **true**; each exit target cell gets one shared field |
 | Navigation weights the optimizer should respect | Yes, but internal | `_point_weight_scale()` combines wall/gap penalty, surface class (stairs 0.75, slabs 0.9, full block 1.0) and congestion heat; no public read-only accessor |
 | Reactive congestion signal | Yes, but **reactive** | `NavGridMap.report_congestion()` → per-cell heat `[0,1]`, decay `0.35/s`, penalty max `2.0` (3× cost at full heat). It is driven by *stuck reports*, not by predicted density |
 | Navigation change notification | Yes | `NavGridMap.navigation_changed` |

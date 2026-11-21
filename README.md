@@ -127,6 +127,8 @@ with `--script res://tests/...`.
 - [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md) — design for the missing decision layer: contracts, objective, algorithm order, roadmap.
 - [`docs/MAIN_MENU_AND_CREDITS.md`](docs/MAIN_MENU_AND_CREDITS.md) — menu, saves, music, credits.
 - [`docs/RENDERER_AND_ENGINE.md`](docs/RENDERER_AND_ENGINE.md) — renderer/engine decision: stay on `mobile`, profiler evidence, godot_voxel and rimworld3d review.
+- [`docs/JIGSAW_STRUCTURES.md`](docs/JIGSAW_STRUCTURES.md) — feasibility study for deterministic jigsaw structures and an in-game editor (not implemented).
+- [`docs/AUTHORED_EVACUATION_ROUTES.md`](docs/AUTHORED_EVACUATION_ROUTES.md) — why there is no authored route primitive, why the exit-only optimizer feels weak, and the route/feedback options (investigation only).
 - [`docs/archive/`](docs/archive/) — dated changelog, verification log, earlier analyses.
 
 ## Repository layout

@@ -9,6 +9,7 @@ const MENU_LAYER: int = 1 << 9
 const UI_FONT: Font = preload("res://font/dogicapixel.ttf")
 const MENU_FONT: Font = preload("res://font/Pixelta.ttf")
 const MAP_RENDERER := preload("res://scripts/map_renderer.gd")
+const WORLD_GENERATORS := preload("res://scripts/world/WorldGeneratorRegistry.gd")
 
 const UI_SOUND_HOVER := preload("res://sounds/ui/menu_hover.wav")
 const UI_SOUND_CLICK := preload("res://sounds/ui/menu_click.wav")
@@ -150,6 +151,7 @@ var _ui_players: Array[AudioStreamPlayer] = []
 var _ui_play_index: int = 0
 var _ui_type_toggle: bool = false
 var _new_map_world_type: String = "blank"
+var _new_map_generator_id: String = "heightmap_v1"
 var _new_map_world_size: String = "medium"
 var _new_map_seed: int = 0
 var _pending_new_map_name: String = "New Map"
@@ -2157,11 +2159,7 @@ func _world_size_short(size_name: String) -> String:
 
 
 func _generator_label(generator_id: String) -> String:
-	match generator_id:
-		"heightmap_v1":
-			return "Heightmap terrain"
-		_:
-			return "Procedural"
+	return WORLD_GENERATORS.label(generator_id)
 
 
 ## One-line caption for the shared World Type button.
@@ -2169,7 +2167,12 @@ func _world_caption() -> String:
 	if _new_map_world_type == "blank":
 		return "World: Blank Platform"
 
-	return "World: Heightmap " + _world_size_short(_new_map_world_size)
+	var label := WORLD_GENERATORS.label(_new_map_generator_id)
+
+	if WORLD_GENERATORS.supports_sizes(_new_map_generator_id):
+		return "World: %s %s" % [label, _world_size_short(_new_map_world_size)]
+
+	return "World: %s" % label
 
 
 func _all_buttons() -> Array:
@@ -2653,8 +2656,18 @@ func _prompt_world_settings() -> void:
 
 	var type_option := OptionButton.new()
 	type_option.add_item("Blank Platform", 0)
-	type_option.add_item("Heightmap Terrain", 1)
-	type_option.selected = 0 if _new_map_world_type == "blank" else 1
+	var generator_entries: Array[Dictionary] = WORLD_GENERATORS.all()
+	var selected_index := 0
+
+	for index in generator_entries.size():
+		var entry: Dictionary = generator_entries[index]
+		type_option.add_item(String(entry.get("label", entry.get("id", ""))), index + 1)
+		type_option.set_item_metadata(index + 1, String(entry.get("id", "")))
+
+		if String(entry.get("id", "")) == _new_map_generator_id:
+			selected_index = index + 1
+
+	type_option.selected = 0 if _new_map_world_type == "blank" else selected_index
 	type_option.theme = _dialog_theme(16)
 	box.add_child(type_option)
 
@@ -2681,13 +2694,20 @@ func _prompt_world_settings() -> void:
 	seed_edit.theme = _dialog_theme(16)
 	box.add_child(seed_edit)
 
-	var procgen_selected := type_option.selected == 1
-	size_option.disabled = not procgen_selected
+	var procgen_selected := type_option.selected > 0
+	var supports_sizes := WORLD_GENERATORS.supports_sizes(
+		_new_map_generator_id
+	)
+	size_option.disabled = not (procgen_selected and supports_sizes)
 	seed_edit.editable = procgen_selected
 
 	type_option.item_selected.connect(func(index: int) -> void:
-		size_option.disabled = index == 0
-		seed_edit.editable = index == 1
+		var generator_id := String(
+			type_option.get_item_metadata(index)
+		)
+		var sizes := WORLD_GENERATORS.supports_sizes(generator_id)
+		size_option.disabled = index == 0 or not sizes
+		seed_edit.editable = index > 0
 	)
 
 	dialog.add_child(box)
@@ -2697,6 +2717,11 @@ func _prompt_world_settings() -> void:
 		_dialog_open = false
 		_play_ui(UI_SOUND_TYPING_FINISH, -9.0)
 		_new_map_world_type = "blank" if type_option.selected == 0 else "procgen"
+
+		if type_option.selected > 0:
+			_new_map_generator_id = String(
+				type_option.get_item_metadata(type_option.selected)
+			)
 
 		match size_option.selected:
 			0:
@@ -2733,10 +2758,16 @@ func _request_new_map_confirm(new_name: String) -> void:
 	var world_line := "Blank platform"
 
 	if _new_map_world_type == "procgen":
-		world_line = "Heightmap, %s, seed %d" % [
-			_world_size_label(_new_map_world_size),
-			_new_map_seed,
-		]
+		var generator_label := WORLD_GENERATORS.label(_new_map_generator_id)
+
+		if WORLD_GENERATORS.supports_sizes(_new_map_generator_id):
+			world_line = "%s, %s, seed %d" % [
+				generator_label,
+				_world_size_label(_new_map_world_size),
+				_new_map_seed,
+			]
+		else:
+			world_line = "%s, seed %d" % [generator_label, _new_map_seed]
 
 	_confirm(
 		"Create New Map",
@@ -2767,7 +2798,7 @@ func _finish_new_map() -> void:
 
 		world_options = {
 			"type": "procgen",
-			"generator": "heightmap_v1",
+			"generator": _new_map_generator_id,
 			"seed": _new_map_seed,
 			"size": _new_map_world_size,
 			"options": {},
