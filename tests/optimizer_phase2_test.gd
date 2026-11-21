@@ -496,6 +496,19 @@ func _test_inventory_panel() -> void:
 		OptimizerPanel.ALGORITHMS.has(OptimizationRequest.ALGORITHM_ACO)
 	)
 
+	for algorithm: String in OptimizationRequest.ALGORITHMS:
+		_expect(
+			"ui: method %s is selectable" % algorithm,
+			OptimizerPanel.ALGORITHMS.has(algorithm)
+		)
+		_expect(
+			"ui: method %s has a description" % algorithm,
+			OptimizerPanel.ALGORITHM_DESCRIPTIONS.has(algorithm)
+			and not String(
+				OptimizerPanel.ALGORITHM_DESCRIPTIONS[algorithm]
+			).is_empty()
+		)
+
 	panel.call("_on_optimizer_button_pressed")
 	await get_tree().process_frame
 	_expect(
@@ -590,12 +603,12 @@ func _request_and_wait() -> bool:
 	return false
 
 
-func _expect(name: String, condition: bool, detail: String = "") -> void:
+func _expect(label: String, condition: bool, detail: String = "") -> void:
 	_checks += 1
 
 	if condition:
-		print("  PASS  " + name)
+		print("  PASS  " + label)
 		return
 
 	_failures += 1
-	print("  FAIL  " + name + ("" if detail.is_empty() else "  [" + detail + "]"))
+	print("  FAIL  " + label + ("" if detail.is_empty() else "  [" + detail + "]"))

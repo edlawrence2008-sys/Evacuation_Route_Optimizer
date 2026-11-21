@@ -3208,7 +3208,7 @@ func get_connectivity_snapshot() -> Dictionary:
 	for id: int in ids:
 		edge_count += astar.get_point_connections(id).size()
 
-	edge_count /= 2
+	edge_count >>= 1
 
 	if node_count == 0:
 		return {

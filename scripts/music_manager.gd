@@ -51,6 +51,31 @@ func _ready() -> void:
 	_apply_volume()
 
 
+## Stop and release the stream before the autoload is torn down. A playing
+## AudioStreamPlayer keeps its AudioStreamPlayback alive; without this, Godot
+## reports a leaked AudioStreamMP3/AudioStreamPlaybackMP3 at exit.
+func _exit_tree() -> void:
+	if _player != null:
+		if _player.finished.is_connected(_on_finished):
+			_player.finished.disconnect(_on_finished)
+
+		# Synchronise with the audio thread before dropping the stream. MP3
+		# playback is mixed on that thread; stopping without the lock can leave
+		# the AudioStreamPlayback (and its stream) referenced at exit.
+		AudioServer.lock()
+		_player.stop()
+		_player.stream = null
+		AudioServer.unlock()
+		_player.free()
+		_player = null
+
+	_current_source = ""
+	_current_track = {}
+	_playlist.clear()
+	_order.clear()
+	_order_position = -1
+
+
 ## Music level (0..1) stored by PerformanceSettings' Audio page. Kept in sync
 ## through `settings_changed`, so the Volume/Music buttons take effect live.
 func _on_settings_changed() -> void:
@@ -112,14 +137,14 @@ func _load_catalog() -> void:
 
 	if _entries.is_empty():
 		for path: String in FALLBACK_MENU_THEMES:
-			var entry := {
+			var fallback_entry := {
 				"title": _title_from_path(path),
 				"artist": "Unknown",
 				"source": path,
 				"license": "Menu theme",
 			}
-			_entries.append(entry)
-			_catalog[path] = entry
+			_entries.append(fallback_entry)
+			_catalog[path] = fallback_entry
 
 
 func get_music_entries() -> Array:

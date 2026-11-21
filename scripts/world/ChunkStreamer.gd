@@ -701,7 +701,10 @@ func _resolve_floor_item() -> int:
 	if items.has(floor_item):
 		return floor_item
 
-	return items[0] if not items.is_empty() else floor_item
+	if items.is_empty():
+		return floor_item
+
+	return int(items[0])
 
 
 func _make_flat_chunk(chunk: Vector2i) -> Dictionary:

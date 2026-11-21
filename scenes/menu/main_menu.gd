@@ -352,14 +352,14 @@ func _play_buttons_intro(panel: Node) -> void:
 # INPUT
 # ============================================================
 
-func _button_at(position: Vector2) -> Area3D:
+func _button_at(screen_position: Vector2) -> Area3D:
 	if _camera == null or not is_instance_valid(_camera):
 		return null
 	if not _camera.is_inside_tree():
 		return null
 
-	var from: Vector3 = _camera.project_ray_origin(position)
-	var to: Vector3 = from + _camera.project_ray_normal(position) * 10.0
+	var from: Vector3 = _camera.project_ray_origin(screen_position)
+	var to: Vector3 = from + _camera.project_ray_normal(screen_position) * 10.0
 	var query := PhysicsRayQueryParameters3D.create(from, to, MENU_LAYER)
 	query.collide_with_areas = true
 	query.collide_with_bodies = false
@@ -396,8 +396,8 @@ func _set_hover(button: Variant, audible: bool = false) -> void:
 	_sway_to(button)
 
 
-func _click_at(position: Vector2) -> void:
-	var button := _button_at(position)
+func _click_at(screen_position: Vector2) -> void:
+	var button := _button_at(screen_position)
 	if button == null:
 		return
 
@@ -546,14 +546,14 @@ func _dynamic_caption(action: String) -> String:
 	return ""
 
 
-func _set_cursor_sway(position: Vector2) -> void:
+func _set_cursor_sway(screen_position: Vector2) -> void:
 	var viewport_size := get_viewport().get_visible_rect().size
 
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
 
-	_cursor_nx = clampf((position.x / viewport_size.x) * 2.0 - 1.0, -1.0, 1.0)
-	_cursor_ny = clampf((position.y / viewport_size.y) * 2.0 - 1.0, -1.0, 1.0)
+	_cursor_nx = clampf((screen_position.x / viewport_size.x) * 2.0 - 1.0, -1.0, 1.0)
+	_cursor_ny = clampf((screen_position.y / viewport_size.y) * 2.0 - 1.0, -1.0, 1.0)
 
 
 ## `button` is intentionally untyped: the hovered entry can be freed by a saves

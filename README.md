@@ -6,13 +6,14 @@ how the evacuation went.
 
 > **Status: simulation prototype.** Building, crowd simulation, exits, metrics,
 > per-run recording, demo playback and synchronized demo comparison work
-> end-to-end. The *optimizer* is **implemented through phase 3**: spatial
-> cohorts, per-exit cost fields, the objective, five baselines plus ACO, a bridge
-> that applies assignments and adopts late spawns, run recording and a
-> right-side Optimizer panel. Optimized runs assign exits globally; baseline runs
-> keep the local exit choice. Multi-objective terms, disruption re-solve and
-> hazards are still pending. The contracts, objective, measured cost and phased
-> roadmap are in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md). See
+> end-to-end. The *optimizer* is **implemented through phase 3b**: spatial
+> cohorts, per-exit cost fields, the objective, the baselines, ACO, PSO and two
+> min-cost-flow models, a bridge that applies assignments and adopts late
+> spawns, run recording and a right-side Optimizer panel. Optimized runs assign
+> exits globally; baseline runs keep the local exit choice. Multi-objective
+> terms, disruption re-solve and hazards are still pending. The contracts,
+> objective, measured cost and phased roadmap are in
+> [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md). See
 > [`docs/CODEBASE_ANALYSIS.md`](docs/CODEBASE_ANALYSIS.md),
 > [`docs/DEMOS.md`](docs/DEMOS.md), and
 > [`docs/SIM_MEASUREMENTS.md`](docs/SIM_MEASUREMENTS.md).
@@ -95,6 +96,7 @@ need no scene; the bridge tests run as scenes because they use autoloads:
 godot --headless --path . --script res://tests/optimizer_phase1_test.gd
 godot --headless --path . --script res://tests/optimizer_nav_api_test.gd
 godot --headless --path . --script res://tests/optimizer_phase3_test.gd
+godot --headless --path . --script res://tests/optimizer_phase4_test.gd
 godot --headless --path . res://tests/optimizer_phase2_test.tscn
 godot --headless --path . res://tests/optimizer_scale_test.tscn
 godot --headless --path . --script res://tests/demo_ui_test.gd
@@ -135,10 +137,11 @@ them up. Details in [`tests/README.md`](tests/README.md).
 ## Known limitations
 
 - No authored level or shipped scenario; the game scene is a starter platform.
-- The optimizer is implemented through phase 3 (assignment, ACO, recording,
-  side panel, late-spawn adoption). Multi-objective terms, automatic disruption
-  re-solve and hazards are not implemented; a full 600-agent recorded evacuation
-  is still a manual run. Phased plan in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md).
+- The optimizer is implemented through phase 3b (assignment, baselines, ACO,
+  PSO, two min-cost-flow models, recording, side panel, late-spawn adoption).
+  Multi-objective terms, automatic disruption re-solve and hazards are not
+  implemented; a full 600-agent recorded evacuation is still a manual run.
+  Phased plan in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md).
 - Kinematic agents do not collide with the world; contact is a soft force.
 - Exit throughput/capacity are policy models, not door geometry.
 - Full 64-chunk world generation is memory-bound and disabled.

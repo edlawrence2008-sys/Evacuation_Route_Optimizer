@@ -302,7 +302,7 @@ func get_optimizer_configuration() -> Dictionary:
 ## estimate and the application outcome; measured outcomes stay in the run
 ## summary, never in this event.
 func record_optimizer_execution(
-	name: String,
+	algorithm_name: String,
 	duration_usec: int,
 	detail: Dictionary = {}
 ) -> void:
@@ -315,7 +315,7 @@ func record_optimizer_execution(
 	_write({
 		"type": "optimizer",
 		"t": GlobalData.sim_now(),
-		"name": name,
+		"name": algorithm_name,
 		"duration_usec": duration_usec,
 		"detail": detail,
 	})
@@ -1337,6 +1337,11 @@ func _sample(now: float) -> void:
 		if service_rate > 0.0:
 			utilization = admission_rate / service_rate
 
+		var utilization_cell: Variant = null
+
+		if utilization != null:
+			utilization_cell = _n(float(utilization))
+
 		statuses[exit_id] = status
 		exit_rows.append([
 			exit_id,
@@ -1352,7 +1357,7 @@ func _sample(now: float) -> void:
 			_n(float(status.get("max_wait", 0.0))),
 			_n(service_rate),
 			_n(admission_rate),
-			null if utilization == null else _n(float(utilization)),
+			utilization_cell,
 			int(assigned.get(exit_id, 0)),
 			_n(float(accepted) / float(maxi(GlobalData.npcs_evacuated, 1))),
 			int(status.get("rejected", 0)),
@@ -1494,14 +1499,14 @@ func _collect_exits() -> Array:
 		if exit_id.is_empty():
 			continue
 
-		var duplicate: bool = false
+		var is_duplicate: bool = false
 
 		for existing: Dictionary in result:
 			if String(existing["status"].get("exit_id", "")) == exit_id:
-				duplicate = true
+				is_duplicate = true
 				break
 
-		if duplicate:
+		if is_duplicate:
 			continue
 
 		result.append({"node": node, "status": status})
@@ -1518,9 +1523,13 @@ func _connect_exit_signal(node: Node) -> void:
 	if not node.has_signal("availability_changed"):
 		return
 
-	node.availability_changed.connect(_on_exit_availability_changed)
+	if not node.availability_changed.is_connected(_on_exit_availability_changed):
+		node.availability_changed.connect(_on_exit_availability_changed)
 
-	if node.has_signal("queue_event"):
+	if (
+		node.has_signal("queue_event")
+		and not node.queue_event.is_connected(_on_exit_queue_event)
+	):
 		node.queue_event.connect(_on_exit_queue_event)
 
 	_exit_signal_ids[id] = true

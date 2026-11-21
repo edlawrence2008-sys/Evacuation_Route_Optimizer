@@ -42,6 +42,8 @@ var parameters: Dictionary = {
 	"local_search_passes": 4,
 	"aco_ants": 16,
 	"aco_iterations": 40,
+	"pso_swarm": 24,
+	"pso_iterations": 60,
 }
 
 var last_result: OptimizationResult
@@ -344,7 +346,11 @@ func _run_solve() -> void:
 	request.max_cohorts = max_cohorts
 
 	if (
-		request.algorithm == OptimizationRequest.ALGORITHM_ACO
+		request.algorithm
+		in [
+			OptimizationRequest.ALGORITHM_ACO,
+			OptimizationRequest.ALGORITHM_PSO,
+		]
 		and not request.parameters.has("seed")
 	):
 		request.parameters["seed"] = hash([
@@ -605,11 +611,11 @@ func _apply(result: OptimizationResult) -> Dictionary:
 
 		# Do not pull an agent away from a doorway it is about to reach.
 		if bool(node.get("has_evacuation_target")):
-			var target: Vector3 = status.get("destination", Vector3.ZERO)
+			var current_target: Vector3 = status.get("destination", Vector3.ZERO)
 
 			if (
-				target != Vector3.ZERO
-				and node.global_position.distance_to(target) <= COMMIT_RADIUS
+				current_target != Vector3.ZERO
+				and node.global_position.distance_to(current_target) <= COMMIT_RADIUS
 			):
 				skipped += 1
 				continue

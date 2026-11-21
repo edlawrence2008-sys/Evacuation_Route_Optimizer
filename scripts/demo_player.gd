@@ -606,7 +606,7 @@ func _tick_map(index: int) -> Dictionary:
 	return map
 
 
-func _build_exit_markers(tick: Dictionary) -> void:
+func _build_exit_markers(_tick: Dictionary) -> void:
 	var exits: Array = _meta.get("exit_configuration", [])
 
 	if exits.is_empty():
@@ -928,7 +928,7 @@ func _update_scene(force_text: bool) -> void:
 		_update_text(true)
 
 
-func _agent_color(row: Array, serial: int) -> Color:
+func _agent_color(row: Array, _serial: int) -> Color:
 	if _mode == 1:
 		var density := float(row[24]) if row.size() > 24 else 0.0
 		return Color(0.25, 0.55, 0.35).lerp(
@@ -1892,7 +1892,7 @@ func _on_agent_selected(index: int) -> void:
 	_update_scene(true)
 
 
-func _update_text(force: bool) -> void:
+func _update_text(_force: bool) -> void:
 	var relative: float = _time - _started_t
 	_time_label.text = "t %.2f / %.2f s" % [relative, _duration - _started_t]
 	_state_label.text = "PLAYING" if _playing else "PAUSED"
@@ -1908,7 +1908,7 @@ func _update_text(force: bool) -> void:
 	_update_event_log()
 
 
-func _update_inspector(tick: Dictionary) -> void:
+func _update_inspector(_tick: Dictionary) -> void:
 	if _selected_serial < 0:
 		_inspector.text = "[color=#aaa]No agent selected[/color]"
 		return

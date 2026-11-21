@@ -328,7 +328,7 @@ func _add_cluster(
 		snapshot.agents.append({
 			"serial": first_serial + index,
 			"position": Vector3(cell) + Vector3(0.5, 0.75, 0.5)
-				+ Vector3(float(index % 5) * 0.02, 0.0, float(index / 5) * 0.02),
+				+ Vector3(float(index % 5) * 0.02, 0.0, float(index) / 5.0 * 0.02),
 			"cell": cell,
 			"desired_speed": SPEED,
 			"state": "seeking_exit",
@@ -403,15 +403,15 @@ func _solve(
 	return OptimizerManager.solve(snapshot, request)
 
 
-func _expect(name: String, condition: bool, detail: String = "") -> void:
+func _expect(label: String, condition: bool, detail: String = "") -> void:
 	_checks += 1
 
 	if condition:
-		print("  PASS  " + name)
+		print("  PASS  " + label)
 		return
 
 	_failures += 1
-	print("  FAIL  " + name + ("" if detail.is_empty() else "  [" + detail + "]"))
+	print("  FAIL  " + label + ("" if detail.is_empty() else "  [" + detail + "]"))
 
 
 func _is_close(a: float, b: float, tolerance: float) -> bool:

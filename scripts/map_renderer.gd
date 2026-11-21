@@ -148,7 +148,6 @@ static func render_isometric(grid: NavGridMap, image_size: int = 256) -> Image:
 	if columns.is_empty():
 		return null
 
-	var bounds: Rect2i = get_bounds(columns)
 	var heights: Vector2i = get_height_range(columns)
 	var tw: int = 4
 	var th: int = 2
@@ -476,8 +475,8 @@ static func _fit_square(source: Image, image_size: int) -> Image:
 		resized,
 		Rect2i(0, 0, width, height),
 		Vector2i(
-			(image_size - width) / 2,
-			(image_size - height) / 2
+			int((image_size - width) / 2.0),
+			int((image_size - height) / 2.0)
 		)
 	)
 	return square

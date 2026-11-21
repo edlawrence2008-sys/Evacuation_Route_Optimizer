@@ -88,9 +88,9 @@ func evaluate(
 		var exit_completion: float = 0.0
 
 		for arrival_value: Variant in arrivals:
-			var arrival: float = float(arrival_value)
-			completion = maxf(arrival, completion + interval)
-			exit_wait += maxf(completion - arrival, 0.0)
+			var current_arrival: float = float(arrival_value)
+			completion = maxf(current_arrival, completion + interval)
+			exit_wait += maxf(completion - current_arrival, 0.0)
 			exit_completion = completion
 			total_completion += completion
 			total_agents += 1

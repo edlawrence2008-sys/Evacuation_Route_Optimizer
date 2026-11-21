@@ -195,12 +195,12 @@ func update_demo(demo_id: String, changes: Dictionary, save_slug: String = "") -
 
 
 func rename_demo(demo_id: String, new_name: String, save_slug: String = "") -> bool:
-	var name: String = new_name.strip_edges()
+	var trimmed_name: String = new_name.strip_edges()
 
-	if name.is_empty():
+	if trimmed_name.is_empty():
 		return false
 
-	return update_demo(demo_id, {"name": name}, save_slug)
+	return update_demo(demo_id, {"name": trimmed_name}, save_slug)
 
 
 func describe_demo(demo_id: String, description: String, save_slug: String = "") -> bool:
@@ -351,19 +351,19 @@ func _copy_dir(source: String, target: String) -> bool:
 		return false
 
 	dir.list_dir_begin()
-	var name := dir.get_next()
+	var entry_name := dir.get_next()
 
-	while not name.is_empty():
-		if not name.begins_with("."):
-			var from: String = source.path_join(name)
-			var to: String = target.path_join(name)
+	while not entry_name.is_empty():
+		if not entry_name.begins_with("."):
+			var from: String = source.path_join(entry_name)
+			var to: String = target.path_join(entry_name)
 
 			if dir.current_is_dir():
 				_copy_dir(from, to)
 			else:
 				DirAccess.copy_absolute(from, to)
 
-		name = dir.get_next()
+		entry_name = dir.get_next()
 
 	dir.list_dir_end()
 	return true
@@ -376,18 +376,18 @@ func _remove_dir(path: String) -> void:
 		return
 
 	dir.list_dir_begin()
-	var name := dir.get_next()
+	var entry_name := dir.get_next()
 
-	while not name.is_empty():
-		if name != "." and name != "..":
-			var child: String = path.path_join(name)
+	while not entry_name.is_empty():
+		if entry_name != "." and entry_name != "..":
+			var child: String = path.path_join(entry_name)
 
 			if dir.current_is_dir():
 				_remove_dir(child)
 			else:
 				DirAccess.remove_absolute(child)
 
-		name = dir.get_next()
+		entry_name = dir.get_next()
 
 	dir.list_dir_end()
 	DirAccess.remove_absolute(path)

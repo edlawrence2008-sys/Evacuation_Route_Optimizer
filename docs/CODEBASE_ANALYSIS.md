@@ -46,26 +46,28 @@ The game scene starts with a bare **80-cell platform** (10 × 8 at x = −5…4,
 
 **What is still missing.** The optimizer's later phases: the multi-objective terms
 and modes, disruption-driven re-solve, the hazard layer, and Pareto/robustness
-analysis. ACO itself is implemented as a hybrid (local-search seed + ACS ants +
-polish); see `docs/OPTIMIZER.md` §8.2. There is also no automatic layout ranking,
-no obstacle-rich authored level, and no general test suite beyond the optimizer
-harnesses. `SimRecorder` captures replay-ready runs,
+analysis. ACO and PSO are implemented as hybrids (local-search seed + ants or
+particles + polish); see `docs/OPTIMIZER.md` §8.2–8.3. There is also no automatic
+layout ranking, no obstacle-rich authored level, and no general test suite beyond
+the optimizer harnesses. `SimRecorder` captures replay-ready runs,
 the pause menu has a Demo Player and a synchronized **Demo Comparer** (metrics,
 trajectories, exit assignments, disruption responses and configuration deltas),
 but nothing ranks or chooses a layout. The Statistics subview renders congestion
 heat and ideal A* routes, but there is no per-cell measured bottleneck heatmap.
 
-The decision layer is **implemented through phase 3** ([`OPTIMIZER.md`](OPTIMIZER.md)): `optimization/` contains the snapshot/request/result contracts, a spatial cohort builder, per-exit path analysis, a deterministic FIFO queue model, a demand-to-capacity congestion predictor, the objective function, `nearest` / `equal_split` / `greedy` / `exhaustive` / `local_search` / `aco`, and a pure manager. `OptimizerBridge` captures a live snapshot, validates the result, applies it through `Member.set_optimizer_assignment()`, and adopts late spawns from the last result. The right-side **Optimizer** panel (beside the inventory, like the property tab) owns the bridge and describes every method and objective. The recorder writes the optimizer configuration, event and measured summary into the demo. Eight harnesses pass **236 assertions**; a 600-agent scale test solves 28 cohorts in 73-86 ms and applies 600/600 assignments (`tests/README.md`).
+The decision layer is **implemented through phase 3b** ([`OPTIMIZER.md`](OPTIMIZER.md)): `optimization/` contains the snapshot/request/result contracts, a spatial cohort builder, per-exit path analysis, a deterministic FIFO queue model, a demand-to-capacity congestion predictor, the objective function, `nearest` / `equal_split` / `greedy` / `greedy_congestion` / `exhaustive` / `local_search` / `aco` / `pso` / `network_flow` / `time_expanded`, and a pure manager. `OptimizerBridge` captures a live snapshot, validates the result, applies it through `Member.set_optimizer_assignment()`, and adopts late spawns from the last result. The right-side **Optimizer** panel (beside the inventory, like the property tab) owns the bridge and describes every method and objective. The recorder writes the optimizer configuration, event and measured summary into the demo. Nine harnesses pass **407 assertions**; a 600-agent scale test solves 28 cohorts in ~113 ms and applies 600/600 assignments (`tests/README.md`).
 
-What remains: the multi-objective terms and modes (contact force, switching, hazard), automatic disruption re-solve with hysteresis, hazard routing, Pareto/robustness analysis, and a measured predicted-congestion-vs-actual-density study. ACO is a hybrid (local-search seed + ants + polish) and must be reported as such. Until phase 5, a disabled exit invalidates stale results and releases its agents, but the operator must press **Run once**.
+What remains: the multi-objective terms and modes (contact force, switching, hazard), automatic disruption re-solve with hysteresis, hazard routing, Pareto/robustness analysis, and a measured predicted-congestion-vs-actual-density study. ACO/PSO are hybrids (local-search seed + search + polish) and must be reported as such; the two min-cost flow models are relaxations whose rounded assignment and seed guard are recorded. Until phase 5, a disabled exit invalidates stale results and releases its agents, but the operator must press **Run once**.
 
 **Overall health.** The simulation core is intact and runs a defensible crowd model: a reciprocal Social Force Model in `CrowdManager`, kinematic ground-probe locomotion in `Member`, deterministic seeding, lognormal pre-movement, and logit exit choice over route length, queue density, and visibility. A 600-agent, 4-exit run evacuated all 600 with 0 deaths and 0 failed paths in 80 s, peaking at 1.95 persons/m²; the solver costs 3.8–4.4 ms per 30 Hz tick, and the optimized build holds 60 FPS at peak packing. The game scene still does not ship a runnable scenario: Start does nothing until the player places `sim_spawner`/`sim_evac_point` or loads the demo save. **64-chunk full terrain generation** is not achievable with the current per-cell GridMap (9,150 chunks / 2.34 M cells / 2.3 GB, then a crash with 600 agents), so generation is disabled. Remaining debts: `/reset_all` bypasses spawner bookkeeping (**N4**), the shipped map has no authored scenario (**N11**), the icon manifest lags the placeable catalogue (**N17**), flow fields are off so exit choice falls back to straight-line estimates (**N3**), and results are not compared across layouts. The test scene no longer overrides congestion values; it inherits the tuned `2.0 / 0.5 / 0.35` defaults (**N15 resolved**).
 
 **Changes since the 2026-11-15 snapshot.** Full dated entries are in [`archive/CHANGELOG.md`](archive/CHANGELOG.md).
 
+- **2026-11-20 — optimizer consistency pass: PSO, min-cost flow, objective scale.** Added `greedy_congestion`, `pso`, static `network_flow` and `time_expanded` min-cost-flow models, a small `MinCostFlow` solver and shared flow rounding. The objective now divides congestion and queue agent-seconds by the assigned-agent count (the unnormalised queue total had dominated every decision), and the congestion predictor uses peak platoon crossing time instead of route-average flow. Local search gained pair swaps; ACO gained a congestion-priced heuristic, dynamic per-exit load, stagnation resets and a cheap seed; ACO/PSO/flow keep a `nearest`/seed guard. UI exposes the new methods, PSO parameters and a shared ACO/PSO time budget. Benchmark at 600 agents / 40 cohorts / 250 ms: local search 96.16, ACO/PSO 89.43, time-expanded flow 89.29, static flow 97.05, greedy 96.16; at 2 s ACO/PSO reach 84.4 vs local search 86.97. Tests: 151 new assertions (`optimizer_phase4_test.gd`), total 407 across nine harnesses.
+
 - **2026-11-20 — optimizer phase 3, side panel, comparer readability.** ACO (`aco_optimizer.gd`) uses a local-search seed, ACS construction (16 ants / 40 iterations), pheromone updates and a short polish; it never returns worse than its seed, matched exact in 3/5 seeded 6-cohort instances, is deterministic per seed and respects a 250 ms default budget. The optimizer UI moved from a runtime popup to a **right-side panel** beside the inventory, modelled on the property tab, with descriptions for every method and objective and ACO parameters. Late spawns are adopted by the nearest cohort of the last result within 8 m. The Demo Comparer gained per-demo cursor/delta tables and collapsed detail differences; the player and comparer transport bars now scroll horizontally. Tests: 27 ACO assertions, 23 demo-UI assertions, 52 phase-2 assertions.
 
-- **2026-11-20 — optimizer phase 2.** `OptimizerBridge` captures a live snapshot, validates and applies assignments through the new `Member.set_optimizer_assignment()` override; `GlobalData` gains `optimizer_enabled` and `environment_version`; `EvacPoint` and `GlobalData.report_environment_change()` invalidate stale results. The optimizer panel exposes enable, algorithm, objective, cohort size, auto-solve, Run once and status. `SimRecorder` now writes the optimizer configuration into `manifest.metadata.optimizer`, an `optimizer` event per solve and an optimizer summary block; route rows carry reason `optimizer`. Tests: 52 phase-2 assertions (real agents/exits, adoption, recorded run, side panel) and a 600-agent scale test (28 cohorts, 73–86 ms solve, 600/600 applied).
+- **2026-11-20 — optimizer phase 2.** `OptimizerBridge` captures a live snapshot, validates and applies assignments through the new `Member.set_optimizer_assignment()` override; `GlobalData` gains `optimizer_enabled` and `environment_version`; `EvacPoint` and `GlobalData.report_environment_change()` invalidate stale results. The optimizer panel exposes enable, algorithm, objective, cohort size, auto-solve, Run once and status. `SimRecorder` now writes the optimizer configuration into `manifest.metadata.optimizer`, an `optimizer` event per solve and an optimizer summary block; route rows carry reason `optimizer`. Tests: 52 phase-2 assertions (real agents/exits, adoption, recorded run, side panel) and a 600-agent scale test (28 cohorts, ~113 ms solve, 600/600 applied).
 - **2026-11-20 — optimizer phase 1.** `optimization/` contains the pure analysis layer: `SimulationSnapshot`/`OptimizationRequest`/`OptimizationResult`, `CohortBuilder`, `PathAnalyzer`, `CongestionEstimator`, `ExitCostAnalyzer`, `ObjectiveFunction`, five algorithms (`nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`) and `OptimizerManager`. `NavGridMap` gained read-only `build_cost_field_to()`, `get_path_cells()` and `get_nav_point_count()`. Headless tests: 51 pure assertions + 18 real-nav assertions, all passing; benchmark at 600 agents / 40 cohorts: nearest 15 ms, greedy 185 ms, local search ~0.95 s.
 
 - **2026-11-20 — optimizer design and doc refresh.** `docs/OPTIMIZER.md` records the gap analysis against the proposed feature set, the simulation/optimization boundary, the data contracts, the objective function, the algorithm order (baselines before ACO), the dynamic-reoptimization guards, the roadmap and the risks. No runtime behaviour changed by the design pass.
@@ -931,10 +933,11 @@ integration added in phase 2.
   `evacuated`/`dead` agents are excluded. One `build_cost_field_to()` per
   available exit supplies all distances.
 - **Solve.** It calls `OptimizerManager.solve()` in a deferred idle frame. The
-  solve is synchronous; a 600-agent / 28-cohort greedy solve measured **73–86 ms**
-  (~309–417 ms wall including capture, two idle frames and applying 600
-  assignments). ACO uses the same path with a 250 ms default budget. It never
-  runs inside `_physics_process`.
+  solve is synchronous; a 600-agent / 28-cohort greedy solve measured **~113 ms**
+  (~356 ms wall including capture, two idle frames and applying 600
+  assignments). ACO/PSO use the same path with a 250 ms default budget and a
+  local-search seed; the flow models run in 0.15–0.4 s. It never runs inside
+  `_physics_process`.
 - **Validation.** It rejects the whole result when the `environment_version`
   changed, an assigned exit is no longer available, or the result is infeasible.
   Individual agents are skipped rather than invalidating the plan if they were
@@ -961,24 +964,30 @@ integration added in phase 2.
   measured summary fields.
 - **UI.** The Simulation title row has an **Optimizer** button that opens the
   right-side panel. It exposes enable, method, objective, cohort size/max,
-  ACO ants/iterations/budget, auto-solve, **Run once**, status and the last
-  result, with a plain description of each method and objective. See
-  [`OPTIMIZER.md`](OPTIMIZER.md) §12.
-- **Limits.** Phase 3 does not re-solve on disruptions automatically (press
+  ACO ant/iteration parameters, PSO swarm/iteration parameters, a shared time
+  budget, auto-solve, **Run once**, status and the last result, with a plain
+  description of each method and objective. See [`OPTIMIZER.md`](OPTIMIZER.md)
+  §12.
+- **Limits.** Phase 3b does not re-solve on disruptions automatically (press
   **Run once**), does not expose weight sliders, and has no convergence chart or
-  assignment visualisation yet.
+  assignment visualisation yet. ACO/PSO are hybrids; the flow models are
+  relaxations with a rounding step and a seed guard.
 
 ### 4.21 Optimizer algorithm order
 
-`nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search` and `aco` are
-implemented. The exact reference is bounded by `max_combinations` and a time
-budget and reports `exact = false` when it stops. ACO is a hybrid: a
-local-search seed, ACS ant construction (16 ants / 40 iterations by default) and
-a short polish, budgeted at 250 ms. It is never worse than its local seed and
-matched exact in 3/5 seeded 6-cohort instances; it should be reported as a hybrid,
-not as pure pheromone search. At 600 agents / 40 cohorts `nearest` takes ~15 ms,
-`greedy` ~185 ms and `local_search` ~0.95 s; see [`OPTIMIZER.md`](OPTIMIZER.md)
-§8.4.
+`nearest`, `equal_split`, `greedy`, `greedy_congestion`, `exhaustive`,
+`local_search`, `aco`, `pso`, `network_flow` and `time_expanded` are implemented.
+The exact reference is bounded by `max_combinations` and a time budget and
+reports `exact = false` when it stops. Local search now includes pair swaps and
+reaches the exact optimum on the five seeded six-cohort test instances. ACO and
+PSO are hybrids: a local-search seed seeded by `greedy_congestion`, then ACS
+ants / random-key particles and a polish, all inside one budget. ACO is never
+worse than its seed or `nearest`; PSO has the same guard. The two flow models are
+agent-level min-cost flows rounded to one exit per cohort; they report
+`flow_cost`, `seed_cost`, `kept_seed` and `split_cohorts`. At 600 agents / 40
+cohorts / 250 ms: local search 96.16, ACO/PSO 89.43, time-expanded flow 89.29,
+static flow 97.05, greedy 96.16, nearest 110.93; at 2 s ACO/PSO reach 84.4 vs
+local search 86.97. See [`OPTIMIZER.md`](OPTIMIZER.md) §8.4.
 
 ### 4.22 Demo state import - `DemoPlayer` Load State
 
@@ -1406,7 +1415,7 @@ The experimental `SeparationRayShape3D` (`stepper`, 0.5 m, `(0, 0.5, −1)`, hor
 **N17 — Generated item icons lag the placeable catalogue.** (Low)
 `resources/voxel_items.json` lists **13** icons for **15** placeable scenes: `sim_false_boid_emitter` and `sim_false_boid_perch` were added after the last `VoxelItemGenerator.generate_all()` run, so they fall back to scene previews instead of generated 64×64 icons. The block pipeline is current (51 textures / 316 MeshLibrary items after the 2026-11-17 regeneration). Re-run `VoxelItemGenerator.generate_all()` after adding placeables, or document the regeneration step next to the placeable folders.
 
-**N18 — The optimizer is implemented through phase 3; later phases remain.** (Known gap)
+**N18 — The optimizer is implemented through phase 3b; later phases remain.** (Known gap)
 `SimRecorder` records replay-ready per-save demos, the **Demos** page plays them
 in the map (timeline, speed, stepping, agent history, route/exit/density/contact
 views), and **Compare** runs 2–6 recordings on one timeline with metric charts,
@@ -1435,12 +1444,15 @@ work:
   stuck reports and decays; the optimizer's demand-to-capacity term is the
   prediction, and its accuracy is an experimental output.
 
-The baselines and the exact reference remain the comparison set for ACO. ACO is
-seeded by local search and polished, so it is never worse than that seed; report
-it as a hybrid. Measured cost at 600 agents / 40 cohorts: 15 ms `nearest`, 185 ms
-`greedy`, ~0.95 s `local_search`; the bridge's 600-agent / 28-cohort solve took
-73–86 ms and applied 600/600 assignments. See [`OPTIMIZER.md`](OPTIMIZER.md)
-§8.4.
+The baselines and the exact reference remain the comparison set. ACO and PSO are
+seeded by local search and polished, so they are never worse than that seed or
+`nearest`; report them as hybrids. Measured cost at 600 agents / 40 cohorts /
+250 ms: 16 ms `nearest` (110.93), 275 ms `greedy` (96.16), 81 ms
+`greedy_congestion` (97.66), 385 ms `local_search` (96.16), 289 ms `aco`
+(89.43), 333 ms `pso` (89.43), 157 ms `network_flow` (97.05) and 410 ms
+`time_expanded` (89.29); at 2 s ACO/PSO reach 84.4 vs local search 86.97. The
+bridge's 600-agent / 28-cohort solve took ~113 ms and applied 600/600
+assignments. See [`OPTIMIZER.md`](OPTIMIZER.md) §8.4.
 ### 9.2 Carried over from the 2026-10-31 audit
 
 **Resolved:** F1 (`EvacuationManager` missing), F3 (no simulation controls), F5 (property editor corrupting resources), F6 (immutable quotas), F9 (chunk save/load now used by `ChunkStreamer`), F10 (crowd hash every frame), F14 (incomplete weight refresh), F15 (`has_evacuation_target` never cleared), F21 (collision/mesh divergence; every library collider now fits its cell), F37 (`hand_item.gd` now drives the first-person hand and held item). The P2 items “instrument the run” and “results panel” are also done.
@@ -1466,7 +1478,7 @@ it as a hybrid. Measured cost at 600 agents / 40 cohorts: 15 ms `nearest`, 185 m
 | Evacuation success accounting | **Yes** | `EvacuationManager` + `EvacPoint` + results panel |
 | Simulation controls | **Yes** | Simulation panel: start/reset/quota/cap/mode/populate, plus an Optimizer popup (enable, algorithm, objective, cohort size, Run once) |
 | Agent configuration | **Yes** | Agents category edits Member exports for live and future NPCs; bool rows are checkboxes |
-| Exit-assignment optimization | **Yes, optional** | Optimized runs capture a snapshot, solve cohort→exit assignments (`nearest` / `equal_split` / `greedy` / `exhaustive` / `local_search` / `aco`), apply them through a Member override, adopt late spawns and record the estimate; baseline runs keep the local logit choice. Multi-objective terms and disruption re-solve are pending |
+| Exit-assignment optimization | **Yes, optional** | Optimized runs capture a snapshot, solve cohort→exit assignments (`nearest` / `equal_split` / `greedy` / `greedy_congestion` / `exhaustive` / `local_search` / `aco` / `pso` / `network_flow` / `time_expanded`), apply them through a Member override, adopt late spawns and record the estimate; baseline runs keep the local logit choice. Multi-objective terms and disruption re-solve are pending |
 | NPC visual mode | **Yes** | Per-agent 3D model or one of up to six baked `AnimatedSprite3D` variants; sprite mode is the default (`realistic_sprites_mode = true`, `realistic_sprite = random`) and disables LeanAnimator |
 | Sprite rim/bounce lighting | **Yes** | `DirectionalLight3D` → global shader params → 3D mix overlay (unshaded rim + complementary bounce) |
 | Foliage placeables | **Yes** | Billboard or crossed-plane `Sprite3D` placeables, selected by the texture `_billboard` suffix |
@@ -1482,7 +1494,7 @@ it as a hybrid. Measured cost at 600 agents / 40 cohorts: 15 ms `nearest`, 185 m
 | Demo comparer | **Yes** | Compare 2-6 demos on one timeline: overlaid agents, six metric charts, per-demo cursor/delta tables, final-summary table, verdict line, collapsed detail differences, exit-assignment/disruption/config differences; no optimizer ranking or grid-geometry diff |
 | Editable demos | **Partial** | Load State restores agent identity/position/exit/speed/pre-movement/counters, evacuation history, exit totals and spawner counts, and keeps spawners running; exact paths, queue order and contact state are rebuilt |
 | Boot menu, saves browser, music, credits | **Yes** | 3D `main_menu.tscn` boot scene, `saves_only` pause-menu overlay, `MusicManager` autoload with `credits.json`, BGM pop-up, 3D credits/search |
-| Comparison / optimization loop | **Partial** | Demo Comparer reports per-run differences; no baseline selection or layout ranking. The decision layer is documented in `docs/OPTIMIZER.md` and implemented through phase 2 |
+| Comparison / optimization loop | **Partial** | Demo Comparer reports per-run differences; no baseline selection or layout ranking. The decision layer is documented in `docs/OPTIMIZER.md` and implemented through phase 3b |
 | NPC audio/personality | **Abandoned** | `SoundManager` targets removed systems |
 | Minecraft-style clouds | **Yes** | Two merged, face-shaded cloud layers at y = 128 and 256, drifting in opposite directions and tinted by the day/night sun |
 | PSX/CRT art direction | **Partial** | Shaders and addon installed but unused; Consul is the first authored runtime presentation layer |
@@ -1512,7 +1524,7 @@ The gap is still clearest in the name: routing is optimised locally (per-path co
 10. Budget or defer `RandomPopulator` path queries; make Populate set a target population.
 11. Derive `COMPLETE` from spawned/evacuated/alive and a “spawning finished” flag.
 12. Add one real floor plan (classrooms, corridors, two stairwells, a blocked alternative); map save/load now exists, so use it to ship the plan as a starter slot.
-13. Add a **layout ranking** pass on top of the comparer: freeze a baseline, edit, re-run, and score deltas from summaries, trajectories, exit use and disruption responses. **Then continue the optimizer in the order described in [`OPTIMIZER.md`](OPTIMIZER.md).** Phases 1-3 are done: cohort→exit assignment, five baselines + ACO, the bridge, Member overrides, late-spawn adoption, recording and the right-side panel, with 236 assertions across eight harnesses. Phase 4 adds contact/switching terms and modes; phase 5 adds disruption-driven reoptimization with hysteresis; phase 6 adds a hazard input. Do not add RL/GA/PSO or a voxel hazard layer first.
+13. Add a **layout ranking** pass on top of the comparer: freeze a baseline, edit, re-run, and score deltas from summaries, trajectories, exit use and disruption responses. **Then continue the optimizer in the order described in [`OPTIMIZER.md`](OPTIMIZER.md).** Phases 1-3b are done: cohort→exit assignment, the baselines + ACO/PSO + two min-cost-flow models, the bridge, Member overrides, late-spawn adoption, recording and the right-side panel, with 407 assertions across nine harnesses. Phase 4 adds contact/switching terms and modes; phase 5 adds disruption-driven reoptimization with hysteresis; phase 6 adds a hazard input. RL/GA and a voxel hazard layer remain deferred.
 14. Finish decoupling Consul: mark `consul_intro_seen` only after `finished`, persist `dialogue_flags` to `user://`, and remove the duplicate `_build_intro()` copy. (The inventory now only rings the bell; pressing it summons him.)
 15. Re-run `VoxelItemGenerator.generate_all()` after adding placeables; the false-boid pair is the only missing icon entry.
 16. ~~Build the demo player: read a `recording.jsonl`, interpolate agent transforms between ticks, and overlay exits/events from the same file.~~ **Done:** `DemoPlayer` (in-map playback) and `DemoComparer` (synchronized multi-run comparison).
@@ -1546,9 +1558,10 @@ Current-revision checks, condensed. The complete table (2026-11-06 → 2026-11-2
 | Late-agent investigation (2026-11-20) | Data analysis of the 332-agent test-map recordings plus the phase‑1 slow-tail test. Mean speed 1.338 m/s; the latest agents were 0.64–0.88 m/s with 58–83 m routes and 75–113 s expected travel. Agent 304: 0.643 m/s, 72.9 m, 4.0 s pre-movement, 11.2 s stuck → 130.0 s. The optimizer averaged the tail into faster cohorts; a successful path also cleared all cooldowns and nav refreshes re-ran exit choice, causing ~0.5 s exit flips. Fixed by per-agent arrivals (makespan uses each speed), persistent cooldowns, wait-for-earliest-cooldown and same-target re-path. |
 | Per-save exports + recording control (2026-11-20) | `recording_control_test.tscn`: **31/31 PASS**. Runtime exports capture/restore cap, quota, seed, evacuation mode and agent overrides; Vector3 exports round-trip through tagged JSON; the save manifest carries `runtime_exports`. A source demo is continued into a new demo: the run header gets `resumed_from`/`resumed_at`, one tick and one evacuation are copied, the source `end` is dropped, and the combined summary keeps the earlier evacuation. Manual start/stop works without Start; a met quota with no live member auto-finalizes. 0 script errors. |
 | Demo state restore + spawner continuation (2026-11-20) | `demo_restore_test.tscn`: **22/22 PASS**. Verifies the 42-field agent schema mirror, restores serial/speed/position/route counters/distance/spawn time, keeps an exit target, preserves a 3.0 s pre-movement remainder, replays only evacuation events up to the cutoff (average 25 s, max 30 s), restores exit counters, enforces a serial floor, and shows a restored spawner keeps spawning from quota 3 / spawned 1 and stops at its quota. Recording is disabled in the harness; 0 script errors. |
-| Optimizer phase 2 (2026-11-20) | `optimizer_phase2_test.tscn`, real scene: **52/52 PASS**. A real `NavGridMap`, two `EvacPoint`s and 25 `Member`s went through bridge capture → greedy solve → apply; applied+skipped covered every assignment; override routes were labelled `optimizer`; a late spawn was adopted by the nearest cohort; exit B disabled mid-run was never assigned in the next solve; a pre-movement agent stored the assignment, stayed `pre_movement`, and used it after the delay; a block edit bumped `environment_version`; a recorded run wrote `manifest.metadata.optimizer`, an `optimizer` event, optimizer route rows and measured admissions, then the demo was deleted; the right-side Optimizer panel found its bridge, exposed the controls and descriptions, and opened/closed. 0 script errors. |
-| Optimizer 600-agent scale (2026-11-20) | `optimizer_scale_test.tscn`, 600 real agents, 40 × 20 m floor, 4 exits: **7/7 PASS**. 28 cohorts, solve **73–86 ms**, **600/600** assignments applied, wall time **309–417 ms** including capture, two idle frames and application. |
-| Optimizer phase 3 — ACO (2026-11-20) | `optimizer_phase3_test.gd`: **27/27 PASS**. Fixed 3-cohort instance: ACO equals the exact optimum and beats nearest. Five seeded 6-cohort instances: ACO is never worse than local search, never better than exact, and **matched exact in 3/5**. Same seed → same cost and assignments. A 50 ms budget stops before all iterations and still returns a feasible plan. A 28-cohort instance with the default 250 ms budget solved within the planning bound. 0 script errors. |
+| Optimizer phase 2 (2026-11-20) | `optimizer_phase2_test.tscn`, real scene: **72/72 PASS**. A real `NavGridMap`, two `EvacPoint`s and 25 `Member`s went through bridge capture → greedy solve → apply; applied+skipped covered every assignment; override routes were labelled `optimizer`; a late spawn was adopted by the nearest cohort; exit B disabled mid-run was never assigned in the next solve; a pre-movement agent stored the assignment, stayed `pre_movement`, and used it after the delay; a block edit bumped `environment_version`; a recorded run wrote `manifest.metadata.optimizer`, an `optimizer` event, optimizer route rows and measured admissions, then the demo was deleted; the right-side Optimizer panel found its bridge, exposed the controls and descriptions, and opened/closed. 0 script errors. |
+| Optimizer 600-agent scale (2026-11-20) | `optimizer_scale_test.tscn`, 600 real agents, 40 × 20 m floor, 4 exits: **7/7 PASS**. 28 cohorts, solve **~113 ms**, **600/600** assignments applied, wall time **~356 ms** including capture, two idle frames and application. |
+| Optimizer consistency pass — PSO / flow / objective (2026-11-20) | `optimizer_phase4_test.gd`: **151/151 PASS**. Min-cost-flow utility on hand-computed networks; `normalised_terms.queue == terms.queue / N`; every algorithm in the manager, panel and description registry; exact-reference bounds on five seeded instances; local search with swaps matched exact **5/5**; deterministic PSO/flow/greedy-congestion; PSO/flow seed guards. Headless benchmark, 600 agents / 40 cohorts / 250 ms: nearest 110.93, greedy 96.16, greedy_congestion 97.66, local_search 96.16, aco/pso 89.43, network_flow 97.05, time_expanded 89.29; at 2 s aco/pso 84.4 vs local_search 86.97. 0 script errors. |
+| Optimizer phase 3 — ACO (2026-11-20) | `optimizer_phase3_test.gd`: **27/27 PASS**. Fixed 3-cohort instance: ACO equals the exact optimum and beats nearest. Five seeded 6-cohort instances: ACO is never worse than local search, never better than exact, and **matched exact in 5/5** after the swap phase. Same seed → same cost and assignments. A 50 ms budget stops before all iterations and still returns a feasible plan. A 28-cohort instance with the default 250 ms budget solved within the planning bound. 0 script errors. |
 | Demo UI — scroll + comparer tables (2026-11-20) | `demo_ui_test.gd`: **28/28 PASS**. Both the Demo Player and Demo Comparer transport bars contain a horizontal auto-scroll container; the player's bottom panel reserves the extra height and exposes **Load State**; the comparer has values/deltas table boxes, a **Final Summary** table, a **Verdict** line, a collapsed details section, a 3-column values grid (21 cells) and a 2-column delta grid (14 cells); the table shows A=10, B=12 and Δ=+2 for a synthetic pair. 0 script errors. |
 | Optimizer phase 1 (2026-11-20) | Headless, no scene, no autoloads. `optimizer_phase1_test.gd`: **51/51 PASS** (3 cohorts × 20 agents; slow-tail makespan uses a 0.6 m/s agent's own arrival, not the cohort mean; exhaustive = analytic minimum and ≤ nearest/equal/greedy; local search between exhaustive and greedy; queue wait 190 s at 1/s; rate 0 → 0 wait; congestion delay > 0 for 60 agents on one exit; unreachable cohort leaves 40 assigned and reports `unreachable`; unavailable exit never assigned; deterministic cost/assignments; cohort cap merges 3 → 2; exhaustive refuses a capped search space; weight presets merge overrides). `optimizer_nav_api_test.gd`: **18/18 PASS** on a real `NavGridMap` (50-cell cost field, zero-cost target, weighted distance matches A* at 2.00 m, `cell_limit = 5`, 4-cell disconnected island, unreachable point returns empty field/path). Benchmark, 600 agents / 40 cohorts / 4 exits: `nearest` 15 ms / 1 eval, `greedy` 185 ms / 200 evals, `local_search` 953 ms / 709 evals, exhaustive refused 4^40. 0 script errors. |
 | Optimizer design audit (2026-11-20) | Source-checked only; no runtime change. Confirmed the contracts the design relies on: `EvacPoint.get_exit_status()` exposes id/availability/service rate/queue/capacity/occupancy; `Member.request_evacuation_target()` is public while `_choose_evacuation_point()` and `choose_next_action()` re-choose each cycle; `NavGridMap.estimate_path_distance()` is synchronous A* while `get_path_distance()` requires a baked flow field and `ensure_flow_field_cell()` returns false while `enable_flow_fields = false`; `CrowdManager.get_density_per_m2()` is a 1.4 m same-floor probe; `SimRecorder.record_optimizer_execution()` and the manifest `optimizer` block exist but nothing emits them. |

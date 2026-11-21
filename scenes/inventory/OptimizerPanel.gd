@@ -18,9 +18,13 @@ const ALGORITHMS: Array[String] = [
 	OptimizationRequest.ALGORITHM_NEAREST,
 	OptimizationRequest.ALGORITHM_EQUAL_SPLIT,
 	OptimizationRequest.ALGORITHM_GREEDY,
+	OptimizationRequest.ALGORITHM_GREEDY_CONGESTION,
 	OptimizationRequest.ALGORITHM_EXHAUSTIVE,
 	OptimizationRequest.ALGORITHM_LOCAL_SEARCH,
 	OptimizationRequest.ALGORITHM_ACO,
+	OptimizationRequest.ALGORITHM_PSO,
+	OptimizationRequest.ALGORITHM_NETWORK_FLOW,
+	OptimizationRequest.ALGORITHM_TIME_EXPANDED,
 ]
 
 const MODE_LABELS: Array[String] = [
@@ -35,9 +39,13 @@ const ALGORITHM_DESCRIPTIONS: Dictionary = {
 	"nearest": "Control condition. Each cohort walks to the exit with the shortest predicted travel time; queues and crowding are ignored.",
 	"equal_split": "Balances the number of agents per exit and ignores geometry except reachability. Tests whether an even split is actually better.",
 	"greedy": "Assigns the largest cohorts first and evaluates every reachable exit with the full objective. Fast, deterministic and capacity-aware.",
+	"greedy_congestion": "Assigns cohorts one by one and prices only the marginal queue and corridor congestion each one adds. Cheaper than full evaluations and explicitly congestion-aware.",
 	"exhaustive": "Tries every cohort-to-exit combination. Exact for small instances; stops at the combination or time budget and reports when it is not proven.",
-	"local_search": "Starts from greedy and moves cohorts between exits while the objective improves. The practical reference for ACO.",
-	"aco": "Ant colony optimization: pheromone-guided assignments seeded by local search. Ants and iterations trade quality for time.",
+	"local_search": "Starts from greedy, moves cohorts between exits and swaps pairs while the objective improves. The practical reference for the metaheuristics.",
+	"aco": "Ant colony: pheromone-guided assignments with a congestion-priced heuristic, seeded by local search and restarted on stagnation.",
+	"pso": "Particle swarm over a random-key encoding, seeded by local search. Swarm movement can jump between local optima that a hill climb cannot.",
+	"network_flow": "Min-cost flow in a static transportation network. Exits are capacity-limited over a horizon; timing and queue order are ignored.",
+	"time_expanded": "Min-cost flow in a time-expanded network: exit service slots exist per time bin, the current queue occupies early slots, and waiting has a cost.",
 }
 
 const MODE_DESCRIPTIONS: Dictionary = {
@@ -65,6 +73,9 @@ var _aco_params: GridContainer = null
 var _ants: SpinBox = null
 var _iterations: SpinBox = null
 var _budget: SpinBox = null
+var _pso_params: GridContainer = null
+var _swarm: SpinBox = null
+var _pso_iterations: SpinBox = null
 
 
 func _ready() -> void:
@@ -246,7 +257,35 @@ func _build_ui() -> void:
 	_iterations.value_changed.connect(_on_iterations_changed)
 	_aco_params.add_child(_iterations)
 
-	_aco_params.add_child(_field_label("Budget ms"))
+	_pso_params = GridContainer.new()
+	_pso_params.columns = 2
+	_pso_params.add_theme_constant_override("h_separation", 6)
+	_pso_params.add_theme_constant_override("v_separation", 2)
+	column.add_child(_pso_params)
+
+	_pso_params.add_child(_field_label("Swarm"))
+
+	_swarm = SpinBox.new()
+	_swarm.min_value = 2
+	_swarm.max_value = 128
+	_swarm.step = 1
+	_swarm.value = 24
+	_swarm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_swarm.value_changed.connect(_on_swarm_changed)
+	_pso_params.add_child(_swarm)
+
+	_pso_params.add_child(_field_label("Iterations"))
+
+	_pso_iterations = SpinBox.new()
+	_pso_iterations.min_value = 1
+	_pso_iterations.max_value = 500
+	_pso_iterations.step = 1
+	_pso_iterations.value = 60
+	_pso_iterations.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pso_iterations.value_changed.connect(_on_pso_iterations_changed)
+	_pso_params.add_child(_pso_iterations)
+
+	column.add_child(_field_label("Time budget ms (ACO/PSO)"))
 
 	_budget = SpinBox.new()
 	_budget.min_value = 50
@@ -255,7 +294,7 @@ func _build_ui() -> void:
 	_budget.value = 250
 	_budget.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_budget.value_changed.connect(_on_budget_changed)
-	_aco_params.add_child(_budget)
+	column.add_child(_budget)
 
 	_auto = CheckButton.new()
 	_auto.text = "Solve at run start"
@@ -316,11 +355,15 @@ func _sync_controls() -> void:
 	_iterations.set_value_no_signal(
 		int(bridge.parameters.get("aco_iterations", 40))
 	)
+	_swarm.set_value_no_signal(int(bridge.parameters.get("pso_swarm", 24)))
+	_pso_iterations.set_value_no_signal(
+		int(bridge.parameters.get("pso_iterations", 60))
+	)
 	_budget.set_value_no_signal(
 		float(bridge.parameters.get("time_budget_ms", 250.0))
 	)
 	_update_descriptions()
-	_update_aco_visibility()
+	_update_search_visibility()
 
 
 func _update_descriptions() -> void:
@@ -332,9 +375,10 @@ func _update_descriptions() -> void:
 	_mode_description.text = String(MODE_DESCRIPTIONS.get(objective, ""))
 
 
-func _update_aco_visibility() -> void:
+func _update_search_visibility() -> void:
 	var algorithm: String = ALGORITHMS[maxi(_algorithm.selected, 0)]
 	_aco_params.visible = algorithm == OptimizationRequest.ALGORITHM_ACO
+	_pso_params.visible = algorithm == OptimizationRequest.ALGORITHM_PSO
 
 
 func _on_enabled_toggled(pressed: bool) -> void:
@@ -348,7 +392,7 @@ func _on_algorithm_selected(index: int) -> void:
 
 	bridge.set_algorithm(ALGORITHMS[index])
 	_update_descriptions()
-	_update_aco_visibility()
+	_update_search_visibility()
 
 
 func _on_mode_selected(index: int) -> void:
@@ -386,6 +430,16 @@ func _on_ants_changed(value: float) -> void:
 func _on_iterations_changed(value: float) -> void:
 	if bridge != null:
 		bridge.parameters["aco_iterations"] = int(value)
+
+
+func _on_swarm_changed(value: float) -> void:
+	if bridge != null:
+		bridge.parameters["pso_swarm"] = int(value)
+
+
+func _on_pso_iterations_changed(value: float) -> void:
+	if bridge != null:
+		bridge.parameters["pso_iterations"] = int(value)
 
 
 func _on_budget_changed(value: float) -> void:
@@ -426,6 +480,7 @@ func _on_bridge_result(
 		parts.append("%s %d" % [String(key), int(counts[key])])
 
 	var terms: Dictionary = result.terms
+	var normalised: Dictionary = result.detail.get("normalised_terms", {})
 	var solver: Dictionary = result.detail.get("solver", {})
 	var budget_note: String = ""
 
@@ -437,7 +492,7 @@ func _on_bridge_result(
 	_result.text = (
 		"%s\n"
 		+ "predicted T %.1f s · avg %.1f s\n"
-		+ "queue %.0f s · congestion %.0f s\n"
+		+ "queue %.0f s (%.1f s/agent) · congestion %.0f s (%.1f s/agent)\n"
 		+ "applied %d · skipped %d · %d cohorts · %.0f ms%s\n"
 		+ "exits: %s"
 	) % [
@@ -445,7 +500,9 @@ func _on_bridge_result(
 		result.estimated_completion_time,
 		result.estimated_average_time,
 		float(terms.get("queue", 0.0)),
+		float(normalised.get("queue", 0.0)),
 		float(terms.get("congestion", 0.0)),
+		float(normalised.get("congestion", 0.0)),
 		applied,
 		skipped,
 		result.cohorts.size(),

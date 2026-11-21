@@ -15,12 +15,20 @@ static func algorithm_label(algorithm: String) -> String:
 			return "Equal split"
 		OptimizationRequest.ALGORITHM_GREEDY:
 			return "Capacity-aware greedy"
+		OptimizationRequest.ALGORITHM_GREEDY_CONGESTION:
+			return "Congestion-aware greedy"
 		OptimizationRequest.ALGORITHM_EXHAUSTIVE:
 			return "Exhaustive (reference)"
 		OptimizationRequest.ALGORITHM_LOCAL_SEARCH:
 			return "Local search"
 		OptimizationRequest.ALGORITHM_ACO:
 			return "Ant colony (hybrid ACS)"
+		OptimizationRequest.ALGORITHM_PSO:
+			return "Particle swarm (random-key)"
+		OptimizationRequest.ALGORITHM_NETWORK_FLOW:
+			return "Network flow (min-cost)"
+		OptimizationRequest.ALGORITHM_TIME_EXPANDED:
+			return "Time-expanded min-cost flow"
 		_:
 			return algorithm
 
@@ -81,6 +89,10 @@ static func solve(
 			solver = EqualSplitOptimizer.solve(cohorts, analyzer)
 		OptimizationRequest.ALGORITHM_GREEDY:
 			solver = GreedyCapacityOptimizer.solve(cohorts, analyzer, evaluator)
+		OptimizationRequest.ALGORITHM_GREEDY_CONGESTION:
+			solver = GreedyCongestionOptimizer.solve(
+				cohorts, analyzer, evaluator, request.parameters
+			)
 		OptimizationRequest.ALGORITHM_EXHAUSTIVE:
 			solver = ExhaustiveOptimizer.solve(
 				cohorts, analyzer, evaluator, request.parameters
@@ -91,6 +103,18 @@ static func solve(
 			)
 		OptimizationRequest.ALGORITHM_ACO:
 			solver = AcoOptimizer.solve(
+				cohorts, analyzer, evaluator, request.parameters
+			)
+		OptimizationRequest.ALGORITHM_PSO:
+			solver = PsoOptimizer.solve(
+				cohorts, analyzer, evaluator, request.parameters
+			)
+		OptimizationRequest.ALGORITHM_NETWORK_FLOW:
+			solver = NetworkFlowOptimizer.solve(
+				cohorts, analyzer, evaluator, request.parameters
+			)
+		OptimizationRequest.ALGORITHM_TIME_EXPANDED:
+			solver = TimeExpandedFlowOptimizer.solve(
 				cohorts, analyzer, evaluator, request.parameters
 			)
 		_:
@@ -192,6 +216,11 @@ static func solve(
 		"assigned_agents": agent_exit_assignments.size(),
 		"overloaded_cells": int(evaluation.get("overloaded_cells", 0)),
 		"congestion_max_ratio": float(evaluation.get("congestion_max_ratio", 0.0)),
+		"normalised_terms": evaluation.get("normalised_terms", {}),
+		"congestion_average": float(evaluation.get("congestion_average", 0.0)),
+		"queue_average": float(evaluation.get("queue_average", 0.0)),
+		"total_agents": int(evaluation.get("total_agents", 0)),
+		"units": evaluation.get("units", {}),
 		"per_exit": evaluation.get("per_exit", {}),
 		"solver": solver.get("detail", {}),
 		"solver_error": solver_error,

@@ -105,7 +105,7 @@ const VIVID_PALETTE: Array[Color] = [
 @export_range(0.0, 1.0, 0.01) var wake_dither: float = 0.5
 ## Texel size of the dither pattern. 1 is per-texel (finest); larger values
 ## make the dither coarser.
-@export_range(1, 4, 1) var wake_dither_scale: int = 0.5
+@export_range(1, 4, 1) var wake_dither_scale: int = 1
 ## How ragged the low-amplitude edge is. 0 = smooth edge, higher = more holes.
 @export_range(0.0, 2.0, 0.05) var wake_edge_dither: float = 0
 @export var wave_max_samples: int = 32768
@@ -661,12 +661,12 @@ func _inject_entity_brushes() -> void:
 			continue
 
 		var speed := distance / maxf(brush_interval, 0.001)
-		var radius := _brush_radius(node)
-		var strength := (
+		var sweep_radius := _brush_radius(node)
+		var sweep_strength := (
 			clampf(0.07 + speed * 0.02, 0.07, 0.24)
-			* clampf(radius / 0.3, 0.7, 2.0)
+			* clampf(sweep_radius / 0.3, 0.7, 2.0)
 		)
-		_inject_brush(world, radius, strength)
+		_inject_brush(world, sweep_radius, sweep_strength)
 		_brush_last_pos[id] = world
 		_air_y.erase(id)
 
@@ -714,7 +714,7 @@ func _spawn_ambient_wave() -> void:
 			continue
 
 		var ix := index % _wave_width
-		var iz := int(index / _wave_width)
+		var iz := int(float(index) / float(_wave_width))
 		var local := Vector3(
 			_wave_origin.x + (float(ix) + 0.5) * _wave_step_actual,
 			0.0,
@@ -1203,17 +1203,17 @@ func _spawn_surface_water_particles() -> void:
 
 	var candidates: Array[Vector3i] = []
 	for key in _cells.keys():
-		var cell: Vector3i = key
-		var height := get_height(cell)
+		var candidate_cell: Vector3i = key
+		var height := get_height(candidate_cell)
 		if height < 0.9 or height > 1.1:
 			continue
-		if get_height(cell + Vector3i.DOWN) < _water_capacity(
-			cell + Vector3i.DOWN
+		if get_height(candidate_cell + Vector3i.DOWN) < _water_capacity(
+			candidate_cell + Vector3i.DOWN
 		) - 0.1:
 			continue
-		if _is_covered_above(cell):
+		if _is_covered_above(candidate_cell):
 			continue
-		candidates.append(cell)
+		candidates.append(candidate_cell)
 
 	if candidates.is_empty():
 		return
@@ -2128,7 +2128,7 @@ func _create_splash_pool() -> void:
 			rotated.rotate_90(true)
 		var dst := Vector2i(
 			(frame % 2) * width,
-			int(frame / 2) * height
+			int(frame >> 1) * height
 		)
 		atlas.blit_rect(
 			rotated,
@@ -2256,9 +2256,12 @@ func _set_chunk_foam_mesh(
 			instance.name = (
 				"WaterFoam_%d_%d" if key == "foam" else "WaterCorners_%d_%d"
 			) % [chunk.x, chunk.y]
-			instance.material_override = (
-				_foam_material if key == "foam" else _foam_corner_material
-			)
+			var chosen_material: Material = _foam_material
+
+			if key != "foam":
+				chosen_material = _foam_corner_material
+
+			instance.material_override = chosen_material
 			instance.cast_shadow = (
 				GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			)
@@ -2472,7 +2475,6 @@ func _add_horizontal_foam(
 	var texel := 1.0 / float(MAX_HEIGHT)
 	var band := _foam_band_texels(height, cell_size)
 	var foam_width := float(band) * texel
-	var v_near := 1.0
 	var v_far := 1.0 - float(band) / float(FOAM_TEXELS)
 	var u_scale := 1.0 / (texel * FOAM_TEXTURE_WIDTH)
 	var count := 0

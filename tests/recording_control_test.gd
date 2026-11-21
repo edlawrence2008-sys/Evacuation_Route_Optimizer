@@ -355,18 +355,18 @@ func _remove_dir(path: String) -> void:
 		return
 
 	dir.list_dir_begin()
-	var name := dir.get_next()
+	var entry_name := dir.get_next()
 
-	while not name.is_empty():
-		if name != "." and name != "..":
-			var child := path.path_join(name)
+	while not entry_name.is_empty():
+		if entry_name != "." and entry_name != "..":
+			var child := path.path_join(entry_name)
 
 			if dir.current_is_dir():
 				_remove_dir(child)
 			else:
 				DirAccess.remove_absolute(child)
 
-		name = dir.get_next()
+		entry_name = dir.get_next()
 
 	dir.list_dir_end()
 	DirAccess.remove_absolute(path)
@@ -378,20 +378,20 @@ func _finish() -> void:
 	get_tree().quit(1 if _failures > 0 else 0)
 
 
-func _expect(name: String, condition: bool, detail: String = "") -> void:
+func _expect(label: String, condition: bool, detail: String = "") -> void:
 	_checks += 1
 
 	if condition:
-		print("  PASS  " + name)
+		print("  PASS  " + label)
 		return
 
 	_failures += 1
-	print("  FAIL  " + name + ("" if detail.is_empty() else "  [" + detail + "]"))
+	print("  FAIL  " + label + ("" if detail.is_empty() else "  [" + detail + "]"))
 
 
 func _is_close(value: float, expected: float, tolerance: float) -> bool:
 	return absf(value - expected) <= tolerance
 
 
-func _fail(name: String) -> void:
-	_expect(name, false)
+func _fail(label: String) -> void:
+	_expect(label, false)

@@ -1081,12 +1081,12 @@ func _item_ao_material(material: BaseMaterial3D) -> BaseMaterial3D:
 	var cached: Variant = _item_ao_material_cache.get(key)
 	if cached is BaseMaterial3D:
 		return cached
-	var duplicate := material.duplicate() as BaseMaterial3D
-	if duplicate == null:
+	var duplicated_material := material.duplicate() as BaseMaterial3D
+	if duplicated_material == null:
 		return material
-	duplicate.vertex_color_use_as_albedo = true
-	_item_ao_material_cache[key] = duplicate
-	return duplicate
+	duplicated_material.vertex_color_use_as_albedo = true
+	_item_ao_material_cache[key] = duplicated_material
+	return duplicated_material
 
 
 ## Per-vertex AO for slabs, stairs, panels and other non-full items. The
@@ -1171,7 +1171,7 @@ func _emit_ctm_block(
 			continue
 
 		var axis: int = direction_id >> 1
-		var sign: int = 1 if (direction_id & 1) == 1 else -1
+		var face_sign: int = 1 if (direction_id & 1) == 1 else -1
 		var u_dir: Vector3i
 		var v_dir: Vector3i
 
@@ -1179,13 +1179,13 @@ func _emit_ctm_block(
 		# "down" the sprite, matching Image row order.
 		match axis:
 			0:
-				u_dir = Vector3i(0, 0, -sign)
+				u_dir = Vector3i(0, 0, -face_sign)
 				v_dir = Vector3i(0, -1, 0)
 			1:
 				u_dir = Vector3i(1, 0, 0)
-				v_dir = Vector3i(0, 0, sign)
+				v_dir = Vector3i(0, 0, face_sign)
 			_:
-				u_dir = Vector3i(sign, 0, 0)
+				u_dir = Vector3i(face_sign, 0, 0)
 				v_dir = Vector3i(0, -1, 0)
 
 		# Mask bit order: N=1 E=2 S=4 W=8 NE=16 SE=32 SW=64 NW=128, where N is
@@ -1206,7 +1206,7 @@ func _emit_ctm_block(
 				mask |= int(check[0])
 
 		_emit_ctm_quad(
-			surface, axis, sign, u_dir, v_dir, cell, size, mask, direction_id
+			surface, axis, face_sign, u_dir, v_dir, cell, size, mask, direction_id
 		)
 		_debug_faces += 1
 		_debug_quads += 1
@@ -1215,7 +1215,7 @@ func _emit_ctm_block(
 func _emit_ctm_quad(
 	surface: MeshSurface,
 	axis: int,
-	sign: int,
+	face_sign: int,
 	u_dir: Vector3i,
 	v_dir: Vector3i,
 	cell: Vector3i,
@@ -1232,7 +1232,7 @@ func _emit_ctm_quad(
 	# geometry would shift the quad one cell whenever a texture axis points
 	# negative.
 	var p00: Vector3 = cell_min
-	p00[axis] += size[axis] if sign > 0 else 0.0
+	p00[axis] += size[axis] if face_sign > 0 else 0.0
 
 	var p10: Vector3 = p00
 	p10[u_axis] += size[u_axis]
@@ -1244,11 +1244,11 @@ func _emit_ctm_quad(
 	p01[v_axis] += size[v_axis]
 
 	var normal: Vector3 = Vector3.ZERO
-	normal[axis] = float(sign)
+	normal[axis] = float(face_sign)
 
 	var tile := Vector2(
 		float(mask % CTM_ATLAS_GRID),
-		float(mask / CTM_ATLAS_GRID)
+		float(mask) / float(CTM_ATLAS_GRID)
 	)
 	var first_index: int = surface.vertices.size()
 	var corners: Array[Vector3] = [p00, p10, p11, p01]
@@ -1283,7 +1283,7 @@ func _emit_ctm_quad(
 		else:
 			surface.colors.append(Color.WHITE)
 
-	if sign > 0:
+	if face_sign > 0:
 		surface.indices.append_array(PackedInt32Array([
 			first_index,
 			first_index + 2,

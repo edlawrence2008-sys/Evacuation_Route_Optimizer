@@ -13,9 +13,13 @@ const MODE_DISRUPTION := "disruption"
 const ALGORITHM_NEAREST := "nearest"
 const ALGORITHM_EQUAL_SPLIT := "equal_split"
 const ALGORITHM_GREEDY := "greedy"
+const ALGORITHM_GREEDY_CONGESTION := "greedy_congestion"
 const ALGORITHM_EXHAUSTIVE := "exhaustive"
 const ALGORITHM_LOCAL_SEARCH := "local_search"
 const ALGORITHM_ACO := "aco"
+const ALGORITHM_PSO := "pso"
+const ALGORITHM_NETWORK_FLOW := "network_flow"
+const ALGORITHM_TIME_EXPANDED := "time_expanded"
 
 const MODES: Array[String] = [
 	MODE_FASTEST,
@@ -29,9 +33,13 @@ const ALGORITHMS: Array[String] = [
 	ALGORITHM_NEAREST,
 	ALGORITHM_EQUAL_SPLIT,
 	ALGORITHM_GREEDY,
+	ALGORITHM_GREEDY_CONGESTION,
 	ALGORITHM_EXHAUSTIVE,
 	ALGORITHM_LOCAL_SEARCH,
 	ALGORITHM_ACO,
+	ALGORITHM_PSO,
+	ALGORITHM_NETWORK_FLOW,
+	ALGORITHM_TIME_EXPANDED,
 ]
 
 var snapshot: SimulationSnapshot

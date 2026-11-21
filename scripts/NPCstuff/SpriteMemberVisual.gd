@@ -413,7 +413,9 @@ func _first_animation() -> StringName:
 		return &""
 
 	var names: PackedStringArray = sprite_frames.get_animation_names()
-	return names[0] if not names.is_empty() else &""
+	if names.is_empty():
+		return &""
+	return StringName(names[0])
 
 
 func _warn_missing_animations() -> void:

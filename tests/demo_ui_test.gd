@@ -221,12 +221,12 @@ func _has_button_text(node: Node, text: String) -> bool:
 	return false
 
 
-func _expect(name: String, condition: bool, detail: String = "") -> void:
+func _expect(label: String, condition: bool, detail: String = "") -> void:
 	_checks += 1
 
 	if condition:
-		print("  PASS  " + name)
+		print("  PASS  " + label)
 		return
 
 	_failures += 1
-	print("  FAIL  " + name + ("" if detail.is_empty() else "  [" + detail + "]"))
+	print("  FAIL  " + label + ("" if detail.is_empty() else "  [" + detail + "]"))

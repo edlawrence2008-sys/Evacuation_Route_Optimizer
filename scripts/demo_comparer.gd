@@ -920,7 +920,7 @@ func _positions_at(demo: Dictionary, rel: float) -> Dictionary:
 	return positions
 
 
-func _update_text(force: bool) -> void:
+func _update_text(_force: bool) -> void:
 	if _demos.is_empty():
 		return
 

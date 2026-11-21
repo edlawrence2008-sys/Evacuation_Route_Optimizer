@@ -1,10 +1,13 @@
 # Evacuation route optimizer — design and gap analysis
 
-> **Status:** 2026-11-20 · **Phases 1–3 implemented.** The analysis layer, the
+> **Status:** 2026-11-20 · **Phases 1–3b implemented.** The analysis layer, the
 > simulation bridge, ACO and the side-panel UI exist. Optimized runs assign
 > cohorts to exits, adopt late spawns, record the estimate and the measured
-> outcome. Multi-objective terms, disruption-driven re-solve and hazards are
-> still future work.
+> outcome. The 2026-11-20 consistency pass added a congestion-aware greedy,
+> PSO, a static min-cost-flow model and a time-expanded min-cost-flow model,
+> normalised the objective terms per agent, made the congestion term use peak
+> platoon flow, and let local search swap pairs. Multi-objective terms,
+> disruption-driven re-solve and hazards are still future work.
 > **Applies to (read-only contracts):** `scripts/NPCstuff/Member.gd`,
 > `scripts/gridmap.gd`, `scenes/evac_point.gd`, `scripts/CrowdManager.gd`,
 > `evacuation_manager.gd`, `scripts/GlobalData.gd`, `scripts/sim_recorder.gd`,
@@ -66,7 +69,8 @@ novelty statement.
 | Add a voxel hazard layer now? | **No.** There is no hazard field today and no navigation concept of danger. Add it as a read-only input after the assignment loop works. |
 | Enumerate per-agent assignments? | **No.** Optimize spatial cohorts; allow per-agent re-assignment only at apply time. |
 | Enumerate alternative *paths* per exit? | **Not in v1.** The nav graph already returns the cheapest path for the current weights. The optimizer’s lever is the exit assignment and the cost weights, not a path list. |
-| Add RL / GA / PSO? | **No.** They add search machinery without a validated objective; the proposal is right to defer them. |
+| Add RL / GA / PSO? | **PSO is now a reference metaheuristic.** RL and GA stay deferred until the objective is validated against measured outcomes; a second search algorithm is only useful once the evaluator is trustworthy. |
+| Add network flow? | **Yes, as two models.** A static min-cost transportation flow and a time-expanded min-cost flow expose the assignment as a flow problem and show the cost of ignoring arrival timing. |
 | Claim novelty? | **Not yet.** Document the method and the measured effect; make no novelty claim before the literature review. |
 
 ---
@@ -155,6 +159,7 @@ novelty statement.
 | 5 | Hazard-aware route costs | **Defer (phase 6)** | No hazard field exists. `FireComponent`, water and block edits could feed one later |
 | — | Five optimization modes | **Build as weight presets (phase 4)** | Cheap once the objective is configurable |
 | — | Optimization panel | **Done (phase 2)** | Right-side panel beside the inventory, modelled on the property tab |
+| — | PSO / network flow / time-expanded flow | **Done (2026-11-20 consistency pass)** | Reference search and two assignment models; see §8 |
 | — | Pareto front / convergence graph | **Defer (phase 7)** | Convergence is trivial to log; Pareto analysis is a research add-on |
 | — | Sensitivity / seed robustness | **Defer (phase 7)** | Requires the experiment runner first |
 | — | “Baseline recommendation” | **Done with phase 1** | The nearest/equal/greedy baselines *are* the recommendation source |
@@ -205,9 +210,15 @@ res://optimization/
     nearest_optimizer.gd        # implemented: shortest-travel exit
     equal_split_optimizer.gd    # implemented: balance counts, ignore geometry
     greedy_capacity_optimizer.gd# implemented: capacity-aware greedy
+    greedy_congestion_optimizer.gd # implemented: marginal congestion greedy
     exhaustive_optimizer.gd     # implemented: exact reference, budgeted
-    local_search_optimizer.gd   # implemented: single-cohort hill climb
-    aco_optimizer.gd            # implemented: ACS + local-search seed
+    local_search_optimizer.gd   # implemented: single-cohort moves + pair swaps
+    aco_optimizer.gd            # implemented: ACS + congestion heuristic + local-search seed
+    pso_optimizer.gd            # implemented: random-key PSO + local-search seed
+    min_cost_flow.gd            # implemented: successive-shortest-path MCMF
+    flow_assignment.gd          # implemented: flow rounding + congestion priors
+    network_flow_optimizer.gd   # implemented: static min-cost flow
+    time_expanded_flow_optimizer.gd # implemented: time-expanded min-cost flow
   optimizer_manager.gd          # implemented: pure orchestration, no nodes
 
 res://scripts/optimization/
@@ -222,6 +233,7 @@ res://tests/
   optimizer_phase2_test.gd      # bridge, Member override, spawn adoption, recording, UI
   optimizer_phase2_test.tscn    # main-scene harness for the bridge test
   optimizer_phase3_test.gd      # ACO vs exact/local/nearest, determinism, budget
+  optimizer_phase4_test.gd      # PSO, network flow, time-expanded flow, objective scale, consistency
   optimizer_scale_test.tscn     # 600-agent bridge acceptance
   optimizer_benchmark.gd        # 600-agent / 40-cohort timing harness
   demo_ui_test.gd               # transport scroll + comparer tables
@@ -457,22 +469,31 @@ alternative routes are a phase-6 extension and need via-waypoints in
 ### 7.1 Form
 
 ```
-J = w_T·T̂ + w_D·D̂ + w_Q·Q̂ + w_F·F̂ + w_S·Ŝ + w_H·Ĥ
+J = w_T·T̂ + w_D·(D̂/N) + w_Q·(Q̂/N) + w_F·F̂ + w_S·Ŝ + w_H·Ĥ
 ```
 
-Every term is converted to **seconds** so the weights are comparable: `T` is a
-makespan, `D` and `Q` are totals, `F` is agent-seconds, `S` is a switch count
+Every scored term is converted to **seconds that can be compared to a
+makespan**: `T` is a makespan, `D` and `Q` are total **agent-seconds** divided by
+the number of assigned agents `N`, `F` is agent-seconds, `S` is a switch count
 multiplied by a configured seconds-per-switch, and `H` is total exposure time.
-The v1 objective uses only `T̂`, `D̂`, `Q̂`.
+The v1/v2 objective uses only `T`, `D` and `Q`.
 
-| Term | Meaning | v1 | Unit |
-|---|---|---|---|
-| `T̂` | Completion time of the whole evacuation (makespan) | Yes | s |
-| `D̂` | Total congestion delay from predicted demand exceeding cell capacity | Yes | s |
-| `Q̂` | Total exit queue waiting time | Yes | s |
-| `F̂` | Contact-force exposure, converted at a configured rate | Phase 4 | agent-seconds → s |
-| `Ŝ` | Unnecessary route switches × `switch_cost_s` | Phase 4 | switches → s |
-| `Ĥ` | Hazard exposure | Phase 6 | s |
+The division by `N` is not cosmetic. Before it, a 600-agent run produced
+`Q ≈ 17 500` agent-seconds against `T ≈ 90 s`, so the queue term was ~50× the
+makespan term and every decision was effectively "minimise total queue". The
+congestion weight was inert by comparison. Normalising `D` and `Q` per agent
+makes the default weights mean what the mode table says they mean. `terms`
+keeps the raw totals for recording; `detail.normalised_terms` and the cost use
+per-agent seconds.
+
+| Term | Meaning | Unit |
+|---|---|---|
+| `T̂` | Completion time of the whole evacuation (makespan) | s |
+| `D̂` | Total congestion delay, divided by assigned agents | agent-seconds → s/agent |
+| `Q̂` | Total exit queue waiting, divided by assigned agents | agent-seconds → s/agent |
+| `F̂` | Contact-force exposure, converted at a configured rate | phase 4 |
+| `Ŝ` | Unnecessary route switches × `switch_cost_s` | phase 4 |
+| `Ĥ` | Hazard exposure | phase 6 |
 
 ### 7.2 Time and queue model
 
@@ -500,20 +521,30 @@ Q_e = Σ_i (completion_i - arrival_i)
 For every chosen cohort→exit route, collect the crossed cells. For cell `k`:
 
 ```
-λ_k = Σ_{c : k ∈ P_c} n_c / t_c        # agents per second crossing k
-μ_k = q_max · w_k                       # persons/s the cell can pass
-ρ_k = λ_k / μ_k
-D̂ = Σ_c Σ_{k∈P_c} (Δt_k · max(0, ρ_k − 1))
+w_k   = lane width in cells from the cost field (1..3)
+μ_k   = q_max · w_k · cell_size.x          # persons/s the cell can pass
+L_c,k = (platoon length + cell_size.x) / v_c  # time the cohort occupies k
+λ_k   = Σ_{c : k ∈ P_c} n_c / max(t_c, L_c,k)  # persons/s crossing k
+ρ_k   = λ_k / μ_k + 0.5 · heat_k
+D̂     = Σ_c Σ_{k∈P_c} Δt_k · max(0, ρ_k − 1) · n_c   # agent-seconds
 ```
 
 - `Δt_k` is time in one cell (`cell_size / v̄`).
 - `q_max` starts at **1.3 persons/(m·s)** (published specific-flow order of
   magnitude for a dense walking crowd) and is an exported, tunable constant.
-- `w_k` is `1.0` for a cell with at most two open orthogonal neighbours and
-  `2.0` for an open cell. This is a **heuristic corridor capacity**, not a door
+- The **platoon length** is the correction that matters. A compact 4 m cohort
+  does not spread its agents over the whole route: `n_c / t_c` under-predicts
+  the flow through a cell on a long route by up to 5×. The crossing time is
+  therefore based on the cohort's own length (count × 0.6 m in a narrow cell,
+  sqrt(count) × 0.6 m in a wide one) plus one cell, floored by the route time.
+- The delay is multiplied by `n_c`, because every member of the cohort suffers
+  it. That makes `D̂` agent-seconds, the same currency as queue waiting, and the
+  objective divides both by `N`.
+- `w_k` is the count of open downhill orthogonal neighbours, clamped to 1..3,
+  times the cell size. This is a **heuristic corridor capacity**, not a door
   measurement; document it as such.
-- Current measured heat is used only as a *starting prior* (a hot cell adds its
-  existing delay estimate), never as the prediction.
+- Current measured heat is used only as a *starting prior* (`0.5 · heat` added
+  to the load ratio), never as the prediction.
 
 The predictive model’s job is to rank candidate assignments. Its accuracy is an
 experimental output (§11), not an assumption. If the prediction consistently
@@ -522,7 +553,12 @@ tuned to match the predictor.
 
 ### 7.4 Normalisation
 
-Two options, in order of preference:
+**Per-agent normalisation** is the implemented default. `D` and `Q` are totals
+over agents; dividing by `N` turns them into per-agent seconds that are directly
+comparable to the makespan. The raw totals remain in `terms` and in the run
+record.
+
+Two alternatives remain available for experiments:
 
 1. **Free-flow normalisation.** Evaluate the same assignment with
    `rate = ∞` and no congestion penalty to obtain `T_free`, then divide the
@@ -555,8 +591,11 @@ Never mix raw seconds with raw agent counts in one weighted sum.
 | Safety-focused (phase 4) | 0.6 | 0.6 | 0.2 | 1.0 | 0.1 | 0.5 |
 | Disruption response | 1.0 | 0.6 | 0.4 | 0 | 0.0 | 0 |
 
-These are **starting values to sweep**, not calibrated settings. Record the
-weights in every run so a comparison always states which objective produced it.
+These are **starting values to sweep**, not calibrated settings. They act on the
+normalised terms: `T` in seconds, `D/N` and `Q/N` in per-agent seconds. Record
+the weights in every run so a comparison always states which objective produced
+it. The default balanced weights give time roughly 80 % of the score on the
+600-agent benchmark; congestion and queue share the rest.
 
 ---
 
@@ -568,92 +607,179 @@ weights in every run so a comparison always states which objective produced it.
 |---|---|---|
 | `nearest` | Every cohort to its shortest-travel exit | Reproduces the intuitive behaviour and is the control condition |
 | `equal_split` | Balance assigned counts across exits, ignoring geometry | Tests the proposal’s own warning that even distribution is not automatically optimal |
-| `greedy_capacity` | Repeatedly assign the cohort with the largest marginal gain | Fast, deterministic, capacity-aware; usually close to optimal on small instances |
+| `greedy_capacity` (`greedy`) | Assign the largest cohorts first, evaluating every exit with the full objective | Fast, deterministic, capacity-aware; usually close to optimal on small instances |
+| `greedy_congestion` | Assign cohorts one at a time and price only the marginal queue and corridor delay each one adds | Cheap congestion-aware baseline; the seed for the metaheuristics and flow models |
 | `exhaustive` | Evaluate all `E^C` assignments | Provides the **exact** optimum for small instances within the configured combination/time budget; reports `exact = false` when the budget stops it |
-| `local_search` | Hill-climb from greedy with single-cohort moves | Cheap, deterministic improvement; the practical reference for instances too large for exhaustive |
-| `aco` | ACS construction + local-search seed + polish | Searches assignments that greedy/local search may miss while never returning worse than its local-search seed |
+| `local_search` | Hill-climb from a greedy seed with single-cohort moves **and pair swaps** | Strong, deterministic reference; the swaps are what cross two-cohort local optima |
+| `aco` | ACS construction + congestion-priced heuristic + local-search seed + stagnation reset | Searches assignments the seed may miss; never worse than its seed or `nearest` |
+| `pso` | Random-key particle swarm + local-search seed | A second search mechanism, useful when the local landscape is deceptive |
+| `network_flow` | Static min-cost flow with exit service bins | Assignment as a capacity-constrained transportation problem; very fast |
+| `time_expanded` | Min-cost flow over exit-time slots | Adds arrival timing and initial queues; the faithful flow model |
 
-Run order: `nearest` → `greedy_capacity` → `exhaustive` (small) →
-`local_search` → `aco`. Report all of them. A paper that only compares ACO with
-“nearest” cannot show that ACO is doing the work.
+Run order: `nearest` → `equal_split` → `greedy` → `greedy_congestion` →
+`exhaustive` (small) → `local_search` → `aco` → `pso` → `network_flow` →
+`time_expanded`. Report all of them. A paper that only compares ACO with
+“nearest” cannot show that ACO is doing the work. Compare iterative methods at
+the **same total wall-clock budget**; a metaheuristic that starves its own seed
+is not a fair test of the metaheuristic.
 
-### 8.2 ACO (implemented, phase 3)
+### 8.2 ACO (implemented, phase 3; revised 2026-11-20)
 
-- **Seed.** ACO first runs the greedy + local-search solution and uses it as the
-  incumbent and as the pheromone scale (`τ0 = 1 / J_seed`). The returned result is
-  therefore **never worse than local search**; the experiment asks whether ACO
-  improves on that local optimum.
+- **Seed.** ACO first runs local search, itself seeded by the cheap
+  `greedy_congestion` assignment, and uses the result as the incumbent and the
+  pheromone scale (`τ0 = 1 / J_seed`). The seed gets **70 %** of the wall-clock
+  budget. A result is also compared with `nearest`; ACO cannot return something
+  the nearest-exit control beats.
 - **Pheromone** `τ[c][e]`, one per (cohort, exit) pair.
-- **Heuristic** `η_ce = 1 / (1 + t_ce + queue_pressure_e)`, with
-  `queue_pressure_e = queue_length / service_rate` when the rate is finite.
+- **Heuristic** `η_ce = 1 / (1 + t_ce + queue_pressure_e + congestion_ce)`, with
+  `queue_pressure_e = queue_length / service_rate` when the rate is finite and
+  `congestion_ce` the per-agent delay from a nearest-exit corridor load prior.
+  Without the congestion term, ants only re-discover the nearest assignment and
+  pheromone reinforces it.
 - **Ant construction:** visit cohorts in descending `n_c` (largest crowds first);
-  choose `e` by the ACS rule (`q0 ≈ 0.7`, `α = 1`, `β = 2`). Candidates are
-  reachable exits only.
+  choose `e` by the ACS rule (`q0 ≈ 0.7`, `α = 1`, `β = 2`). The heuristic is
+  divided by `1 + assigned_e / rate_e` as cohorts are placed, so ants spread
+  across exits instead of ignoring the queue they are creating. Candidates are
+  reachable exits only. 8 % of ants are uniform-random constructions, to keep
+  the colony from collapsing onto one trail.
 - **Evaluation:** a full `ObjectiveFunction.evaluate()` per ant. At 600 agents /
   28 cohorts one evaluation is cheap enough for a planning pass; the metadata
   records `timed_out` and the iteration count.
 - **Update:** evaporate `ρ ≈ 0.1`, deposit `1/J_iteration_best` and an additional
   `1/J_best` on the best-so-far.
-- **Polish:** a short local-search climb from the best ant (two passes, bounded
-  budget).
-- **Stopping:** iteration count or wall-clock budget, whichever comes first.
-  Defaults are **16 ants / 40 iterations / 250 ms**; the panel exposes all three.
+- **Stagnation reset:** after **12** iterations without improvement, pheromone
+  is reset to `1/J_best`; the heuristic and random ants remain. The reset count
+  is recorded.
+- **Polish:** a short local-search climb from the best ant, with the same
+  single-cohort and swap moves, on the last **15 %** of the budget.
+- **Stopping:** iteration count or wall-clock deadline, whichever comes first.
+  Defaults are **16 ants / 40 iterations / 250 ms**; the panel exposes ants,
+  iterations and the shared time budget.
 - **Determinism:** a private `RandomNumberGenerator` seeded from
   `request.parameters.seed`. The bridge derives it from
   `hash([GlobalData.rng_seed, environment_version])`, so the same run and world
   state produce the same assignment. It **never draws from `GlobalData.rng`**,
   which would change the crowd’s random stream and make optimized/baseline runs
   non-comparable.
-- **Measured:** 27 ACO assertions; it matched the exact optimum in **3/5**
-  seeded 6-cohort instances, was never worse than local search, and respected a
-  50 ms budget. The 28-cohort-scale run used the full 250 ms budget.
+- **Measured:** see §8.4. The honest attribution is: the local-search seed is
+  most of the result at small budgets; the ants and polish add a measurable
+  improvement at larger budgets (84.4 vs 86.97 at 2 s). Report it as a hybrid.
 
 The earlier plan called for incremental ant evaluation. It was not needed at the
 tested sizes: a full evaluation is simpler and the budget stops the search
 cleanly. If larger instances make ACO too coarse, incremental evaluation remains
 the first optimisation to add — not another metaheuristic.
 
-### 8.3 Why not the other metaheuristics yet
+### 8.3 PSO and the two flow models (implemented 2026-11-20)
 
-RL, GA and PSO all replace the search, not the objective. Until `J` is validated
-against measured outcomes, a second or third search algorithm only adds ways to
-overfit the same model. The correct next step after ACO is a *better evaluator*,
-not a new optimizer.
+**PSO.** Particle 0 is the same local-search seed; the other particles are
+uniform random keys. A particle is a `C × E` matrix in `[0, 1]`; decoding takes
+the reachable exit with the largest key per cohort. Standard inertia
+(`0.72`), `c1 = c2 = 1.49`, velocity clamp `0.35`. The global best starts at the
+seed, so PSO cannot return worse. Defaults are **24 particles / 60 iterations /
+250 ms**; the seed gets 70 % of the budget. Deterministic for a fixed seed.
 
-### 8.4 Measured cost (2026-11-20, phases 1–3)
+**Static network flow.** `source → cohort → exit → sink` with a min-cost flow
+(successive shortest paths, SPFA). Exit capacity is a sequence of FIFO service
+bins over a horizon, so assigning more agents to an exit raises the marginal
+waiting cost instead of silently exceeding a single capacity edge. Arc costs are
+per-agent weighted travel time, queue wait and a congestion surcharge from a
+`greedy_congestion` prior. The flow is agent-level, so a cohort may split; the
+result is rounded to the largest-flow exit and the split count is reported.
+
+**Time-expanded flow.** The same solver, but exit nodes are `(exit, time bin)`;
+a cohort enters at its predicted arrival bin, holdover arcs cost one bin of
+waiting, and service arcs have capacity `rate · bin`. The current queue is a
+supply at bin 0. This is the model that knows *when* capacity is available; the
+static model does not.
+
+Both flow models are seeded with `greedy_congestion`, run a congestion-repricing
+pass from the rounded assignment, and return the better of the flow result and
+the seed. `detail.solver` records `flow_cost`, `seed_cost` and `kept_seed`, so
+the flow's own quality stays visible. Limits, stated rather than hidden:
+
+- The flow is a **relaxation**: a cohort can split between exits. Rounding to one
+  exit is a heuristic, not an exact unsplittable assignment.
+- The static model ignores arrival timing; the time-expanded model quantises
+  time into 5 s bins and minimises a linear travel + waiting surrogate, not the
+  makespan directly.
+- Neither flow model is a universal substitute for local search on the exact
+  objective: the time-expanded model is competitive at 250 ms in the benchmark,
+  the static model is not, and both are fixed two-pass models rather than a
+  budgeted search. They are assignment models that run in 0.15–0.4 s and expose
+  a different structure.
+
+RL and GA remain deferred. They replace the search, not the objective, and the
+next research step is a measured predicted-vs-actual study, not a third search
+algorithm.
+
+### 8.4 Measured cost (2026-11-20 consistency pass)
 
 Synthetic 600-agent, 40-cohort, 4-exit room, Godot 4.7.2 headless
-(`tests/optimizer_benchmark.gd`, greedy/local search budgets exposed):
+(`tests/optimizer_benchmark.gd`). Iterative methods share a **250 ms** budget;
+the flow models are fixed two-pass models and are not budget-limited (static
+~0.16 s, time-expanded ~0.4 s). Setup (four cost fields + cohort build) took
+**26 ms** and one objective evaluation costs roughly **0.9–1.3 ms**.
 
-| Algorithm | Objective evaluations | Wall time | Best cost |
-|---|---:|---:|---:|
-| `nearest` | 1 | 15 ms | 5,831 |
-| `greedy` | 200 | 185 ms | 3,757 |
-| `local_search` | 709 | 953 ms | 2,950 |
+| Algorithm | Evals | Wall time | Cost | T (s) | Q (agent-s) | D (agent-s) |
+|---|---:|---:|---:|---:|---:|---:|
+| `nearest` | 1 | 16 ms | 110.93 | 92.4 | 17,544 | 14,705 |
+| `greedy` | 200 | 275 ms | 96.16 | 81.4 | 12,980 | 12,408 |
+| `greedy_congestion` | 41 | 81 ms | 97.66 | 85.2 | 11,769 | 9,918 |
+| `local_search` (swaps) | 237 | 385 ms | 96.16 | 81.4 | 12,980 | 12,408 |
+| `aco` | 122 | 289 ms | **89.43** | 77.7 | 11,327 | 9,149 |
+| `pso` | 137 | 333 ms | **89.43** | 77.7 | 11,327 | 9,149 |
+| `network_flow` | 43 | 157 ms | 97.05 | 85.2 | 15,791 | 5,978 |
+| `time_expanded` | 43 | 410 ms | **89.29** | 77.7 | 15,296 | 5,960 |
 | `exhaustive` | — | — | refused: 4^40 exceeds the search cap |
 
-Setup (four cost fields + cohort build) took **27 ms**. One full objective
-evaluation costs roughly **0.9–1.3 ms** at this size.
+One run; wall-clock budgets vary by a few percent between runs, and the
+algorithms that stop on a deadline may therefore complete a different number of
+evaluations. The costs above are from the same run of the harness.
 
-ACO (`tests/optimizer_phase3_test.gd`):
+With a **2 s** budget the same instance gives:
 
-- 3 exits / 3 cohorts: matches the exact optimum; beats `nearest`.
-- 5 seeded 6-cohort instances: **never worse than local search** (by the seed),
-  never better than exact, and matched exact in **3/5**.
-- Deterministic for a fixed seed; a 50 ms budget stops early and still returns a
-  feasible plan.
-- 28-cohort-scale instance: feasible within the **250 ms** budget; the solve used
-  the full budget and returned the local-search incumbent or better.
+| Algorithm | Cost | Wall time |
+|---|---:|---:|
+| `local_search` | 86.97 | 1.84 s |
+| `aco` | **84.4** | 2.05 s |
+| `pso` | **84.4** | 2.03 s |
+
+The metaheuristics therefore do add value, but only when their seed is not
+starved and the budget is large enough to search: at 250 ms ACO/PSO beat
+local search because local search spends its budget completing the full greedy
+seed; at 2 s local search reaches its own optimum (86.97) and ACO/PSO beat that
+by ~2.6 points. The **time-expanded
+flow is the surprise**: after the congestion prior stopped double-counting a
+cohort's own flow, it reaches 89.29 at 250 ms, competitive with the
+metaheuristics, at the cost of being a fixed two-pass model rather than a
+budgeted search. The static flow (97.05) remains the weaker model because it
+ignores arrival timing. Their contribution is structural as well as numeric:
+they expose the assignment as a capacity/time problem instead of a black-box
+search.
+
+`tests/optimizer_phase3_test.gd`: ACO matches the exact optimum in **5/5**
+seeded 6-cohort instances after the swap phase, is deterministic, and respects a
+50 ms budget. `tests/optimizer_phase4_test.gd` adds the PSO and flow checks and
+the cross-algorithm consistency invariants.
 
 Consequences:
 
-- `nearest` and `greedy` fit a pre-run planning pass and can be run from the UI
-  without a visible stall.
-- `local_search` is a pre-run or between-runs tool (~1 s at 40 cohorts), not a
-  per-disruption controller. Its default pass count is capped for that reason.
-- ACO at 600 agents fits a planning pass with the default 250 ms budget. Its
-  result is a **hybrid**: local-search seed + ants + polish. Report it as such;
-  do not attribute the seed's improvement to pheromone search.
+- `nearest` and `greedy_congestion` fit a pre-run planning pass without a
+  visible stall.
+- `local_search` with swaps is the practical reference; it now reaches the exact
+  optimum on all five seeded six-cohort instances. At 600 agents its complete
+  greedy seed costs ~0.3 s, so a 250 ms budget returns the greedy assignment;
+  allow ~2 s to reach 86.97.
+- ACO/PSO at 600 agents fit a planning pass with the default 250 ms budget and
+  are **hybrids**: seed + swarm/ants + polish. Report the seed cost and the
+  final cost separately; do not attribute the seed's improvement to pheromone
+  search or swarm movement.
+- The time-expanded flow is the best assignment model at this size and budget
+  (89.29 at 250 ms), but it is a two-pass model with a fixed horizon, not a
+  budgeted search. The static flow (97.05) is the weaker model because it
+  ignores arrival timing. Keep both as structural references, not as proof that
+  flow beats search.
 - `exhaustive` stays a reference mode for small cohort counts.
 
 The pure phase-1 tests are 51 assertions over cohorts, the FIFO queue model,
@@ -662,7 +788,7 @@ search guard and weight presets; the navigation test is 18 assertions over the
 real `NavGridMap` cost field and path cells. Run commands and expected output
 are in [`tests/README.md`](../tests/README.md).
 
-Phase 2 adds **52 assertions** in `optimizer_phase2_test.tscn`: a real
+Phase 2 adds **72 assertions** in `optimizer_phase2_test.tscn`: a real
 `NavGridMap`, two `EvacPoint`s and 25 `Member`s go through snapshot → solve →
 apply, including override routes labelled `optimizer`, exit-availability
 filtering, pre-movement assignment storage, **late-spawn adoption**, the
@@ -671,10 +797,13 @@ right-side optimizer panel. The recorded run writes a demo to `_unsaved`,
 verifies the optimizer block and optimizer route rows, and deletes the demo
 afterwards.
 
-Phase 3 adds **27 assertions** in `optimizer_phase3_test.gd` (ACO against exact,
-local search and nearest; determinism; budget; scale), the comparer/player layout
-test adds **28**, and `demo_restore_test.tscn` adds **22** for Load State.
-Total coverage is **236 assertions** across the eight harnesses.
+Phase 3 adds **27 assertions** in `optimizer_phase3_test.gd`. Phase 4 adds
+**151 assertions** in `optimizer_phase4_test.gd` for the min-cost-flow utility,
+objective normalisation, every algorithm's registry entry, exact-reference
+bounds, local-search swaps, determinism, and the seed guards. The scale test
+adds **7**, the comparer/player layout test adds **28**,
+`demo_restore_test.tscn` adds **22**, and `recording_control_test.tscn` adds
+**31**. Total coverage is **407 assertions** across nine harnesses.
 
 ### 8.5 Late arrivals: measured cause and fixes (2026-11-20)
 
@@ -721,7 +850,7 @@ route is legitimately slow. The optimizer now sees that and prefers a shorter
 exit for the cohort instead of averaging it away.
 
 The **600-agent scale test** (`optimizer_scale_test.tscn`, 40 × 20 m floor,
-4 exits) built 28 cohorts, solved in **73–86 ms**, and applied **600 / 600**
+4 exits) built 28 cohorts, solved in **~113 ms**, and applied **600 / 600**
 assignments in **309–417 ms** wall time including snapshot capture and two idle
 frames. Applying 600 assignments queues 600 A* requests, so the assignments are
 active immediately while the routes resolve over the next few frames.
@@ -814,9 +943,15 @@ SimRecorder.record_optimizer_execution(result.algorithm, total_usec, {
 ```
 
 `result.detail.solver` also carries method-specific metadata: ACO records
-`ants`, `iterations`, `max_iterations`, `seed`, `timed_out`, `best_iteration` and
-`local_seed_cost`; exhaustive records `exact`, `total_combinations` and
-`timed_out`; local search records `passes_completed` and `timed_out`.
+`ants`, `iterations`, `max_iterations`, `seed`, `timed_out`, `best_iteration`,
+`local_seed_cost`, `nearest_cost`, `congestion_prior`, `stagnation_resets` and
+`random_ants`; PSO records `swarm`, `iterations`, `inertia`, `c1`, `c2`,
+`seed_cost`, `nearest_cost` and `encoding`; the flow models record `model`,
+`passes`, `flow_cost`, `seed_cost`, `kept_seed`, `split_cohorts`, `flow_sent`,
+`flow_target` and `capacity_overflow`; exhaustive records `exact`,
+`total_combinations` and `timed_out`; local search records `passes_completed`,
+`timed_out`, `swaps_enabled`, `swaps_applied`, `swap_evaluations` and
+`swap_limit`; greedy_congestion records `basis`, `agent_spacing` and `q_max`.
 `adopted_spawns` is cumulative for the run and counts late agents assigned from
 the last result without a full solve.
 
@@ -912,18 +1047,22 @@ while open; closing it leaves the property tab untouched.
   `OptimizerBridge`; the bridge is still not an autoload.
 - The panel scrolls vertically inside the tab background. Contents:
   - Enable optimizer.
-  - **Method** (nearest / equal split / greedy / exhaustive / local search /
-    ACO) with a two-line description of what that method actually does.
+  - **Method** (nearest / equal split / greedy / congestion-aware greedy /
+    exhaustive / local search / ACO / PSO / static network flow / time-expanded
+    flow) with a two-line description of what that method actually does.
   - **Objective** (fastest / balanced / congestion / safety / disruption) with a
     description of the trade-off.
   - Cohort size, max cohorts.
-  - ACO parameters (ants, iterations, time budget) shown only when ACO is
-    selected.
+  - ACO parameters (ants, iterations) shown only when ACO is selected.
+  - PSO parameters (swarm, iterations) shown only when PSO is selected.
+  - A shared time budget in milliseconds for ACO and PSO. The flow models are
+    fixed two-pass models and do not use it.
   - Solve at run start.
   - **Run once**.
   - Status line (off / queued / capturing / solving / applied / rejected).
-  - Last result: method, predicted completion/average, queue and congestion
-    terms, applied/skipped, cohorts, solve time, per-exit counts and an
+  - Last result: method, predicted completion/average, raw and per-agent queue
+    and congestion terms, applied/skipped, cohorts, solve time, per-exit counts
+    and an
     exact/budget note.
 - The method descriptions are intentionally plain: they name the control
   condition and the limitation, not only the algorithm.
@@ -949,17 +1088,20 @@ No new autoload, no new HUD category, no new input action.
 | 0 | **Contracts and adapter boundary** — **done 2026-11-20** | `SimulationSnapshot`, `OptimizationRequest` and `OptimizationResult` are plain data; the pure manager runs without the scene tree |
 | 1 | **Cohorts + cost fields + exact baselines** - **done 2026-11-20** | `CohortBuilder`; `NavGridMap.build_cost_field_to()` / `get_path_cells()`; `nearest`, `equal_split`, `greedy`, `exhaustive`, `local_search`; 69 headless assertions pass (51 optimizer + 18 nav), and exhaustive matches the analytic minimum on a 3-exit test |
 | 2 | **Apply + record + panel** — **done 2026-11-20** | `Member` assignment override; `GlobalData.environment_version`/mode; `OptimizerBridge`; manifest/event/summary recording; right-side optimizer panel. Acceptance: 25-agent recorded evacuation with measured admissions and optimizer route rows, late-spawn adoption, plus a 600-agent / 28-cohort solve (~80 ms) applying 600/600 assignments. A full 600-agent *recorded evacuation* is still a longer manual run |
-| 3 | **Predictive congestion + ACO** — **done 2026-11-20** | ACO seeded by local search, with 16 ants / 40 iterations / 250 ms defaults; never worse than local search, matched exact in 3/5 seeded 6-cohort instances, deterministic and budgeted. 27 ACO assertions. A measured predicted-vs-actual density study remains experiment work |
-| 4 | **Multi-objective + modes** — queue/contact/switching terms, weight presets | Each mode produces a measurably different trade-off without breaking evacuation |
+| 3 | **Predictive congestion + ACO** - **done 2026-11-20** | ACO seeded by local search, with 16 ants / 40 iterations / 250 ms defaults; deterministic and budgeted. After the swap phase it matches the exact optimum on 5/5 seeded 6-cohort instances. 27 ACO assertions. A measured predicted-vs-actual density study remains experiment work |
+| 3b | **Consistency pass: PSO, min-cost flow, objective scale** - **done 2026-11-20** | `greedy_congestion`, `pso`, static and time-expanded min-cost flow; per-agent objective normalisation; peak-platoon congestion; pair-swap local search; ACO/PSO seed and budget guards. 151 new assertions. At equal budget the metaheuristics are competitive with local search and beat it at 2 s; the time-expanded flow is competitive at 250 ms and the static flow is weaker |
+| 4 | **Multi-objective + modes** - queue/contact/switching terms, weight presets | Each mode produces a measurably different trade-off without breaking evacuation |
 | 5 | **Dynamic reoptimization** — debounce, hysteresis, commitment (the `environment_version` counter already exists) | Disabling an exit mid-run reroutes affected agents automatically; no oscillation across repeated edits; stale results rejected |
 | 6 | **Hazard layer** — authored volumes, fire projection, exposure term | Hazard-aware routing avoids a blocked/severity-1 route and records exposure |
 | 7 | **Pareto + robustness** | Trade-off fronts and multi-seed spread are exported from demos |
 
-**Phase 3 is done; phase 4 is next.** Before adding contact/switching/hazard
-terms, report ACO honestly as a hybrid (local seed + ants + polish) and keep the
-exact/local references in every comparison. The remaining phase-3 research item
-is a measured predicted-congestion-vs-actual-density study, not more search
-machinery.
+**Phases 1–3b are done; phase 4 is next.** Before adding contact/switching/hazard
+terms, report the metaheuristics honestly as hybrids (local seed + ants/particles
++ polish) and keep the exact/local references in every comparison. The remaining
+research item is a measured predicted-congestion-vs-actual-density study, not a
+third search algorithm; the flow models are structural alternatives, with the
+time-expanded model competitive at the planning budget and the static model a
+deliberately weaker reference.
 
 ---
 
@@ -976,9 +1118,12 @@ machinery.
 | **Capacity semantics.** The service rate is a policy, not door geometry | Label every capacity figure as modelled; keep `rate = 0` ⇒ no queue penalty |
 | **Single-scenario overfitting.** One save, one seed | ≥5 seeds, identical conditions, report variability |
 | **Behavioural compliance.** Assigned agents obey instantly; real crowds do not | State the assumption; keep the logit model as the fallback and as the baseline |
-| **ACO attribution.** The local-search seed supplies part of the result | Record `local_seed_cost`; compare ACO against the same seed, and report the hybrid explicitly |
+| **ACO/PSO attribution.** The local-search seed supplies most of the result at small budgets | Record `local_seed_cost` / `seed_cost`; compare against the same seed and total budget; report the hybrid explicitly |
+| **Flow relaxation gap.** The flow can split a cohort; rounding to one exit is a heuristic | Report `split_cohorts`, `flow_cost` and `kept_seed`; never present the relaxation value as an achievable assignment |
+| **Flow objective mismatch.** The static model ignores arrival timing; the time-expanded model minimises a linear surrogate | Keep both in the comparison, report makespan as an evaluated outcome, and do not claim the flow minimises it |
+| **Congestion scale.** A route-average flow under-predicted peak platoon flow; an unnormalised queue total dominated the score | Peak-platoon crossing time and per-agent normalisation are now explicit; keep the predicted-vs-measured study on the roadmap |
 | **Novelty.** The combination may not be novel | Literature review before any claim; frame the contribution as an evaluation method |
-| **Scope creep.** RL/GA/PSO/hazard/Pareto before the core works | The roadmap is a gate, not a menu |
+| **Scope creep.** RL/GA/hazard/Pareto before the core works | The roadmap is a gate, not a menu. PSO and the flow models were added as references, not as a claim that they are better |
 
 ### Validation plan
 
@@ -994,18 +1139,24 @@ machinery.
    block, the `optimizer` event, optimizer-labelled route rows and measured
    admissions.
 5. **ACO check (done):** never worse than local search, never better than exact,
-   matches exact in 3/5 seeded instances, deterministic for a fixed seed, and
-   respects a 50 ms budget.
-6. **Late spawns (done):** an agent spawned after a solve is adopted by the
+   matches exact in 5/5 seeded instances after the swap phase, deterministic for
+   a fixed seed, and respects a 50 ms budget.
+6. **PSO / flow check (done):** all new algorithms are feasible, deterministic
+   for a fixed seed, never better than exact, and never worse than their own
+   seed; PSO and the flow models keep a `nearest` guard. The min-cost-flow
+   utility is checked on a hand-computed network.
+7. **Objective-scale check (done):** `normalised_terms.queue == terms.queue / N`
+   and the cost is the weighted sum of the normalised terms.
+8. **Late spawns (done):** an agent spawned after a solve is adopted by the
    nearest cohort within 8 m and keeps the assigned exit.
-7. **Baseline parity (partially done):** with the optimizer disabled, the bridge
+9. **Baseline parity (partially done):** with the optimizer disabled, the bridge
    does nothing and the local logit path is unchanged. A full same-seed baseline
    versus optimized comparison is still experiment work.
-8. **Effect check (pending):** experiment 1 with ≥5 seeds, same scene, predicting
-   the direction and magnitude of the difference.
-9. **Safety check (pending):** no increase in failed paths, deaths, peak density
-   or contact-force exposure beyond the configured mode’s trade-off.
-10. **Predicted congestion vs. measured density (pending):** compare the
+10. **Effect check (pending):** experiment 1 with ≥5 seeds, same scene, predicting
+    the direction and magnitude of the difference.
+11. **Safety check (pending):** no increase in failed paths, deaths, peak density
+    or contact-force exposure beyond the configured mode’s trade-off.
+12. **Predicted congestion vs. measured density (pending):** compare the
     demand-to-capacity term with recorded density/throughput.
 
 ---

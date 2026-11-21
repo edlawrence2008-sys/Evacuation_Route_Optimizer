@@ -3,16 +3,19 @@ extends RefCounted
 
 ## Analytic objective for a candidate cohort-to-exit assignment.
 ##
-##   J = w_T * T + w_D * D + w_Q * Q + violation penalties
+##   J = w_T * T + w_D * (D / N) + w_Q * (Q / N) + violation penalties
 ##
-## T is the evacuation makespan, D the predicted congestion delay and Q the
-## total exit waiting time. All three are in seconds, so the weights are
-## comparable. Contact force, route switching and hazard terms are phase 4/6 and
-## are not scored yet.
+## T is the evacuation makespan in seconds. D is total predicted congestion
+## delay in agent-seconds and Q is total exit waiting in agent-seconds; dividing
+## both by the number of assigned agents turns them into per-agent seconds, the
+## only scale on which they can be meaningfully weighted against a makespan.
+## Before this normalisation the queue total dominated every decision (a 600
+## agent run produced Q ~ 17 000 agent-seconds against T ~ 90 s) and the
+## congestion weight was effectively inert.
 ##
-## `reference_time` optionally divides every term for reporting. A common
-## divisor cannot change the ranking of candidates, so it is disabled by
-## default; it exists so a panel can print a normalised score.
+## `terms` keeps the raw totals for reporting and recording. `normalised_terms`
+## and the cost use per-agent seconds. Contact force, route switching and hazard
+## terms are phase 4/6 and are not scored yet.
 
 const DEFAULT_Q_MAX: float = 1.3
 const DEFAULT_VIOLATION_PENALTY: float = 1000000.0
@@ -27,8 +30,10 @@ var exit_analyzer: ExitCostAnalyzer
 
 var weights: Dictionary = {}
 var q_max: float = DEFAULT_Q_MAX
+var agent_spacing: float = CongestionEstimator.DEFAULT_AGENT_SPACING
 var violation_penalty: float = DEFAULT_VIOLATION_PENALTY
 var reference_time: float = 0.0
+var use_normalised_terms: bool = true
 var evaluations: int = 0
 
 
@@ -41,6 +46,17 @@ func setup(
 	cohorts = cohorts_value
 	weights = request.get_weights()
 	q_max = float(request.get_parameter("q_max", DEFAULT_Q_MAX))
+	agent_spacing = maxf(
+		float(
+			request.get_parameter(
+				"agent_spacing", CongestionEstimator.DEFAULT_AGENT_SPACING
+			)
+		),
+		0.1
+	)
+	use_normalised_terms = bool(
+		request.get_parameter("normalise_terms", true)
+	)
 	violation_penalty = float(
 		request.get_parameter("violation_penalty", DEFAULT_VIOLATION_PENALTY)
 	)
@@ -128,15 +144,25 @@ func evaluate(assignments: Array) -> Dictionary:
 		exit_ids,
 		path_analyzer,
 		q_max,
-		snapshot.get_cell_size()
+		snapshot.get_cell_size(),
+		snapshot.congestion_heat,
+		agent_spacing
 	)
 
 	for violation: Variant in exit_stats.get("violations", []):
 		violations.append(String(violation))
 
 	var time_term: float = float(exit_stats.get("completion_time", 0.0))
-	var congestion_term: float = float(congestion_stats.get("delay", 0.0))
-	var queue_term: float = float(exit_stats.get("total_wait", 0.0))
+	var congestion_total: float = float(congestion_stats.get("delay", 0.0))
+	var queue_total: float = float(exit_stats.get("total_wait", 0.0))
+	var agent_count: int = maxi(int(exit_stats.get("total_agents", 0)), 1)
+	var congestion_term: float = congestion_total
+	var queue_term: float = queue_total
+
+	if use_normalised_terms:
+		congestion_term = congestion_total / float(agent_count)
+		queue_term = queue_total / float(agent_count)
+
 	var divisor: float = reference_time if reference_time > 0.0 else 1.0
 
 	var cost: float = (
@@ -151,12 +177,25 @@ func evaluate(assignments: Array) -> Dictionary:
 		"cost": cost,
 		"terms": {
 			"time": time_term,
+			"congestion": congestion_total,
+			"queue": queue_total,
+		},
+		"normalised_terms": {
+			"time": time_term,
 			"congestion": congestion_term,
 			"queue": queue_term,
 		},
+		"units": {
+			"time": "s",
+			"congestion": "agent-seconds",
+			"queue": "agent-seconds",
+		},
 		"completion_time": time_term,
 		"average_time": float(exit_stats.get("average_time", 0.0)),
-		"total_wait": queue_term,
+		"total_wait": queue_total,
+		"congestion_total": congestion_total,
+		"congestion_average": congestion_total / float(agent_count),
+		"queue_average": queue_total / float(agent_count),
 		"total_agents": int(exit_stats.get("total_agents", 0)),
 		"exit_counts": exit_counts,
 		"per_exit": exit_stats.get("per_exit", {}),

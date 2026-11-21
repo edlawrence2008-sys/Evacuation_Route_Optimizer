@@ -47,7 +47,17 @@ func _run_benchmark() -> void:
 		]
 	)
 
-	for algorithm: String in ["nearest", "greedy", "local_search", "exhaustive"]:
+	for algorithm: String in [
+		"nearest",
+		"greedy",
+		"greedy_congestion",
+		"local_search",
+		"aco",
+		"pso",
+		"network_flow",
+		"time_expanded",
+		"exhaustive",
+	]:
 		var request := OptimizationRequest.new()
 		request.snapshot = snapshot
 		request.algorithm = algorithm
@@ -56,13 +66,30 @@ func _run_benchmark() -> void:
 		request.max_cohorts = 40
 		request.parameters = {
 			"max_combinations": 1000,
-			"time_budget_ms": 5000.0,
+			"time_budget_ms": 250.0,
 			"local_search_passes": 6,
+			"local_search_swaps": true,
+			"swap_evaluations": 400,
+			"aco_ants": 16,
+			"aco_iterations": 40,
+			"pso_swarm": 24,
+			"pso_iterations": 60,
+			"seed": 4242,
 		}
 
 		var result: OptimizationResult = OptimizerManager.solve(snapshot, request)
+		var solver: Dictionary = result.detail.get("solver", {})
+		var flow: Dictionary = solver.get("flow", {})
+		var note: String = ""
+
+		if solver.has("kept_seed"):
+			note = " kept_seed=%s flow=%.2f" % [
+				str(solver.get("kept_seed", false)),
+				float(solver.get("flow_cost", 0.0)),
+			]
+
 		print(
-			"%-13s feasible=%-5s cost=%10.2f T=%6.1f Q=%8.1f D=%8.1f evals=%d time=%.1f ms%s"
+			"%-18s feasible=%-5s cost=%8.2f T=%6.1f Q=%8.1f D=%8.1f evals=%4d time=%6.1f ms%s%s"
 			% [
 				algorithm,
 				str(result.feasible),
@@ -72,6 +99,7 @@ func _run_benchmark() -> void:
 				float(result.terms.get("congestion", 0.0)),
 				result.evaluations,
 				result.computation_time_ms,
+				note,
 				"" if result.violations.is_empty() else "  " + result.get_violation_summary(),
 			]
 		)
@@ -128,7 +156,7 @@ func _make_snapshot() -> SimulationSnapshot:
 					"position": Vector3(cell) + Vector3(
 						0.5 + float(agent_index % 4) * 0.05,
 						0.75,
-						0.5 + float(agent_index / 4) * 0.05
+						0.5 + float(agent_index) / 4.0 * 0.05
 					),
 					"cell": cell,
 					"desired_speed": SPEED,

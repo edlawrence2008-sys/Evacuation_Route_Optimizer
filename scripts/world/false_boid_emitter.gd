@@ -123,7 +123,7 @@ func _build_particles() -> void:
 	process_material.anim_offset_max = 1.0
 	# No collision box follows the player any more; disabling collision also
 	# removes the per-particle reference lookup cost.
-	process_material.collision_mode = 0
+	process_material.collision_mode = ParticleProcessMaterial.COLLISION_DISABLED
 	_particles.process_material = process_material
 
 	var texture: Texture2D = particle_texture

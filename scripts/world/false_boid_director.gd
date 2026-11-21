@@ -236,7 +236,7 @@ func _update_crowding() -> void:
 			continue
 
 		var near: int = 0
-		var position: Vector3 = (
+		var leader_position: Vector3 = (
 			leader.get_leader_position()
 			if leader.has_method("get_leader_position")
 			else (leader as Node3D).global_position
@@ -257,7 +257,7 @@ func _update_crowding() -> void:
 				else (other as Node3D).global_position
 			)
 
-			if other_position.distance_to(position) <= crowd_radius:
+			if other_position.distance_to(leader_position) <= crowd_radius:
 				near += 1
 
 		if near >= crowd_threshold - 1 and leader.has_method("repel_for"):

@@ -332,10 +332,10 @@ func _steer_towards(
 
 
 ## Separation from all nearby birds plus alignment/cohesion with the ones that
-## are actually in flight. `scale` lets the landing approach ignore the flock so
-## the bird can actually settle on its slot.
-func _apply_bird_flock_forces(delta: float, scale: float = 1.0) -> void:
-	if scale <= 0.001:
+## are actually in flight. `flock_scale` lets the landing approach ignore the
+## flock so the bird can actually settle on its slot.
+func _apply_bird_flock_forces(delta: float, flock_scale: float = 1.0) -> void:
+	if flock_scale <= 0.001:
 		return
 
 	var birds := get_tree().get_nodes_in_group(BIRD_GROUP)
@@ -397,7 +397,7 @@ func _apply_bird_flock_forces(delta: float, scale: float = 1.0) -> void:
 			acceleration += towards.normalized() * flight_speed * cohesion_weight
 
 	if acceleration.length_squared() > 0.001:
-		_velocity += (acceleration * scale).limit_length(steer_strength) * delta
+		_velocity += (acceleration * flock_scale).limit_length(steer_strength) * delta
 
 
 func _integrate(delta: float) -> void:
@@ -491,8 +491,8 @@ func _update_transition(delta: float) -> void:
 		0.0,
 		1.0
 	)
-	var scale: float = lerpf(0.18, 1.0, appear) * (1.0 - vanish)
-	_sprite.scale = Vector3.ONE * maxf(scale, 0.001)
+	var sprite_scale: float = lerpf(0.18, 1.0, appear) * (1.0 - vanish)
+	_sprite.scale = Vector3.ONE * maxf(sprite_scale, 0.001)
 	_sprite.modulate.a = appear * (1.0 - vanish * 0.95)
 
 

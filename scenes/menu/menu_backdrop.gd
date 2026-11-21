@@ -59,10 +59,10 @@ func _add_layer(
 			var wave := sin(float(col) * 0.55 + float(row) * 0.8 + phase)
 			var depth := z + wave * 0.45
 			var tall := 1.0 + 0.6 * absf(wave)
-			var basis := Basis.IDENTITY.scaled(Vector3(1.0, tall, 1.0))
+			var instance_basis := Basis.IDENTITY.scaled(Vector3(1.0, tall, 1.0))
 			multimesh.set_instance_transform(
 				instance,
-				Transform3D(basis, Vector3(x, y, depth))
+				Transform3D(instance_basis, Vector3(x, y, depth))
 			)
 			instance += 1
 

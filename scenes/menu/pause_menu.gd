@@ -63,7 +63,6 @@ var _defaults_quota: SpinBox = null
 var _defaults_seed: SpinBox = null
 var _defaults_evac: CheckBox = null
 var _defaults_record: CheckBox = null
-var _defaults_status: Label = null
 
 @onready var _panel: Node3D = $Panel
 @onready var _dim: MeshInstance3D = $Dim
@@ -926,16 +925,16 @@ func _handle_keybind_input(event: InputEvent) -> void:
 			)
 			if code != 0:
 				var binding := InputEventKey.new()
-				binding.physical_keycode = code
+				binding.physical_keycode = code as Key
 				_apply_binding(binding)
 		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseButton and event.pressed:
 		var mouse_event := event as InputEventMouseButton
-		var binding := InputEventMouseButton.new()
-		binding.button_index = mouse_event.button_index
-		_apply_binding(binding)
+		var mouse_binding := InputEventMouseButton.new()
+		mouse_binding.button_index = mouse_event.button_index
+		_apply_binding(mouse_binding)
 		get_viewport().set_input_as_handled()
 
 
@@ -1001,12 +1000,12 @@ func _load_input_bindings() -> void:
 			var data: Dictionary = entry
 			if String(data.get("type", "")) == "key":
 				var key_event := InputEventKey.new()
-				key_event.physical_keycode = int(data.get("physical", 0))
-				key_event.keycode = int(data.get("key", 0))
+				key_event.physical_keycode = int(data.get("physical", 0)) as Key
+				key_event.keycode = int(data.get("key", 0)) as Key
 				InputMap.action_add_event(action, key_event)
 			elif String(data.get("type", "")) == "mouse":
 				var mouse_event := InputEventMouseButton.new()
-				mouse_event.button_index = int(data.get("button", 0))
+				mouse_event.button_index = int(data.get("button", 0)) as MouseButton
 				InputMap.action_add_event(action, mouse_event)
 
 
@@ -1139,16 +1138,16 @@ func _handle_keybind_capture(event: InputEvent) -> void:
 			)
 			if code != 0:
 				var binding := InputEventKey.new()
-				binding.physical_keycode = code
+				binding.physical_keycode = code as Key
 				_apply_keybind_binding(binding)
 		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseButton and event.pressed:
 		var mouse_event := event as InputEventMouseButton
-		var binding := InputEventMouseButton.new()
-		binding.button_index = mouse_event.button_index
-		_apply_keybind_binding(binding)
+		var mouse_binding := InputEventMouseButton.new()
+		mouse_binding.button_index = mouse_event.button_index
+		_apply_keybind_binding(mouse_binding)
 		get_viewport().set_input_as_handled()
 
 
@@ -1426,7 +1425,7 @@ func _refresh_demo_list() -> void:
 		elif demo_id == _selected_demo_id:
 			button.set_selected(true)
 
-	var page := int(_demo_start / save_rows_per_page) + 1
+	var page := int(float(_demo_start) / float(save_rows_per_page)) + 1
 	var pages := int(ceil(float(filtered.size()) / float(save_rows_per_page)))
 	_demo_page_label.text = "Page %d/%d  ·  wheel to scroll" % [page, pages]
 	_update_demo_details()
@@ -1778,7 +1777,7 @@ func _finish_demo_delete() -> void:
 
 func _format_duration(seconds: float) -> String:
 	var total := maxi(0, int(round(seconds)))
-	return "%d:%02d" % [int(total / 60), total % 60]
+	return "%d:%02d" % [int(float(total) / 60.0), total % 60]
 
 
 
@@ -1931,33 +1930,33 @@ func _play_buttons_intro(panel: Node) -> void:
 func _play_map_intro() -> void:
 	if not _stats_map.visible:
 		return
-	var material := _stats_map.material_override as StandardMaterial3D
-	if material == null:
+	var map_material := _stats_map.material_override as StandardMaterial3D
+	if map_material == null:
 		return
 	if is_instance_valid(_map_tween):
 		_map_tween.kill()
 
 	_stats_map.scale = _stats_rest_scale * 0.96
-	material.albedo_color.a = 0.0
+	map_material.albedo_color.a = 0.0
 	_stats_text.modulate.a = 0.0
 	_map_tween = create_tween().set_parallel(true)
 	_map_tween.tween_property(_stats_map, "scale", _stats_rest_scale, 0.32) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_map_tween.tween_property(material, "albedo_color:a", 1.0, 0.26)
+	_map_tween.tween_property(map_material, "albedo_color:a", 1.0, 0.26)
 	_map_tween.tween_property(_stats_text, "modulate:a", 1.0, 0.3).set_delay(0.06)
 
 
 func _play_preview_intro() -> void:
 	if not _thumbnail.visible:
 		return
-	var material := _thumbnail.material_override as StandardMaterial3D
-	if material == null:
+	var preview_material := _thumbnail.material_override as StandardMaterial3D
+	if preview_material == null:
 		return
 	if is_instance_valid(_preview_tween):
 		_preview_tween.kill()
 
 	_thumbnail.scale = _thumbnail_rest_scale * 0.97
-	material.albedo_color.a = 0.0
+	preview_material.albedo_color.a = 0.0
 	_save_details.modulate.a = 0.0
 	_preview_tween = create_tween().set_parallel(true)
 	_preview_tween.tween_property(
@@ -1966,7 +1965,7 @@ func _play_preview_intro() -> void:
 		_thumbnail_rest_scale,
 		0.28
 	).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_preview_tween.tween_property(material, "albedo_color:a", 1.0, 0.24)
+	_preview_tween.tween_property(preview_material, "albedo_color:a", 1.0, 0.24)
 	_preview_tween.tween_property(
 		_save_details,
 		"modulate:a",
@@ -1977,14 +1976,14 @@ func _play_preview_intro() -> void:
 
 ## Subtle parallax: the panel leans toward the hovered entry and the camera
 ## offsets a hair, so the whole menu feels alive without moving much.
-func _set_cursor_sway(position: Vector2) -> void:
+func _set_cursor_sway(screen_position: Vector2) -> void:
 	var viewport_size := get_viewport().get_visible_rect().size
 
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
 
-	_cursor_nx = clampf((position.x / viewport_size.x) * 2.0 - 1.0, -1.0, 1.0)
-	_cursor_ny = clampf((position.y / viewport_size.y) * 2.0 - 1.0, -1.0, 1.0)
+	_cursor_nx = clampf((screen_position.x / viewport_size.x) * 2.0 - 1.0, -1.0, 1.0)
+	_cursor_ny = clampf((screen_position.y / viewport_size.y) * 2.0 - 1.0, -1.0, 1.0)
 
 
 ## `button` is intentionally untyped: it can be a hovered entry that the Saves
@@ -2151,7 +2150,7 @@ func _collect_buttons(node: Node, result: Array) -> void:
 		_collect_buttons(child, result)
 
 
-func _button_at(position: Vector2) -> Area3D:
+func _button_at(screen_position: Vector2) -> Area3D:
 	if (
 		not is_inside_tree()
 		or _camera == null
@@ -2160,8 +2159,8 @@ func _button_at(position: Vector2) -> Area3D:
 	):
 		return null
 
-	var from: Vector3 = _camera.project_ray_origin(position)
-	var to: Vector3 = from + _camera.project_ray_normal(position) * 10.0
+	var from: Vector3 = _camera.project_ray_origin(screen_position)
+	var to: Vector3 = from + _camera.project_ray_normal(screen_position) * 10.0
 	var query := PhysicsRayQueryParameters3D.create(from, to, MENU_LAYER)
 	query.collide_with_areas = true
 	query.collide_with_bodies = false
@@ -2194,8 +2193,8 @@ func _set_hover(button: Variant, audible: bool = false) -> void:
 	_sway_to(button)
 
 
-func _click_at(position: Vector2) -> void:
-	var button := _button_at(position)
+func _click_at(screen_position: Vector2) -> void:
+	var button := _button_at(screen_position)
 	if button == null:
 		return
 
@@ -2385,9 +2384,9 @@ func _refresh_statistics(pop: bool = true) -> void:
 		return
 
 	var image: Image = MAP_RENDERER.render_top_down(grid, _stats_mode, 256)
-	var material := _stats_map.material_override as StandardMaterial3D
-	if material != null:
-		material.albedo_texture = (
+	var stats_material := _stats_map.material_override as StandardMaterial3D
+	if stats_material != null:
+		stats_material.albedo_texture = (
 			ImageTexture.create_from_image(image) if image != null else null
 		)
 	_stats_map.visible = image != null
@@ -2462,19 +2461,19 @@ func _refresh_save_list() -> void:
 		if String(entry.get("slug", "")) == _selected_slug:
 			button.set_selected(true)
 
-	var page := int(_save_start / save_rows_per_page) + 1
+	var page := int(float(_save_start) / float(save_rows_per_page)) + 1
 	var pages := int(ceil(float(_saves.size()) / float(save_rows_per_page)))
 	_page_label.text = "Page %d/%d  ·  wheel to scroll" % [page, pages]
 	_update_save_preview()
 
 
 func _update_save_preview() -> void:
-	var material := _thumbnail.material_override as StandardMaterial3D
-	if material == null:
+	var thumbnail_material := _thumbnail.material_override as StandardMaterial3D
+	if thumbnail_material == null:
 		return
 
 	if _save_manager == null or _selected_slug.is_empty():
-		material.albedo_texture = null
+		thumbnail_material.albedo_texture = null
 		_thumbnail.visible = false
 		_save_details.text = "Select a save"
 		_preview_slug = ""
@@ -2483,7 +2482,7 @@ func _update_save_preview() -> void:
 	var selection_changed: bool = _selected_slug != _preview_slug
 	_preview_slug = _selected_slug
 	var texture: Texture2D = _save_manager.get_thumbnail(_selected_slug)
-	material.albedo_texture = texture
+	thumbnail_material.albedo_texture = texture
 	_thumbnail.visible = texture != null
 
 	var modified := 0.0
@@ -2572,10 +2571,10 @@ func _prompt_save_as() -> void:
 	_prompt_name("Save As", initial, _finish_save_as)
 
 
-func _finish_save_as(name: String) -> void:
+func _finish_save_as(new_name: String) -> void:
 	if _save_manager == null:
 		return
-	var slug: String = _save_manager.save_as(name)
+	var slug: String = _save_manager.save_as(new_name)
 	if slug.is_empty():
 		_set_status("Save failed")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
@@ -2594,12 +2593,12 @@ func _prompt_new_map() -> void:
 	_prompt_name("New Map", "New Map", _request_new_map_confirm)
 
 
-func _request_new_map_confirm(name: String) -> void:
-	_pending_new_map_name = name
+func _request_new_map_confirm(new_name: String) -> void:
+	_pending_new_map_name = new_name
 	_confirm(
 		"Create New Map",
 		"Create \"%s\"?\nUnsaved changes to the current map will be lost."
-		% name,
+		% new_name,
 		_finish_new_map,
 		"Create"
 	)
@@ -2647,16 +2646,16 @@ func _prompt_rename() -> void:
 	)
 
 
-func _finish_rename(name: String) -> void:
+func _finish_rename(new_name: String) -> void:
 	if _save_manager == null:
 		return
-	var renamed: String = _save_manager.rename_save(_selected_slug, name)
-	if renamed.is_empty():
+	var renamed_slug: String = _save_manager.rename_save(_selected_slug, new_name)
+	if renamed_slug.is_empty():
 		_set_status("Rename failed")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
 		return
-	_selected_slug = renamed
-	_set_status("Renamed: " + _display_name(renamed))
+	_selected_slug = renamed_slug
+	_set_status("Renamed: " + _display_name(renamed_slug))
 	_play_ui(UI_SOUND_ACCEPT, -8.0)
 	_refresh_save_list()
 
@@ -2691,10 +2690,10 @@ func _prompt_duplicate() -> void:
 	)
 
 
-func _finish_duplicate(name: String) -> void:
+func _finish_duplicate(new_name: String) -> void:
 	if _save_manager == null:
 		return
-	var slug: String = _save_manager.duplicate_save(_selected_slug, name)
+	var slug: String = _save_manager.duplicate_save(_selected_slug, new_name)
 	if slug.is_empty():
 		_set_status("Duplicate failed")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)

@@ -55,14 +55,14 @@ static func solve(cohorts: Array, analyzer: PathAnalyzer) -> Dictionary:
 		var best_time: float = INF
 
 		for exit_index: int in candidates:
-			var load: int = assigned[exit_index]
+			var current_load: int = assigned[exit_index]
 			var route: Dictionary = analyzer.get_route(
 				cohorts[index], exit_ids[exit_index]
 			)
 			var travel_time: float = float(route.get("time", INF))
 
-			if load < best_load or (load == best_load and travel_time < best_time - 0.000001):
-				best_load = load
+			if current_load < best_load or (current_load == best_load and travel_time < best_time - 0.000001):
+				best_load = current_load
 				best_time = travel_time
 				best_exit = exit_index
 

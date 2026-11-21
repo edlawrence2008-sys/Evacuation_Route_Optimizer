@@ -133,14 +133,14 @@ func _run() -> void:
 			)
 
 		if GENERATE_PANELS and PANEL_TEXTURES.has(base_name):
-			var panel_offset := (BLOCK_SIZE.y - PANEL_THICKNESS) * 0.5
+			var panel_y_offset := (BLOCK_SIZE.y - PANEL_THICKNESS) * 0.5
 
 			updated_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Panel_Top_" + base_name,
 				texture,
 				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
-				Vector3(0.0, panel_offset, 0.0)
+				Vector3(0.0, panel_y_offset, 0.0)
 			)
 
 			updated_count += _generate_or_update_block(
@@ -148,7 +148,7 @@ func _run() -> void:
 				GENERATED_PREFIX + "Panel_Bottom_" + base_name,
 				texture,
 				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
-				Vector3(0.0, -panel_offset, 0.0)
+				Vector3(0.0, -panel_y_offset, 0.0)
 			)
 
 			# Vertical panel occupying the +X edge, rotated by orientation.
@@ -157,7 +157,7 @@ func _run() -> void:
 				GENERATED_PREFIX + "Panel_Side_" + base_name,
 				texture,
 				Vector3(PANEL_THICKNESS, BLOCK_SIZE.y, BLOCK_SIZE.z),
-				Vector3(panel_offset, 0.0, 0.0)
+				Vector3(panel_y_offset, 0.0, 0.0)
 			)
 
 	if created_count == 0 and updated_count == 0:

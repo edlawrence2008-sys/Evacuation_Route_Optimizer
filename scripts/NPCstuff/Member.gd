@@ -280,8 +280,6 @@ var contact_overlaps: int = 0
 var _pre_movement_delay: float = 0.0
 var _pre_movement_elapsed: float = 0.0
 var _has_started_moving: bool = false
-## Additive random walk accumulated from social forces, for stuck detection.
-var _force_displacement: float = 0.0
 
 # --- Kinematic movement state --------------------------------------------
 ## Cached movement-mode flag, refreshed by the export setters so hot paths do
@@ -1107,12 +1105,12 @@ func _steer_with_social_forces(
 
 	for _i in range(SFM_SUBSTEPS):
 		var horizontal: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
-		var acceleration: Vector3 = (
+		var step_acceleration: Vector3 = (
 			(desired_velocity - horizontal) / relaxation_time
 			+ force_accel
 		)
 
-		horizontal += acceleration * substep
+		horizontal += step_acceleration * substep
 		horizontal = horizontal.limit_length(max_horizontal_speed)
 		velocity.x = horizontal.x
 		velocity.z = horizontal.z
@@ -2941,7 +2939,6 @@ func _route_to_closest_evac_point() -> void:
 		wait_timer = 2.0
 		return
 
-	var my_position: Vector3 = global_position
 	var valid_points: Array[Vector3] = []
 	var seen_positions: Dictionary = {}
 	var unavailable: Dictionary = {}
@@ -3060,13 +3057,13 @@ func _choose_evacuation_point(
 		if crowd_manager != null and crowd_manager.has_method("get_density_per_m2"):
 			queue_density = crowd_manager.get_density_per_m2(point, 2.0)
 
-		var visible: float = 1.0 if _has_line_of_sight(point) else 0.0
+		var visibility_score: float = 1.0 if _has_line_of_sight(point) else 0.0
 		var familiarity: float = _exit_familiarity(point)
 
 		var utility: float = (
 			-exit_choice_beta_distance * path_distance
 			-exit_choice_beta_queue * queue_density
-			+exit_choice_beta_visible * visible
+			+exit_choice_beta_visible * visibility_score
 			+familiarity
 		)
 

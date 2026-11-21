@@ -59,7 +59,7 @@ static func build_atlas_image(source: Image) -> Image:
 	var height := source.get_height()
 	if height <= 0 or height % 2 != 0:
 		return null
-	var half := height / 2
+	var half: int = height >> 1
 	var states := _build_states(source, half)
 	var atlas_size := ATLAS_GRID * height
 	var atlas := Image.create(
@@ -71,7 +71,7 @@ static func build_atlas_image(source: Image) -> Image:
 
 	for mask in range(256):
 		var tile_x := mask % ATLAS_GRID
-		var tile_y := int(mask / ATLAS_GRID)
+		var tile_y := int(mask / float(ATLAS_GRID))
 		var origin := Vector2i(tile_x * height, tile_y * height)
 
 		_copy_quadrant(atlas, origin, 0, 0, states, half, _state(mask, 0), 0)
@@ -120,8 +120,8 @@ static func _build_states(source: Image, half: int) -> Dictionary:
 		ed.set_pixel(x, half - 1, ed.get_pixel(x, half - 2))
 
 	var interior_origin := Vector2i(
-		(source.get_width() - half) / 2,
-		(source.get_height() - half) / 2
+		(source.get_width() - half) >> 1,
+		(source.get_height() - half) >> 1
 	)
 	var nu := _crop(source, interior_origin, half)
 	# The inner-corner quadrant must still contain glass; only its corner pixel

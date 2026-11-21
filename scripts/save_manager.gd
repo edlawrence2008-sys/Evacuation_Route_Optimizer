@@ -116,8 +116,8 @@ func save_active() -> bool:
 	return true
 
 
-func save_as(name: String) -> String:
-	var pair := _make_unique(name)
+func save_as(save_name: String) -> String:
+	var pair := _make_unique(save_name)
 	var display := String(pair[0])
 	var slug := String(pair[1])
 	var folder := SAVES_ROOT.path_join(slug)
@@ -257,12 +257,12 @@ func rename_save(slug: String, new_name: String) -> String:
 ## current spawn position. The map scene is reloaded with an empty chunk store
 ## first, so this is also the hook for future generated worlds: pass a world
 ## descriptor with type "procgen", generator id, seed and options.
-func new_blank_map(name: String, world_options: Dictionary = {}) -> String:
+func new_blank_map(map_name: String, world_options: Dictionary = {}) -> String:
 	var tree := get_tree()
 	if tree == null or tree.current_scene == null:
 		return ""
 
-	var display := name.strip_edges()
+	var display := map_name.strip_edges()
 	if display.is_empty():
 		display = "New Map"
 	var pair := _make_unique(display)
@@ -357,8 +357,8 @@ func new_blank_map(name: String, world_options: Dictionary = {}) -> String:
 ## Forward-compatible map-creation entry point. `world_options.type` is
 ## currently "blank"; a future "procgen" branch can generate chunks into the
 ## live store here before the same flush/copy/manifest path runs.
-func new_map(name: String, world_options: Dictionary = {}) -> String:
-	return await new_blank_map(name, world_options)
+func new_map(map_name: String, world_options: Dictionary = {}) -> String:
+	return await new_blank_map(map_name, world_options)
 
 
 func _blank_platform_item(grid) -> int:
@@ -373,12 +373,12 @@ func _blank_platform_item(grid) -> int:
 		if id != -1:
 			return id
 	for item_id in grid.mesh_library.get_item_list():
-		var name := String(grid.mesh_library.get_item_name(item_id)).to_lower()
+		var item_name := String(grid.mesh_library.get_item_name(item_id)).to_lower()
 		if (
-			not name.contains("slab")
-			and not name.contains("panel")
-			and not name.contains("stairs")
-			and not name.begins_with("water_")
+			not item_name.contains("slab")
+			and not item_name.contains("panel")
+			and not item_name.contains("stairs")
+			and not item_name.begins_with("water_")
 		):
 			return item_id
 	return grid.mesh_library.get_item_list()[0]
@@ -695,8 +695,8 @@ func _write_manifest(folder: String, manifest: Dictionary) -> void:
 	file.close()
 
 
-func _make_unique(name: String) -> Array:
-	var base := name.strip_edges()
+func _make_unique(base_name: String) -> Array:
+	var base := base_name.strip_edges()
 	if base.is_empty():
 		base = "New Map"
 
@@ -710,8 +710,8 @@ func _make_unique(name: String) -> Array:
 	return [candidate, slug]
 
 
-func _slugify(name: String) -> String:
-	var slug := name.strip_edges()
+func _slugify(raw_name: String) -> String:
+	var slug := raw_name.strip_edges()
 	for ch in ["/", "\\", ":", "*", "?", "\"", "<", ">", "|", "\n", "\r", "\t"]:
 		slug = slug.replace(ch, "_")
 	slug = slug.replace(" ", "_")
