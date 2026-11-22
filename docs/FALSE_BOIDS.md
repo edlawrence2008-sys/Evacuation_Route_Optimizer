@@ -1,6 +1,6 @@
 # False boids
 
-> **Status:** 2026-11-17 (system unchanged since 2026-11-16) · **Applies to:**
+> **Status:** 2026-11-22 (flock groups, layer-scoped attractors and per-emitter tuning) · **Applies to:**
 > `scripts/world/false_boid_emitter.gd`, `false_boid_director.gd`,
 > `false_boid_flock.gd`, `false_boid.gd`, `false_boid_perch.gd` · **Companions:**
 > [`CODEBASE_ANALYSIS.md`](CODEBASE_ANALYSIS.md) §4.17.
@@ -19,8 +19,16 @@ False boids split the two jobs:
   around the map emit shaded, animated bird particles. Particles are not
   parented to the moving leaders; the director creates **one leader per
   emitter, capped at 10**, and each leader has a modest attractor that gathers
-  the shared cloud. The emitters use `Boid.png`'s three animation frames, ring
+  its flock. The emitters use `Boid.png`'s three animation frames, ring
   emission, a constant swirl, turbulence, and 60 FPS simulation.
+- **Flocks are isolated by group and particle layer.** Every emitter exposes a
+  `flock_group`. Emitters sharing a group share one particle visibility layer,
+  and their leaders' `GPUParticlesAttractor3D.cull_mask` points at that layer,
+  so a group's particles only react to that group's leaders. Leaders still see
+  each other: same-group leaders use separation/alignment/cohesion, while
+  different groups only apply an inter-flock separation force and spook each
+  other temporarily with `repel_for()`. This is what prevents every flock from
+  eventually merging into one sky blob.
 - **Close flight and perching are real boids.** Leaders and promoted
   `FalseBoid` sprites are true boid agents: they carry a velocity, steer with
   bounded acceleration, separate from neighbours, align with nearby fliers,
@@ -29,19 +37,54 @@ False boids split the two jobs:
   "particles stuck on the ground" problem without simulating every bird on the
   CPU.
 
+## Flock tuning and groups
+
+`FalseBoidEmitter` exposes a **Flock** group in the Property tab. Select an
+emitter placeable to edit:
+
+| Export | Default | Effect |
+|---|---:|---|
+| `flock_group` | `default` | Emitters sharing a group share a particle layer and cooperate. |
+| `flock_attractor_radius` / `strength` / `attenuation` | 90 / 8 / 0.6 | How strongly the group's leaders pull their particles. |
+| `flock_flight_altitude` | 9.0 | Cruise height above terrain. |
+| `flock_flight_speed` / `min` / `max` | 7.5 / 5 / 14 | Leader cruise and speed limits. |
+| `flock_steer_strength` | 15 | Leader steering acceleration. |
+| `flock_separation_radius` / `weight` | 9 / 1.5 | Same-group leader spacing. Raise this to spread a flock. |
+| `flock_alignment_radius` / `weight` | 20 / 0.25 | Same-group heading alignment. |
+| `flock_cohesion_radius` / `weight` | 24 / 0.12 | Same-group gathering. Lower this to keep the flock loose. |
+| `flock_loiter_radius_min` / `max` | 7 / 16 | Orbit size around perches/chunks. |
+| `inter_flock_separation_radius` / `weight` | 32 / 2.5 | Repulsion between different groups. |
+| `inter_flock_spook_radius` / `duration` | 18 / 2 | Distance/duration at which different groups spook each other. |
+
+The first leader created for an emitter copies these values; it refreshes them
+once per second, so tuning a placed emitter while the game is running takes
+effect without a reload. If several emitters share a `flock_group`, each emitter
+still owns one leader and its own tuning; keep their Flock values similar for a
+coherent group.
+
+To create multiple flocks, give the emitters different `flock_group` names. The
+director assigns one particle visibility layer per group, and each group's
+leaders cull-mask their attractors to that layer. Same-group leaders align and
+cohere; different groups only repel and spook, so they cannot merge into one
+blob.
+
 ## Runtime flow
 
 1. Each placed `FalseBoidEmitter` emits world-space particles at its own
    position (`emission_height = 2 m`). The first emitter creates a shared
    `FalseBoidDirector`, which creates one `FalseBoidFlock` leader per emitter
-   (up to 10).
-2. Each leader is a boid **and a visible bird sprite**: it steers towards its
-   target with `flight_speed` (7.5 m/s), never drops below `min_flight_speed`
-   (5 m/s), and adds separation/alignment/cohesion against the other leaders.
-   Its wings flap, it bobs, and it mirrors left/right with the camera just like
-   the promoted birds. When it reaches a target it **circles** it at a random
-   5–12 m loiter radius instead of stopping. A loiter timer then sends it to the
-   next target.
+   (up to 10) and assigns each `flock_group` its own particle layer.
+2. Each leader is a boid **and a visible bird sprite**: it copies its emitter's
+   **Flock** exports (attractor, speed limits, steer strength,
+   separation/alignment/cohesion, loiter radii and inter-flock values) and
+   refreshes them once per second. It steers towards its target with
+   `flight_speed` (default 7.5 m/s), never drops below `min_flight_speed`
+   (5 m/s), adds same-group separation/alignment/cohesion, and applies only
+   inter-flock repulsion to leaders in other groups. Its wings flap, it bobs,
+   and it mirrors left/right with the camera just like the promoted birds. When
+   it reaches a target it **circles** it at a random loiter radius (7–16 m by
+   default) instead of stopping. A loiter timer then sends it to the next
+   target.
 3. Targets are perches, active chunks (`highest_block_y + 18…35`, random X/Z
    inside the chunk, decaying recent-chunk cost), and — with `hotspot_chance` —
    the densest nearby leader cluster. Leaders are also held above
@@ -64,14 +107,16 @@ False boids split the two jobs:
    `PERCHED → ALERT (0.25 s) → FLEEING`, fly to the densest cloud point near
    the flock, and vanish into it.
 8. Leaders keep moving between perches and active chunks. The director creates
-   or deletes leaders as the emitter count changes: `leaders = min(emitters, 10)`.
+   or deletes leaders as the emitter count changes:
+   `leaders = min(emitters, 10)`, one per emitter. Leaders in the same
+   `flock_group` cooperate; different groups repel and spook.
 9. **Migration.** Every 30–55 s the director starts a 16–26 s migration window.
    It picks the active chunk farthest from the flock centroid and sends every
-   leader to that area (with small offsets). Leaders drop local perching during
-   the window, and each leader's attractor grows from radius 180 / strength 12
-   to radius 396 / strength 19.2 so the emitted cloud is dragged along instead
-   of staying at the emitters. When the window ends, normal perching and
-   exploration resume.
+   leader there. Different flock groups get separate offsets on a
+   `migration_group_spread` circle rather than one shared point. Leaders drop
+   local perching during the window, and each leader's attractor grows by the
+   migration multipliers from its own tuned base. When the window ends, normal
+   perching and exploration resume.
 
 The burst is capped globally, not just per emitter: promoted birds join the
 `false_boid_perched` group, so multiple leaders/emitters cannot exceed 20 active

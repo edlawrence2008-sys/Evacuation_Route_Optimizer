@@ -831,6 +831,22 @@ func _add_block_groups() -> void:
 					visible_variants.append(entry)
 			if visible_variants.is_empty():
 				continue
+
+			# Color groups default to the first palette color instead of the
+			# uncolored source item, so the group cell matches the chooser.
+			if not _block_group_display.has(group_id):
+				var color_indices := _group_color_indices(group_id)
+				if not color_indices.is_empty():
+					var first_color := int(color_indices[0])
+					for entry: Dictionary in material_groups[group_id]:
+						var entry_name := String(entry["name"])
+						if ColorPaletteDBScript.color_index(entry_name) != first_color:
+							continue
+						if BlockMaterialsDB.variant_of(entry_name) != "block":
+							continue
+						_block_group_display[group_id] = int(entry["id"])
+						break
+
 			var display: Dictionary = _display_variant_for(
 				group_id,
 				visible_variants
@@ -1019,9 +1035,10 @@ func _on_color_chosen(group_id: String, color_index: int) -> void:
 		break
 
 	# The button that emitted `pressed` is still locked for this frame; rebuild
-	# after the signal returns instead of freeing it inside the callback.
+	# after the signal returns instead of freeing it inside the callback. Keep
+	# the chooser where it is: changing color should not teleport the panel.
 	call_deferred("_refresh_inventory_display")
-	call_deferred("_show_block_variants", group_id)
+	call_deferred("_show_block_variants", group_id, Rect2(), true)
 
 
 func _variant_sort_index(item_name: String) -> int:
@@ -1109,7 +1126,8 @@ func _on_block_variants_requested(
 
 func _show_block_variants(
 	group_id: String,
-	anchor_rect: Rect2 = Rect2()
+	anchor_rect: Rect2 = Rect2(),
+	preserve_position: bool = false
 ) -> void:
 	var variants := _visible_variants_for_group(group_id)
 	if variants.size() <= 1:
@@ -1118,6 +1136,10 @@ func _show_block_variants(
 	_ensure_variants_panel()
 	if _variants_panel == null:
 		return
+
+	var keep_position := (
+		_variants_panel.position if preserve_position else Vector2.ZERO
+	)
 
 	for child in _variants_grid.get_children():
 		_variants_grid.remove_child(child)
@@ -1139,7 +1161,14 @@ func _show_block_variants(
 
 	_variants_panel.visible = true
 	_set_variants_badge_open(group_id)
-	_position_variants_panel(anchor_rect)
+	if preserve_position:
+		_variants_panel.size = _variants_content.get_combined_minimum_size()
+		_variants_panel.position = _clamp_popup_position(
+			_variants_panel,
+			keep_position
+		)
+	else:
+		_position_variants_panel(anchor_rect)
 
 
 ## Puts the chooser at the bottom-right of the plus badge, flipping to the
@@ -2446,48 +2475,48 @@ func _palette_item_data(palette_id: String) -> Dictionary:
 func _format_item_title(item_name: String) -> String:
 	var clean := item_name.trim_prefix("Auto_")
 	var lower := clean.to_lower()
-	var material := clean
+	var material_name := clean
 	var shape := ""
 
 	if lower.begins_with("water_"):
 		return "Water " + clean.substr(6).capitalize()
 	if lower.begins_with("connect_"):
-		material = clean.substr(8)
+		material_name = clean.substr(8)
 	elif lower.begins_with("slab_top_"):
-		material = clean.substr(9)
+		material_name = clean.substr(9)
 		shape = "Slab"
 	elif lower.begins_with("slab_bottom_"):
-		material = clean.substr(12)
+		material_name = clean.substr(12)
 		shape = "Slab"
 	elif lower.begins_with("slab_side_"):
-		material = clean.substr(10)
+		material_name = clean.substr(10)
 		shape = "Slab"
 	elif lower.begins_with("slab_"):
-		material = clean.substr(5)
+		material_name = clean.substr(5)
 		shape = "Slab"
 	elif lower.begins_with("panel_top_"):
-		material = clean.substr(10)
+		material_name = clean.substr(10)
 		shape = "Panel"
 	elif lower.begins_with("panel_bottom_"):
-		material = clean.substr(13)
+		material_name = clean.substr(13)
 		shape = "Panel"
 	elif lower.begins_with("panel_side_"):
-		material = clean.substr(11)
+		material_name = clean.substr(11)
 		shape = "Panel"
 	elif lower.begins_with("panel_"):
-		material = clean.substr(6)
+		material_name = clean.substr(6)
 		shape = "Panel"
 	elif lower.begins_with("stairs_upsidedown_"):
-		material = clean.substr(18)
+		material_name = clean.substr(18)
 		shape = "Stairs Upside Down"
 	elif lower.begins_with("stairs_"):
-		material = clean.substr(7)
+		material_name = clean.substr(7)
 		shape = "Stairs"
 	elif lower.begins_with("stair_"):
-		material = clean.substr(6)
+		material_name = clean.substr(6)
 		shape = "Stairs"
 
-	var pretty := material.replace("_", " ").capitalize()
+	var pretty := material_name.replace("_", " ").capitalize()
 	if shape.is_empty():
 		return pretty
 	return "%s %s" % [pretty, shape]
@@ -2515,7 +2544,7 @@ func _describe_block(item_name: String) -> String:
 		return ""
 
 	var lower := item_name.to_lower()
-	var material := item_name.trim_prefix("Auto_").to_lower()
+	var material_name := item_name.trim_prefix("Auto_").to_lower()
 	for prefix in [
 		"connect_",
 		"slab_top_",
@@ -2531,22 +2560,22 @@ func _describe_block(item_name: String) -> String:
 		"stair_",
 	]:
 		if lower.begins_with("auto_" + prefix):
-			material = material.substr(prefix.length())
+			material_name = material_name.substr(prefix.length())
 			break
 
-	if "concrete" in material:
+	if "concrete" in material_name:
 		return "A sturdy cast-concrete building block."
-	if "dirt" in material:
+	if "dirt" in material_name:
 		return "A compacted dirt block."
-	if "grass" in material:
+	if "grass" in material_name:
 		return "A dirt block with a grass surface."
-	if "plank" in material or "wood" in material:
+	if "plank" in material_name or "wood" in material_name:
 		return "A wooden plank block."
-	if "window" in material:
+	if "window" in material_name:
 		return "A framed glass window block."
-	if "floortile" in material or "tile" in material:
+	if "floortile" in material_name or "tile" in material_name:
 		return "A tiled floor block."
-	if "debug" in material:
+	if "debug" in material_name:
 		return ""
 	return "An auto-generated block."
 

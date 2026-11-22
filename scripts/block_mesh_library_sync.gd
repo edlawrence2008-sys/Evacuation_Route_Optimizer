@@ -57,15 +57,31 @@ static func sync_from_blocks(
 
 		var preview := library.get_item_preview(item_id)
 
-		if scene_previews.has(item_name):
+		var color_variant := COLOR_PALETTE.color_index(item_name) >= 0
+		var is_ctm := item_name.begins_with("Auto_Connect_")
+		if color_variant and not is_ctm:
+			# Autoblock color icons must use the multiplicative albedo math of
+			# the placed material. Ignore editor-lit scene previews, which are
+			# brighter and use a different lighting model.
+			var generated_preview := _make_texture_preview(
+				item_name,
+				library
+			)
+			if generated_preview != null:
+				library.set_item_preview(item_id, generated_preview)
+		elif scene_previews.has(item_name):
 			var scene_preview: Texture2D = scene_previews[item_name]
 			if scene_preview != null:
 				library.set_item_preview(item_id, scene_preview)
 		elif (
-			preview == null
+			color_variant
+			or preview == null
 			or preview.get_width() != 64
 			or preview.get_height() != 64
 		):
+			# CTM color variants keep the generator's tinted display/interior
+			# tile; without a scene preview they fall back to the same
+			# multiplicative source tint.
 			var generated_preview := _make_texture_preview(
 				item_name,
 				library
@@ -171,7 +187,7 @@ static func _make_texture_preview(
 
 	image.convert(Image.FORMAT_RGBA8)
 	if color_index >= 0:
-		image = COLOR_PALETTE.tint_image(
+		image = COLOR_PALETTE.tint_image_multiplicative(
 			image,
 			COLOR_PALETTE.color_at(color_index)
 		)

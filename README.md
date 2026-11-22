@@ -31,31 +31,36 @@ how the evacuation went.
    - **Saves** → pick a slot, then **Load Selected**, or **New Map...** for a
      Blank Platform or Heightmap Terrain. **World Type** opens the shared World
      Settings dialog (type, size, seed). **Sort** cycles Last Played (default),
-     Date Created, Alphabetically and Date Modified.
+     Date Created, Alphabetically and Date Modified. Loading freezes the player
+     until the saved spawn chunk has collision, so you cannot fall through an
+     unloaded floor.
    - **Extras** → Credits · **Settings** → Graphics / Gameplay / Audio.
 3. In game, open the inventory (**R**) → **Placeables** and place a
    `Spawner` and an `Evac Point`. The **Build** tab on the left has a
    **Brushes** toggle (Cuboid/Sphere/Cylinder/Surface/Cluster) plus
    Tool/Placement/Pattern rows. Brushes are one click and disable stretch/drag;
    breaking with a brush removes the same brush shape instead of starting a
-   drag, placeable brushes spawn one copy per footprint cell, and palette
-   brushes/drags roll a random palette block for every cell. With brushes off,
-   the same Tool/Placement/Pattern settings apply to the normal drag plane. The
-   ghost turns white when
-   the click would change nothing. The tab's layout is authored in
+   drag, placeable brushes spawn one copy per footprint cell, placeable drags
+   use the Pattern filter, and palette brushes/drags roll a random palette
+   block for every cell. With brushes off, the same Tool/Placement/Pattern
+   settings apply to the normal drag plane. An empty hand draws no ghost; the
+   ghost turns white when the click would change nothing. The tab's layout is authored in
    `scenes/inventory/BuildTab.tscn`. Connected blocks also generate slabs and
-   stairs with the same dynamic CTM borders, and `_colorbase` autoblocks expand
-   into the palette colors from `textures/color_palettes/`; the block-group
-   chooser shows color swatches, and clicking a shape assigns it to the active
-   hotbar slot.
+   stairs with the same dynamic CTM borders, and `_colorbase` autoblocks and CTM
+   sources expand into the palette colors from `textures/color_palettes/`; the
+   block-group chooser shows color swatches without moving when you click one,
+   and clicking a shape assigns it to the active hotbar slot.
 4. Open **Simulation** and press **Start**. **F3** shows statistics, **F4**
    opens the evacuation results.
 5. **Esc** opens the pause menu (Settings, Water Tuning, Statistics, Saves,
    Quit).
 
 The main scene itself ships only an 80-cell starter platform plus ambient false
-boids, so a fresh boot has no spawners or exit until you place them. The old
-nine-spawner demo lives in the save slot `testing_testing_things_just_got_interesting`.
+boids, so a fresh boot has no spawners or exit until you place them. Bird
+emitters expose per-emitter flock settings and a `flock_group`; emitters in
+different groups keep separate particle layers, repel/spook each other, and
+will not merge into one flock. The old nine-spawner demo lives in the save slot
+`testing_testing_things_just_got_interesting`.
 
 ## Controls (defaults)
 

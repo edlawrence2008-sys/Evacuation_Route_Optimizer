@@ -499,6 +499,11 @@ func refresh_view() -> void:
 	_update_view(true)
 
 
+## True once the chunk's serialized cell data has been loaded (or generated).
+func is_chunk_loaded(chunk: Vector2i) -> bool:
+	return _loaded.has(chunk)
+
+
 func get_stats() -> Dictionary:
 	return {
 		"center": _last_center,

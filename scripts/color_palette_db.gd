@@ -112,5 +112,38 @@ static func tint_image(source: Image, color: Color) -> Image:
 	return image
 
 
+## Multiplicative tint matching StandardMaterial3D.albedo_color. Used for
+## inventory/preview textures so an icon uses the same colour math as the
+## placed mesh instead of the luminance-normalised preview tint.
+static func tint_image_multiplicative(
+	source: Image,
+	color: Color
+) -> Image:
+	if source == null:
+		return null
+	var image: Image = source.duplicate()
+	if image.is_compressed():
+		if image.decompress() != OK:
+			return null
+	image.convert(Image.FORMAT_RGBA8)
+
+	for y in image.get_height():
+		for x in image.get_width():
+			var pixel: Color = image.get_pixel(x, y)
+			if pixel.a <= 0.0:
+				continue
+			image.set_pixel(
+				x,
+				y,
+				Color(
+					clampf(pixel.r * color.r, 0.0, 1.0),
+					clampf(pixel.g * color.g, 0.0, 1.0),
+					clampf(pixel.b * color.b, 0.0, 1.0),
+					pixel.a
+				)
+			)
+	return image
+
+
 static func _luminance(color: Color) -> float:
 	return color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722

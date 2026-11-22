@@ -119,8 +119,16 @@ static func material_name(item_name: String) -> String:
 	# belong to the same inventory group as the uncolored base. For CTM
 	# sources the `_colorbase` suffix is part of the source name: merging
 	# hardwood_cornered and hardwood_cornered_colorbase would hide one of
-	# them, so CTM groups keep the full source name.
-	if not is_ctm:
+	# them, so CTM groups keep `_colorbase` and strip only the trailing color
+	# index (`_cNN`). Color variants of one CTM source therefore share a
+	# group, while the plain source stays separate.
+	if is_ctm:
+		var color_pos := lower.rfind("_c")
+		if color_pos != -1 and lower.length() - color_pos == 4:
+			var color_tail := lower.substr(color_pos + 2)
+			if color_tail.is_valid_int():
+				lower = lower.substr(0, color_pos)
+	else:
 		var colorbase := lower.find("_colorbase")
 		if colorbase != -1:
 			lower = lower.substr(0, colorbase)

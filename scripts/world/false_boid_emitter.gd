@@ -29,7 +29,33 @@ const DIRECTOR_GROUP := &"false_boid_director"
 @export var tangential_accel_min: float = 1.5
 @export var tangential_accel_max: float = 6.0
 
+@export_group("Flock")
+## Emitters sharing a flock group share one leader and one particle layer, so
+## their birds move together. Use different names to create separate flocks.
+@export var flock_group: StringName = &"default"
+@export var flock_attractor_radius: float = 90.0
+@export var flock_attractor_strength: float = 8.0
+@export var flock_attractor_attenuation: float = 0.6
+@export var flock_flight_altitude: float = 9.0
+@export var flock_flight_speed: float = 7.5
+@export var flock_min_flight_speed: float = 5.0
+@export var flock_max_flight_speed: float = 14.0
+@export var flock_steer_strength: float = 15.0
+@export var flock_separation_radius: float = 9.0
+@export_range(0.0, 4.0, 0.01) var flock_separation_weight: float = 1.5
+@export var flock_alignment_radius: float = 20.0
+@export_range(0.0, 4.0, 0.01) var flock_alignment_weight: float = 0.25
+@export var flock_cohesion_radius: float = 24.0
+@export_range(0.0, 4.0, 0.01) var flock_cohesion_weight: float = 0.12
+@export var flock_loiter_radius_min: float = 7.0
+@export var flock_loiter_radius_max: float = 16.0
+@export var inter_flock_separation_radius: float = 32.0
+@export_range(0.0, 4.0, 0.01) var inter_flock_separation_weight: float = 2.5
+@export var inter_flock_spook_radius: float = 18.0
+@export var inter_flock_spook_duration: float = 2.0
+
 var _particles: GPUParticles3D = null
+var _flock_layer: int = 1
 var _normal_draw: Mesh = null
 var _flipped_draw: Mesh = null
 var _flip_timer: float = 0.0
@@ -67,6 +93,7 @@ func _build_particles() -> void:
 	_particles.name = "Particles"
 	_particles.emitting = false
 	_particles.position.y = emission_height
+	_particles.layers = _flock_layer
 	add_child(_particles)
 	call_deferred("_start_emitting")
 
@@ -124,6 +151,7 @@ func _build_particles() -> void:
 	# No collision box follows the player any more; disabling collision also
 	# removes the per-particle reference lookup cost.
 	process_material.collision_mode = ParticleProcessMaterial.COLLISION_DISABLED
+	process_material.attractor_interaction_enabled = true
 	_particles.process_material = process_material
 
 	var texture: Texture2D = particle_texture
@@ -193,10 +221,14 @@ func _update_direction_flip(delta: float = 0.2) -> void:
 
 	var director: Node = get_tree().get_first_node_in_group(DIRECTOR_GROUP)
 
-	if director == null or not director.has_method("get_cloud_direction"):
+	if director == null:
 		return
 
-	var direction: Vector3 = director.get_cloud_direction()
+	var direction := Vector3.ZERO
+	if director.has_method("get_cloud_direction_for_group"):
+		direction = director.get_cloud_direction_for_group(flock_group)
+	elif director.has_method("get_cloud_direction"):
+		direction = director.get_cloud_direction()
 	var camera := get_viewport().get_camera_3d()
 
 	if camera == null:
@@ -261,6 +293,50 @@ func _on_director_ready() -> void:
 	_director_pending = false
 
 
+## Flock values applied to this group's leader. Exported on the placeable so
+## each emitter can be tuned in the Property tab and saved with the world.
+func get_flock_settings() -> Dictionary:
+	return {
+		"attractor_radius": flock_attractor_radius,
+		"attractor_strength": flock_attractor_strength,
+		"attractor_attenuation": flock_attractor_attenuation,
+		"flight_altitude": flock_flight_altitude,
+		"flight_speed": flock_flight_speed,
+		"min_flight_speed": flock_min_flight_speed,
+		"max_flight_speed": flock_max_flight_speed,
+		"steer_strength": flock_steer_strength,
+		"separation_radius": flock_separation_radius,
+		"separation_weight": flock_separation_weight,
+		"alignment_radius": flock_alignment_radius,
+		"alignment_weight": flock_alignment_weight,
+		"cohesion_radius": flock_cohesion_radius,
+		"cohesion_weight": flock_cohesion_weight,
+		"loiter_radius_min": flock_loiter_radius_min,
+		"loiter_radius_max": flock_loiter_radius_max,
+		"inter_flock_separation_radius": inter_flock_separation_radius,
+		"inter_flock_separation_weight": inter_flock_separation_weight,
+		"inter_flock_spook_radius": inter_flock_spook_radius,
+		"inter_flock_spook_duration": inter_flock_spook_duration,
+	}
+
+
+## Assigned by the director so this emitter's particles only react to its own
+## flock's attractor (GPUParticlesAttractor3D.cull_mask).
+func set_flock_layer(layer: int) -> void:
+	_flock_layer = maxi(layer, 1)
+
+	if _particles != null and is_instance_valid(_particles):
+		_particles.layers = _flock_layer
+
+
+func get_flock_layer() -> int:
+	return _flock_layer
+
+
+func get_flock_group() -> StringName:
+	return flock_group
+
+
 func get_emitter_state() -> Dictionary:
 	return {
 		"particles": _particles.amount if _particles != null else 0,
@@ -268,4 +344,6 @@ func get_emitter_state() -> Dictionary:
 		"local_coords": _particles.local_coords if _particles != null else true,
 		"lifetime": _particles.lifetime if _particles != null else 0.0,
 		"position": global_position,
+		"flock_group": String(flock_group),
+		"flock_layer": _flock_layer,
 	}

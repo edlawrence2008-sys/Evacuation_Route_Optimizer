@@ -401,6 +401,12 @@ var _detour_from_flow: bool = false
 var _detour_previous_length: float = -1.0
 var _stuck_sample_flow_cell: Vector3i = Vector3i.ZERO
 var _has_stuck_flow_cell: bool = false
+## Monotonic id attached to every grid path request. A late callback from an
+## older request must not overwrite a route assigned after it was queued.
+var _path_request_serial: int = 0
+## Seconds spent in SEEKING_EVAC without any route at all. The watchdog below
+## re-routes when this elapses instead of leaving the agent standing in place.
+var _route_idle_time: float = 0.0
 
 ## Higher instance IDs yield to lower IDs when two agents block each other.
 const YIELD_DETECT_RADIUS: float = 1.0
@@ -414,6 +420,15 @@ const CONGESTION_REPATH_INTERVAL: float = 2.0
 const CONGESTION_CHECK_INTERVAL: float = 0.35
 const CONGESTION_PROBE_CELL_SCALE: float = 0.9
 const FLOW_STUCK_SAMPLE: int = -2
+## How long a SEEKING_EVAC agent may have no route before it re-routes itself.
+## Some congestion paths leave an agent with no usable route (a detour request
+## that never lands, a stale flow field, a walked-out path), and the brain has
+## no other branch that would recover it.
+const ROUTE_RECOVERY_SECONDS: float = 2.5
+## A queued path request that never calls back must not block recovery forever.
+## Kept generous: a large crowd can leave requests queued behind the per-frame
+## path budget for several seconds.
+const PATH_REQUEST_TIMEOUT_USEC: int = 8000000
 
 ## evacuation point position -> unix-style engine time when it may be tried again
 var _failed_evac_points: Dictionary = {}
@@ -1582,25 +1597,31 @@ func _request_congestion_detour(
 	if not _detour_from_flow:
 		_detour_previous_length = _remaining_path_length()
 
-	_flow_active = false
-	_flow_wait = 0.0
-
-	# Flow mode has no per-agent path to fall back on, so stop until the detour
-	# arrives. Path mode keeps its current route until the replacement lands.
-	if _detour_from_flow:
-		current_path.clear()
-		path_index = 0
-
+	# Keep the current route (or flow field) active while the replacement is
+	# queued. This used to switch flow mode off and clear the path, so an agent
+	# waiting behind a full path-request queue had neither a route nor a field
+	# and simply stood still in the middle of the jam.
 	is_awaiting_path = true
 	_pending_route_reason = "detour"
 	_pending_route_started_usec = Time.get_ticks_usec()
+	_request_grid_path(grid, global_position, target)
+	return true
+
+
+## Queues an A* request that carries the current request serial, so a callback
+## from a superseded request is ignored instead of clobbering the newer route.
+func _request_grid_path(
+	grid: NavGridMap,
+	start: Vector3,
+	end: Vector3
+) -> void:
+	_path_request_serial += 1
 	grid.request_path(
 		self,
-		global_position,
-		target,
-		_on_path_received
+		start,
+		end,
+		_on_path_received.bind(_path_request_serial)
 	)
-	return true
 
 
 func _advance_waypoint() -> void:
@@ -1734,6 +1755,7 @@ func begin_exit_hold(exit_point: Node) -> void:
 	_exit_hold_deadline = (
 		_now_seconds() + maxf(1.0, max_exit_hold_time)
 	)
+	_invalidate_pending_path()
 
 	has_evacuation_target = true
 	current_state = State.ARRIVED
@@ -1760,6 +1782,7 @@ func on_exit_area_exited() -> void:
 	if current_state == State.DEAD:
 		return
 
+	_invalidate_pending_path()
 	has_evacuation_target = false
 	current_state = State.IDLE
 	wait_timer = 0.35
@@ -1775,6 +1798,7 @@ func reject_evacuation(_reason: String = "capacity") -> void:
 	_exit_hold_active = false
 	_exit_hold_exit = null
 	_exit_hold_deadline = 0.0
+	_invalidate_pending_path()
 	clear_optimizer_assignment()
 
 	if _last_evac_target != Vector3.ZERO:
@@ -1816,6 +1840,7 @@ func mark_evacuated() -> void:
 
 	set_meta("evacuated", true)
 	_evacuated_at_sim = GlobalData.sim_now()
+	_invalidate_pending_path()
 	_exit_hold_active = false
 	_exit_hold_exit = null
 	_exit_hold_deadline = 0.0
@@ -2445,6 +2470,7 @@ func set_evacuation_mode(enabled: bool) -> void:
 	is_evacuee = enabled
 	has_evacuation_target = false
 	_awaiting_evac_confirmation = false
+	_invalidate_pending_path()
 	clear_optimizer_assignment()
 	_exit_hold_active = false
 	_exit_hold_exit = null
@@ -2522,11 +2548,19 @@ func _process_npc_brain(elapsed_time: float) -> void:
 		State.WANDERING:
 			if _should_evacuate() or has_evacuation_target:
 				# Recover agents left wandering with a stale evacuation target.
+				# The pending wander request must not land as an evacuation
+				# route, so drop it before choosing the exit.
+				_invalidate_pending_path()
 				has_evacuation_target = false
 				current_state = State.SEEKING_EVAC
 				current_path.clear()
 				path_index = 0
 				_route_to_closest_evac_point()
+			else:
+				_update_wander_watchdog(elapsed_time)
+
+		State.SEEKING_EVAC:
+			_update_route_watchdog(elapsed_time)
 
 
 ## Crush injury model. The crowd solver measures density inside the density
@@ -2805,6 +2839,9 @@ func request_evacuation_target(
 	if current_state == State.DEAD or has_meta("evacuated"):
 		return
 
+	# Any detour still queued for the previous route is now stale.
+	_invalidate_pending_path()
+	_route_idle_time = 0.0
 	has_evacuation_target = true
 	_last_evac_target = target
 	current_state = State.SEEKING_EVAC
@@ -2834,12 +2871,7 @@ func request_evacuation_target(
 		else:
 			_flow_active = false
 			is_awaiting_path = true
-			gridmap.request_path(
-				self,
-				global_position,
-				target,
-				_on_path_received
-			)
+			_request_grid_path(gridmap, global_position, target)
 	else:
 		_fail_evacuation()
 		return
@@ -2852,6 +2884,7 @@ func request_evacuation_target(
 
 
 func _fail_evacuation() -> void:
+	_invalidate_pending_path()
 	clear_optimizer_assignment()
 
 	if _last_evac_target != Vector3.ZERO:
@@ -3120,6 +3153,8 @@ func _request_random_wander_path() -> void:
 		return
 
 	is_awaiting_path = true
+	_pending_route_reason = "wander"
+	_pending_route_started_usec = Time.get_ticks_usec()
 
 	var random_angle: float = _rng.randf_range(0.0, TAU)
 	var target_position: Vector3 = global_position + Vector3(
@@ -3128,15 +3163,17 @@ func _request_random_wander_path() -> void:
 		sin(random_angle)
 	) * _rng.randf_range(5.0, 12.0)
 
-	grid.request_path(
-		self,
-		global_position,
-		target_position,
-		_on_path_received
-	)
+	_request_grid_path(grid, global_position, target_position)
 
 
-func _on_path_received(new_path: PackedVector3Array) -> void:
+func _on_path_received(
+	new_path: PackedVector3Array,
+	request_serial: int = -1
+) -> void:
+	# Ignore a callback for a request that a newer one has already superseded.
+	if request_serial >= 0 and request_serial != _path_request_serial:
+		return
+
 	# A path request can complete after the agent was admitted through an exit.
 	# Do not let the late callback revive an inactive, retained agent.
 	if has_meta("evacuated"):
@@ -3145,16 +3182,28 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 	is_awaiting_path = false
 
 	var previous_length: float = _detour_previous_length
+	var was_detour_from_flow: bool = _detour_from_flow
+	_detour_from_flow = false
 	_detour_previous_length = -1.0
 
-	if _flow_active:
+	# A stale request can land after the agent was re-routed into a flow field.
+	# That newer assignment wins; the path it asked for is no longer relevant.
+	if _flow_active and not was_detour_from_flow:
 		return
 
+	# With no waypoint left there is nothing to keep moving on. Accepting the
+	# replacement is the only way out, so skip the detour-length preference.
+	var has_remaining_route: bool = (
+		not current_path.is_empty() and path_index < current_path.size()
+	)
+
 	if not new_path.is_empty():
-		if not _detour_route_is_acceptable(new_path, previous_length):
+		if (
+			has_remaining_route
+			and not _detour_route_is_acceptable(new_path, previous_length)
+		):
 			# Keep the existing route and keep moving; the heat still makes
 			# other agents avoid this spot. Retry only after a longer pause.
-			_detour_from_flow = false
 			_congestion_repath_timer = maxf(
 				_congestion_repath_timer,
 				CONGESTION_REPATH_INTERVAL * 1.5
@@ -3164,8 +3213,9 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 			_reset_stuck()
 			return
 
-		_detour_from_flow = false
 		_evacuation_failures = 0
+		_flow_active = false
+		_flow_wait = 0.0
 		# Cooldowns are time-based and must survive a successful path request.
 		# Clearing them here let an agent alternate between two failed exits
 		# every few hundred milliseconds.
@@ -3184,8 +3234,9 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 		return
 
 	# A congestion detour that failed should not discard a still-usable route.
-	if _detour_from_flow:
-		_detour_from_flow = false
+	# If it came from a flow field, keep the (still active) field so the agent
+	# keeps moving instead of standing in the jam.
+	if was_detour_from_flow:
 		_flow_active = true
 		_flow_wait = 0.0
 
@@ -3196,12 +3247,138 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 	if not current_path.is_empty() and path_index < current_path.size():
 		return
 
+	# No replacement and no waypoint left. If the retained route already
+	# carried the agent to its destination, complete the arrival instead of
+	# failing an evacuation that actually made it.
+	var target: Vector3 = _current_route_target()
+
+	if (
+		target != Vector3.ZERO
+		and global_position.distance_to(target)
+		<= waypoint_arrival_distance + 1.0
+	):
+		_finish_path()
+		return
+
 	if current_state == State.SEEKING_EVAC:
 		_fail_evacuation()
 	else:
 		get_tree().create_timer(0.2).timeout.connect(
 			choose_next_action
 		)
+
+
+## True while the agent has somewhere to walk right now: a flow field it can
+## follow, or a path with at least one waypoint left.
+func _has_active_route() -> bool:
+	if _flow_active:
+		return true
+
+	return not current_path.is_empty() and path_index < current_path.size()
+
+
+## SEEKING_EVAC has no brain branch of its own, so an agent that loses its
+## route (a rejected detour, a dropped request, a stale flow field) would stand
+## in place until something external moved it. Re-route after a short grace.
+func _update_route_watchdog(elapsed_time: float) -> void:
+	if _has_active_route():
+		_route_idle_time = 0.0
+		return
+
+	if is_awaiting_path:
+		var started_usec: int = _pending_route_started_usec
+
+		if (
+			started_usec > 0
+			and Time.get_ticks_usec() - started_usec
+			< PATH_REQUEST_TIMEOUT_USEC
+		):
+			return
+
+		# The request never came back, or the grid dropped it. Stop waiting so
+		# the recovery below is allowed to run.
+		is_awaiting_path = false
+		_reset_stuck()
+
+	_route_idle_time += elapsed_time
+
+	if _route_idle_time < ROUTE_RECOVERY_SECONDS:
+		return
+
+	_route_idle_time = 0.0
+	_recover_missing_route()
+
+
+## Same safety net for non-evacuees. A wanderer whose path request is dropped
+## or whose path runs out has no brain branch that would start it moving again.
+func _update_wander_watchdog(elapsed_time: float) -> void:
+	if _has_active_route():
+		_route_idle_time = 0.0
+		return
+
+	if is_awaiting_path:
+		var started_usec: int = _pending_route_started_usec
+
+		if (
+			started_usec > 0
+			and Time.get_ticks_usec() - started_usec
+			< PATH_REQUEST_TIMEOUT_USEC
+		):
+			return
+
+		is_awaiting_path = false
+		_reset_stuck()
+
+	_route_idle_time += elapsed_time
+
+	if _route_idle_time < ROUTE_RECOVERY_SECONDS:
+		return
+
+	_route_idle_time = 0.0
+	choose_next_action()
+
+
+## Rebuilds the evacuation route for an agent that has none. Keeps the
+## optimizer's assigned exit when there is one, otherwise retries the last
+## exit, and falls back to the normal choice when that exit is on cooldown.
+func _recover_missing_route() -> void:
+	if current_state != State.SEEKING_EVAC or is_awaiting_path:
+		return
+
+	var target: Vector3 = _last_evac_target
+
+	if _optimizer_assignment_active and _optimizer_assigned_target != Vector3.ZERO:
+		target = _optimizer_assigned_target
+
+	if target != Vector3.ZERO and not _is_evacuation_point_failed(target):
+		request_evacuation_target(target, "recovery")
+		return
+
+	has_evacuation_target = false
+	_route_to_closest_evac_point()
+
+
+func _clear_pending_detour() -> void:
+	_detour_from_flow = false
+	_detour_previous_length = -1.0
+
+
+## Makes any path request that is already in the grid's queue stale. Called
+## whenever a route assignment supersedes it, so an old detour cannot land on
+## an agent that has since been admitted, retargeted or sent back to IDLE.
+func _invalidate_pending_path() -> void:
+	_path_request_serial += 1
+	_clear_pending_detour()
+
+	# Drop the superseded requests from the queue as well. Under heavy
+	# congestion the path budget is the scarce resource, so computing routes
+	# nobody will use starves the agents that still need one. The timestamp
+	# guard skips the O(queue) scan when this agent has nothing pending.
+	if (
+		is_instance_valid(gridmap)
+		and (_pending_route_started_usec > 0 or is_awaiting_path)
+	):
+		gridmap.cancel_path_requests(self)
 
 
 # ============================================================
@@ -3296,6 +3473,10 @@ func _repath() -> void:
 		return
 
 	if current_path.is_empty() or path_index >= current_path.size():
+		# Nothing left to re-path along. Rebuild the route instead of doing
+		# nothing, which used to leave the agent standing indefinitely.
+		if current_state == State.SEEKING_EVAC:
+			_recover_missing_route()
 		return
 
 	if current_state == State.SEEKING_EVAC:
@@ -3323,11 +3504,10 @@ func _repath() -> void:
 	_pending_route_reason = "navigation"
 	_pending_route_started_usec = Time.get_ticks_usec()
 
-	grid.request_path(
-		self,
+	_request_grid_path(
+		grid,
 		global_position,
-		current_path[current_path.size() - 1],
-		_on_path_received
+		current_path[current_path.size() - 1]
 	)
 
 
@@ -3538,6 +3718,7 @@ func on_exit_unavailable(exit_point: Node3D) -> void:
 	if distance > 1.5:
 		return
 
+	_invalidate_pending_path()
 	clear_optimizer_assignment()
 
 	if _last_evac_target != Vector3.ZERO:

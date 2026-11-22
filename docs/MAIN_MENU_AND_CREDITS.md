@@ -38,7 +38,10 @@ Backdrop: `scenes/menu/menu_backdrop.gd`
   camera with `saves_only = true`. That overlay uses the pause menu's existing
   save list, thumbnail, details and dialogs. The Saves page uses compact scaled
   buttons, six save rows, a top header row (New Map / World Type / Sort /
-  Rename), and two bottom action columns; long names are shortened in the list.
+  Rename), and two bottom action columns; Save / Save As / Load use the same
+  wide bar as New Map / World Type, and long names are shortened in the list.
+  Loading freezes the player until the saved spawn chunk has collision, so a
+  load cannot drop the player through an unmeshed floor.
   **Save** and **Save As** are hidden because no live world is loaded. **World Type** stays available so New Map can
   choose Blank Platform or Heightmap Terrain; it opens a **World Settings**
   dialog with type, size and seed. Load, New Map, Rename, **Sort**, Duplicate,

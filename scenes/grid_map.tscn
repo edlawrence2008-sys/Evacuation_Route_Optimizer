@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://bi22f5rdk8agp"]
 
-[ext_resource type="MeshLibrary" uid="uid://b4j8s0bucyw2a" path="res://resources/blocks/.tres" id="1_bunqd"]
+[ext_resource type="MeshLibrary" path="res://resources/blocks/.tres" id="1_bunqd"]
 [ext_resource type="Script" uid="uid://g4vpw63k3ynt" path="res://scripts/gridmap.gd" id="2_lgqos"]
 
 [node name="Gridmap" type="GridMap" unique_id=291815369]

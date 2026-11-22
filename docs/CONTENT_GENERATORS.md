@@ -76,12 +76,16 @@ The plugin prints `Content Generators: ready (Project > Tools).` in the Output
 panel when it loads, so a missing line means the plugin did not start.
 
 Verified 2026-11-22 from the plugin's static entry points: blocks processed 53
-texture groups / 652 variant slots and synced 749 MeshLibrary items; connected
-blocks added 36 `Auto_Connect_*` items (full block plus top/bottom/side slabs
-and normal/upside-down stairs for each of six sources); foliage updated 9
-scenes. All CTM shapes share one atlas per source at render time, so slabs and
-stairs get dynamic per-face borders. Running the tools adds only the new
-block/icon assets, so review `git status` afterwards.
+texture groups / 652 variant slots; connected blocks then added **420**
+`Auto_Connect_*` items (full block plus top/bottom/side slabs and
+normal/upside-down stairs for each of six sources). The two `_colorbase` CTM
+sources also get one tinted set per palette color, sharing the atlas and
+tinting the material with `albedo_color`; the MeshLibrary finished at **1,139**
+items. Foliage updated 9 scenes. All CTM shapes share one atlas per source at
+render time, so slabs and stairs get dynamic per-face borders. The connected
+generator keeps MeshLibrary IDs for names it still generates and removes only
+stale managed items, so saved chunks survive a regeneration. Running the tools
+adds only the new block/icon assets, so review `git status` afterwards.
 
 If the menu is missing:
 

@@ -1444,7 +1444,7 @@ func _emit_ctm_quad(
 	# into the next atlas row.
 	var tile := Vector2(
 		float(mask % CTM_ATLAS_GRID),
-		float(mask / CTM_ATLAS_GRID)
+		float(floori(float(mask) / float(CTM_ATLAS_GRID)))
 	)
 	var first_index: int = surface.vertices.size()
 	var corners: Array[Vector3] = [p00, p10, p11, p01]
@@ -1602,7 +1602,7 @@ func _emit_ctm_item_mesh(
 				)
 				tile = Vector2(
 					float(mask % CTM_ATLAS_GRID),
-					float(mask / CTM_ATLAS_GRID)
+					float(floori(float(mask) / float(CTM_ATLAS_GRID)))
 				)
 				tile_cache[dir_key] = tile
 
@@ -1722,7 +1722,9 @@ func _rebuild_chunk_heightfield(chunk: Vector2i, lod: int) -> void:
 
 	var surfaces: Dictionary = {}
 	var size: Vector3 = _grid.cell_size
-	var per_axis: int = NavGridMap.CHUNK_SIZE / step
+	var per_axis: int = floori(
+		float(NavGridMap.CHUNK_SIZE) / float(step)
+	)
 	_suppress_ao = true
 
 	for key: Vector2i in own_columns:
@@ -1793,7 +1795,10 @@ func _lod_columns_for(chunk: Vector2i, step: int) -> Dictionary:
 		var cell: Vector3i = cells[index]
 		var local_x: int = cell.x - origin.x
 		var local_z: int = cell.z - origin.y
-		var key := Vector2i(local_x / step, local_z / step)
+		var key := Vector2i(
+			floori(float(local_x) / float(step)),
+			floori(float(local_z) / float(step))
+		)
 		var column_y: int = _snap_lod_y(cell.y, step)
 		var previous: Variant = columns.get(key)
 
@@ -1816,8 +1821,8 @@ func _snap_lod_y(y: int, step: int) -> int:
 		return y
 
 	var surface: int = y + 1
-	var snapped := ceili(float(surface) / float(step)) * step
-	return snapped - 1
+	var snapped_surface := ceili(float(surface) / float(step)) * step
+	return snapped_surface - 1
 
 
 ## Adds the adjacent chunk's cached coarse columns just outside this chunk's
@@ -1830,7 +1835,7 @@ func _build_lod_border_columns(
 	columns: Dictionary
 ) -> void:
 	var chunk_size: int = NavGridMap.CHUNK_SIZE
-	var per_axis: int = chunk_size / step
+	var per_axis: int = floori(float(chunk_size) / float(step))
 
 	for direction: Vector2i in [
 		Vector2i(1, 0),
@@ -2043,8 +2048,8 @@ func _commit_collision(chunk: Vector2i, mesh: ArrayMesh) -> void:
 		_remove_collision(chunk)
 		return
 
-	var shape_node: CollisionShape3D = body.get_node("Shape")
-	shape_node.shape = shape
+	var collision_shape: CollisionShape3D = body.get_node("Shape")
+	collision_shape.shape = shape
 
 
 func _remove_collision(chunk: Vector2i) -> void:
@@ -2058,6 +2063,12 @@ func _remove_collision(chunk: Vector2i) -> void:
 
 func get_collision_body_count() -> int:
 	return _collision_nodes.size()
+
+
+## True once this chunk has a committed trimesh collision body. Used by save
+## loading to keep the player frozen until the ground under them exists.
+func has_chunk_collision(chunk: Vector2i) -> bool:
+	return _collision_nodes.has(chunk)
 
 
 ## Enables distance LOD. Ordinary maps leave this off; generated worlds turn it

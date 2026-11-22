@@ -55,6 +55,11 @@ const CLOUD_SAMPLE_COUNT: int = 28
 @export_range(0.0, 4.0, 0.01) var alignment_weight: float = 0.45
 @export var cohesion_radius: float = 26.0
 @export_range(0.0, 4.0, 0.01) var cohesion_weight: float = 0.3
+## Different flock groups only repel each other; they never align or cohere.
+@export var inter_flock_separation_radius: float = 32.0
+@export_range(0.0, 4.0, 0.01) var inter_flock_separation_weight: float = 2.5
+@export var inter_flock_spook_radius: float = 18.0
+@export var inter_flock_spook_duration: float = 2.0
 
 @export_group("Perching")
 @export_range(0, 20, 1) var max_perched_birds: int = 20
@@ -106,6 +111,10 @@ const CLOUD_SAMPLE_COUNT: int = 28
 @export var repel_strength: float = 25.0
 @export var repel_duration: float = 1.5
 
+var flock_group: StringName = &"default"
+var _flock_layer: int = 1
+var _source_emitter: Node = null
+var _settings_timer: float = 0.0
 var _leader: Node3D = null
 var _leader_sprite: Sprite3D = null
 var _leader_frame_time: float = 0.0
@@ -141,8 +150,95 @@ var _grid: NavGridMap = null
 var _rng := RandomNumberGenerator.new()
 
 
+## Called by the director before add_child so the leader's first frame already
+## uses the emitter's flock tuning and particle layer.
+func setup_from_emitter(emitter: Node, layer: int) -> void:
+	_source_emitter = emitter
+	set_flock_layer(layer)
+
+	if emitter == null:
+		return
+
+	var group_value: Variant = emitter.get("flock_group")
+	if group_value != null:
+		var group_text := String(group_value).strip_edges()
+		flock_group = StringName(group_text) if not group_text.is_empty() else &"default"
+
+	if emitter.has_method("get_flock_settings"):
+		_apply_flock_settings(emitter.get_flock_settings())
+
+
+## Re-reads the emitter's inspector values once per second so tuning a placed
+## emitter at runtime takes effect without reloading the scene.
+func refresh_from_emitter() -> bool:
+	if _source_emitter == null or not is_instance_valid(_source_emitter):
+		return false
+	if _source_emitter.has_method("get_flock_settings"):
+		_apply_flock_settings(_source_emitter.get_flock_settings())
+	return true
+
+
+func set_flock_group(value: StringName) -> void:
+	flock_group = value
+
+
+func _apply_flock_settings(settings: Dictionary) -> void:
+	attractor_radius = float(settings.get("attractor_radius", attractor_radius))
+	attractor_strength = float(settings.get("attractor_strength", attractor_strength))
+	attractor_attenuation = float(
+		settings.get("attractor_attenuation", attractor_attenuation)
+	)
+	flight_altitude = float(settings.get("flight_altitude", flight_altitude))
+	flight_speed = float(settings.get("flight_speed", flight_speed))
+	min_flight_speed = float(settings.get("min_flight_speed", min_flight_speed))
+	max_flight_speed = float(settings.get("max_flight_speed", max_flight_speed))
+	steer_strength = float(settings.get("steer_strength", steer_strength))
+	separation_radius = float(
+		settings.get("separation_radius", separation_radius)
+	)
+	separation_weight = float(
+		settings.get("separation_weight", separation_weight)
+	)
+	alignment_radius = float(settings.get("alignment_radius", alignment_radius))
+	alignment_weight = float(settings.get("alignment_weight", alignment_weight))
+	cohesion_radius = float(settings.get("cohesion_radius", cohesion_radius))
+	cohesion_weight = float(settings.get("cohesion_weight", cohesion_weight))
+	loiter_radius_min = float(
+		settings.get("loiter_radius_min", loiter_radius_min)
+	)
+	loiter_radius_max = float(
+		settings.get("loiter_radius_max", loiter_radius_max)
+	)
+	inter_flock_separation_radius = float(
+		settings.get(
+			"inter_flock_separation_radius",
+			inter_flock_separation_radius
+		)
+	)
+	inter_flock_separation_weight = float(
+		settings.get(
+			"inter_flock_separation_weight",
+			inter_flock_separation_weight
+		)
+	)
+	inter_flock_spook_radius = float(
+		settings.get("inter_flock_spook_radius", inter_flock_spook_radius)
+	)
+	inter_flock_spook_duration = float(
+		settings.get("inter_flock_spook_duration", inter_flock_spook_duration)
+	)
+
+
+func set_flock_layer(layer: int) -> void:
+	_flock_layer = maxi(layer, 1)
+	if _attractor != null and is_instance_valid(_attractor):
+		_attractor.cull_mask = _flock_layer
+
+
 func _ready() -> void:
 	add_to_group(LEADER_GROUP)
+	if _source_emitter != null:
+		refresh_from_emitter()
 	max_perched_birds = clampi(max_perched_birds, 0, 20)
 	_rng.randomize()
 	_wobble_phase = _rng.randf() * TAU
@@ -156,6 +252,11 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_settings_timer += delta
+	if _settings_timer >= 1.0:
+		_settings_timer = 0.0
+		refresh_from_emitter()
+
 	_wobble_time += delta
 	_retreat_timer = maxf(0.0, _retreat_timer - delta)
 	_update_attractor_strength(delta)
@@ -233,6 +334,7 @@ func _ensure_attractor() -> void:
 	_attractor.radius = attractor_radius
 	_attractor.strength = attractor_strength
 	_attractor.attenuation = attractor_attenuation
+	_attractor.cull_mask = _flock_layer
 
 
 ## Called by the director when this leader is in an over-dense cluster. The
@@ -434,9 +536,11 @@ func _apply_flock_forces(delta: float) -> void:
 
 	var position_now: Vector3 = _leader.global_position
 	var separation := Vector3.ZERO
+	var inter_separation := Vector3.ZERO
 	var alignment := Vector3.ZERO
 	var cohesion := Vector3.ZERO
 	var separation_count: int = 0
+	var inter_separation_count: int = 0
 	var alignment_count: int = 0
 	var cohesion_count: int = 0
 
@@ -448,10 +552,26 @@ func _apply_flock_forces(delta: float) -> void:
 		var offset: Vector3 = position_now - other_position
 		var distance: float = offset.length()
 
+		if distance < 0.01:
+			offset = Vector3.RIGHT
+			distance = 0.01
+
+		var other_group: StringName = &"default"
+		if node.has_method("get_flock_group"):
+			other_group = node.get_flock_group()
+
+		# Other flocks are only repelled. They never share alignment or
+		# cohesion, so two groups cannot collapse into one sky blob.
+		if other_group != flock_group:
+			if distance < inter_flock_separation_radius:
+				inter_separation += (
+					(offset / distance)
+					* (1.0 - distance / inter_flock_separation_radius)
+				)
+				inter_separation_count += 1
+			continue
+
 		if distance < separation_radius:
-			if distance < 0.01:
-				offset = Vector3.RIGHT
-				distance = 0.01
 			separation += (offset / distance) * (1.0 - distance / separation_radius)
 			separation_count += 1
 
@@ -468,6 +588,13 @@ func _apply_flock_forces(delta: float) -> void:
 
 	if separation_count > 0:
 		acceleration += separation.normalized() * flight_speed * separation_weight
+
+	if inter_separation_count > 0:
+		acceleration += (
+			inter_separation.normalized()
+			* flight_speed
+			* inter_flock_separation_weight
+		)
 
 	if alignment_count > 0:
 		var average: Vector3 = alignment / float(alignment_count)
@@ -764,22 +891,32 @@ func _choose_next_target(force_change: bool = false) -> void:
 ## position readback, so leader clustering is the available bird-density proxy.
 func _try_choose_hotspot() -> bool:
 	var leaders := get_tree().get_nodes_in_group(LEADER_GROUP)
+	var same_group: Array = []
 
-	if leaders.size() < 2:
+	for node: Node in leaders:
+		if node == self or not (node is Node3D):
+			continue
+
+		if (
+			node.has_method("get_flock_group")
+			and node.get_flock_group() != flock_group
+		):
+			continue
+
+		same_group.append(node)
+
+	if same_group.is_empty():
 		return false
 
 	var best: Node3D = null
 	var best_count: int = 0
 
-	for candidate: Node in leaders:
-		if not (candidate is Node3D):
-			continue
-
+	for candidate: Node in same_group:
 		var candidate_position: Vector3 = _leader_position_of(candidate)
 		var count: int = 0
 
-		for other: Node in leaders:
-			if other == candidate or not (other is Node3D):
+		for other: Node in same_group:
+			if other == candidate:
 				continue
 
 			if _leader_position_of(other).distance_to(candidate_position) <= hotspot_radius:
@@ -792,15 +929,8 @@ func _try_choose_hotspot() -> bool:
 	if best == null or best_count < 2:
 		# Even when no cluster exists, occasionally visit another leader so the
 		# "go toward the flock" behaviour is visible with only two or three
-		# emitters.
-		var others := leaders.filter(func(candidate: Node) -> bool:
-			return candidate != self and candidate is Node3D
-		)
-
-		if others.is_empty():
-			return false
-
-		best = others[_rng.randi_range(0, others.size() - 1)] as Node3D
+		# emitters in the same group.
+		best = same_group[_rng.randi_range(0, same_group.size() - 1)] as Node3D
 
 	if best == null:
 		return false
@@ -824,6 +954,16 @@ func _leader_position_of(node: Node) -> Vector3:
 		return (node as Node3D).global_position
 
 	return global_position
+
+
+func _node_flock_group(node: Node) -> StringName:
+	if node.has_method("get_flock_group"):
+		return node.get_flock_group()
+
+	if "flock_group" in node:
+		return StringName(String(node.get("flock_group")))
+
+	return &"default"
 
 
 func _choose_exploration_target() -> void:
@@ -936,7 +1076,7 @@ func _cloud_sources() -> Array[Dictionary]:
 		})
 
 	for node: Node in get_tree().get_nodes_in_group(EMITTER_GROUP):
-		if not (node is Node3D):
+		if not (node is Node3D) or _node_flock_group(node) != flock_group:
 			continue
 
 		var amount: float = 500.0
@@ -951,7 +1091,11 @@ func _cloud_sources() -> Array[Dictionary]:
 		})
 
 	for node: Node in get_tree().get_nodes_in_group(LEADER_GROUP):
-		if node == self or not (node is Node3D):
+		if (
+			node == self
+			or not (node is Node3D)
+			or _node_flock_group(node) != flock_group
+		):
 			continue
 
 		sources.append({
@@ -982,11 +1126,15 @@ func _cloud_anchors() -> Array[Vector3]:
 		anchors.append(_leader.global_position)
 
 	for node: Node in get_tree().get_nodes_in_group(EMITTER_GROUP):
-		if node is Node3D:
+		if node is Node3D and _node_flock_group(node) == flock_group:
 			anchors.append((node as Node3D).global_position)
 
 	for node: Node in get_tree().get_nodes_in_group(LEADER_GROUP):
-		if node == self or not (node is Node3D):
+		if (
+			node == self
+			or not (node is Node3D)
+			or _node_flock_group(node) != flock_group
+		):
 			continue
 
 		anchors.append(_leader_position_of(node))
@@ -1059,9 +1207,31 @@ func get_leader_velocity() -> Vector3:
 	return _velocity
 
 
+func get_flock_group() -> StringName:
+	return flock_group
+
+
+func get_flock_layer() -> int:
+	return _flock_layer
+
+
+func get_source_emitter() -> Node:
+	return _source_emitter
+
+
+func get_inter_flock_spook_radius() -> float:
+	return inter_flock_spook_radius
+
+
+func get_inter_flock_spook_duration() -> float:
+	return inter_flock_spook_duration
+
+
 func get_flock_state() -> Dictionary:
 	return {
 		"leader": _leader.global_position if _leader != null else global_position,
+		"flock_group": String(flock_group),
+		"flock_layer": _flock_layer,
 		"velocity": _velocity,
 		"speed": _velocity.length(),
 		"loitering": _is_loitering,
@@ -1074,7 +1244,7 @@ func get_flock_state() -> Dictionary:
 		"max_perched": max_perched_birds,
 		"perches": _perches.size(),
 		"target": (
-			_target_perch.name
+			String(_target_perch.name)
 			if _target_perch != null and is_instance_valid(_target_perch)
 			else ""
 		),

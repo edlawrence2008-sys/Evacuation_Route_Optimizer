@@ -843,10 +843,10 @@ func import_column(
 	if cursor.u32() != MAGIC or cursor.u8() != FORMAT_VERSION:
 		return false
 
-	var section_count: int = cursor.u16()
+	var section_total: int = cursor.u16()
 	var sections: Dictionary = {}
 
-	for _index in section_count:
+	for _index in section_total:
 		if cursor.remaining() < 9:
 			return false
 
@@ -976,11 +976,11 @@ static func decode_column(
 		push_error("VoxelSectionStore: unsupported column format for %s." % column)
 		return result
 
-	var section_count: int = cursor.u16()
+	var section_total: int = cursor.u16()
 	var base_x: int = column.x * SIZE
 	var base_z: int = column.y * SIZE
 
-	for _index in section_count:
+	for _index in section_total:
 		# sy + mode + bits + palette size + count
 		if cursor.remaining() < 9:
 			return result

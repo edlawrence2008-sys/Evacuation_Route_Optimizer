@@ -14,6 +14,7 @@ signal congestion_changed(affected_cells: Array[Vector3i])
 signal nav_refresh_measured(duration_usec: int, changed_cells: int)
 
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
+const COLOR_PALETTE := preload("res://scripts/color_palette_db.gd")
 const VoxelSectionStoreScript := preload("res://scripts/world/VoxelSectionStore.gd")
 
 ## Body radius used for navigation clearance checks. The spawned NPC body is a
@@ -2252,6 +2253,7 @@ func _build_ctm_items() -> void:
 		return
 
 	var base_materials: Dictionary = {}
+	var tinted_materials: Dictionary = {}
 	for id: int in mesh_library.get_item_list():
 		var item_name := String(mesh_library.get_item_name(id))
 		var base_name := ctm_base_name(item_name)
@@ -2270,12 +2272,28 @@ func _build_ctm_items() -> void:
 			if material == null:
 				continue
 			base_materials[base_name] = material
-		_ctm_materials[id] = material
-		_ctm_bases[id] = base_name
+
+		var color_index := ctm_color_index(item_name)
+		var group_name := base_name
+		var item_material := material
+		if color_index >= 0:
+			var tint_key := "%s|c%02d" % [base_name, color_index]
+			item_material = tinted_materials.get(tint_key)
+			if item_material == null:
+				var tinted := material.duplicate() as StandardMaterial3D
+				if tinted != null:
+					tinted.albedo_color = COLOR_PALETTE.color_at(color_index)
+					item_material = tinted
+				else:
+					item_material = material
+				tinted_materials[tint_key] = item_material
+			group_name = tint_key
+		_ctm_materials[id] = item_material
+		_ctm_bases[id] = group_name
 
 
 ## Maps an `Auto_Connect_*` item name to its CTM source base name, stripping
-## the shape prefix for slabs, stairs and panels. Returns "" for non-CTM items.
+## the shape prefix and any trailing color index. Returns "" for non-CTM items.
 func ctm_base_name(item_name: String) -> String:
 	if not item_name.begins_with("Auto_Connect_"):
 		return ""
@@ -2294,8 +2312,20 @@ func ctm_base_name(item_name: String) -> String:
 		"Panel_",
 	]:
 		if base_name.begins_with(prefix):
-			return base_name.substr(prefix.length())
+			base_name = base_name.substr(prefix.length())
+			break
+
+	var color_pos := base_name.rfind("_c")
+	if color_pos != -1 and base_name.length() - color_pos == 4:
+		var color_tail := base_name.substr(color_pos + 2)
+		if color_tail.is_valid_int():
+			base_name = base_name.substr(0, color_pos)
 	return base_name
+
+
+## Trailing `_cNN` palette index on a CTM item, or -1 when uncolored.
+func ctm_color_index(item_name: String) -> int:
+	return COLOR_PALETTE.color_index(item_name)
 
 
 func is_ctm_item(item: int) -> bool:
@@ -3081,6 +3111,14 @@ func get_chunk_collision_body_count() -> int:
 		return 0
 
 	return _mesher.get_collision_body_count()
+
+
+## True when the chunk already has physics collision. Without the mesher the
+## GridMap mirror owns collision, so loaded cells are enough.
+func has_chunk_collision(chunk: Vector2i) -> bool:
+	if _mesher == null:
+		return get_chunk_cell_count(chunk) > 0
+	return _mesher.has_chunk_collision(chunk)
 
 
 ## Collision build stats: bodies, number of trimesh builds, total build usec.

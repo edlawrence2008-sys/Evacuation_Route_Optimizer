@@ -354,19 +354,19 @@ func _height_at(x: int, z: int) -> int:
 ## coordinate hash, so the result is stable across processes and call orders.
 func _fbm(x: int, z: int) -> float:
 	var frequency: float = 1.0
-	var amplitude: float = 1.0
+	var octave_amplitude: float = 1.0
 	var total: float = 0.0
 	var normaliser: float = 0.0
 	var scale_inv: float = 1.0 / maxf(1.0, scale)
 
 	for octave in maxi(1, octaves):
-		total += amplitude * _value_noise(
+		total += octave_amplitude * _value_noise(
 			float(x) * frequency * scale_inv,
 			float(z) * frequency * scale_inv,
 			octave
 		)
-		normaliser += amplitude
-		amplitude *= clampf(persistence, 0.0, 1.0)
+		normaliser += octave_amplitude
+		octave_amplitude *= clampf(persistence, 0.0, 1.0)
 		frequency *= maxf(1.0, lacunarity)
 
 	return total / maxf(normaliser, 0.0001)

@@ -70,51 +70,51 @@ func setup(
 		# Present shape variants as one human-readable "<material>_<shape>".
 		# All slab variants share the same "Slab" label; the placement zone
 		# chooses top/bottom/vertical at build time.
-		var material: String = clean_name
+		var material_name: String = clean_name
 		var shape_suffix: String = ""
 
 		if lower_name.begins_with("slab_top_"):
-			material = clean_name.substr(9)
+			material_name = clean_name.substr(9)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("slab_bottom_"):
-			material = clean_name.substr(12)
+			material_name = clean_name.substr(12)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("slab_side_"):
-			material = clean_name.substr(10)
+			material_name = clean_name.substr(10)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("slab_"):
-			material = clean_name.substr(5)
+			material_name = clean_name.substr(5)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("panel_top_"):
-			material = clean_name.substr(10)
+			material_name = clean_name.substr(10)
 			shape_suffix = "_Panel"
 		elif lower_name.begins_with("panel_bottom_"):
-			material = clean_name.substr(13)
+			material_name = clean_name.substr(13)
 			shape_suffix = "_Panel"
 		elif lower_name.begins_with("panel_side_"):
-			material = clean_name.substr(11)
+			material_name = clean_name.substr(11)
 			shape_suffix = "_Panel"
 		if lower_name.begins_with("panel_"):
-			material = clean_name.substr(6)
+			material_name = clean_name.substr(6)
 			shape_suffix = "_Panel"
 		elif lower_name.begins_with("water_"):
-			material = "Water"
+			material_name = "Water"
 			shape_suffix = " " + clean_name.substr(6).capitalize()
 		elif lower_name.begins_with("stairs_upsidedown_"):
-			material = clean_name.substr(18)
+			material_name = clean_name.substr(18)
 			shape_suffix = "_Stairs_UpsideDown"
 		elif lower_name.begins_with("stairs_"):
-			material = clean_name.substr(7)
+			material_name = clean_name.substr(7)
 			shape_suffix = "_Stairs"
 		elif lower_name.begins_with("stair_"):
-			material = clean_name.substr(6)
+			material_name = clean_name.substr(6)
 			shape_suffix = "_Stairs"
 
 		# Colored variants share one group label; the swatch, not the name,
 		# communicates the chosen palette color.
 		if item_name.to_lower().contains("_colorbase"):
-			material = BlockMaterials.block_group_label(item_name)
-		label.text = material + shape_suffix
+			material_name = BlockMaterials.block_group_label(item_name)
+		label.text = material_name + shape_suffix
 		tooltip_text = label.text
 
 	# Slabs are unified into one entry, so the old top/bottom badge is no longer

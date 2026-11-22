@@ -64,18 +64,21 @@ and links to the code it describes.
   **Brushes** toggle plus Tool/Placement/Pattern rows. Brushes are one click and
   disable stretch/drag; breaking removes the same brush shape, and the Clear
   tool carves the same centred volume. Placeable brushes spawn one copy per
-  footprint column, and palette brushes/drags roll a random palette entry per
-  block rather than once per shape. With brushes off the same
-  Tool/Placement/Pattern settings apply to the normal drag plane. The ghost is
-  always drawn when there is a target and is white when the click would change
-  nothing. Stair backs follow the clicked face quadrant, so wall
+  footprint column, placeable drags use the Pattern filter, and palette
+  brushes/drags roll a random palette entry per block rather than once per
+  shape. With brushes off the same Tool/Placement/Pattern settings apply to the
+  normal drag plane. An empty hand draws no ghost; the ghost is white when the
+  click would change nothing. Stair backs follow the clicked face quadrant, so wall
   left/right/top/bottom placements produce sideways stairs. CTM sources also
   get slabs/stairs with the same dynamic per-face borders as full blocks, and
-  `_colorbase` autoblocks expand into palette colors with swatches in the
-  block-group chooser; clicking a shape assigns it to the active hotbar slot. See `CODEBASE_ANALYSIS.md` §4.6–4.7.
+  `_colorbase` autoblocks and CTM sources expand into palette colors with
+  swatches in the block-group chooser (clicking a swatch keeps the panel in
+  place); clicking a shape assigns it to the active hotbar slot. Loading waits
+  for the spawn chunk's collision before releasing the player. See `CODEBASE_ANALYSIS.md` §4.6–4.7.
 - Comparer: **Compare** runs 2–6 recordings on one timeline with metric charts,
   overlaid agents and trajectory/exit/disruption/config differences. It reports
   differences; it does not optimize or rank layouts.
+- Bird emitters expose a Flock group (attractor, speed/steer, separation/alignment/cohesion, inter-flock spook) and a `flock_group`; different groups use separate particle layers and repel each other, so multiple flocks stay distinct.
 - Scene content: bare 80-cell platform, three false-boid emitters, four perches;
   **no spawners or evac point**. The demo layout is the save slot
   `testing_testing_things_just_got_interesting`.

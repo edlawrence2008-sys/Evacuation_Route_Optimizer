@@ -34,6 +34,9 @@ const EMITTER_GROUP := &"false_boid_emitters"
 ## Random score bonus when choosing the far chunk, so the flock does not always
 ## use the exact same corner.
 @export var migration_distance_jitter: float = 10.0
+## Different flock groups get separate offsets around the migration waypoint so
+## they do not all converge on the same point.
+@export var migration_group_spread: float = 45.0
 
 var _leaders: Array[Node] = []
 var _sync_timer: float = 0.0
@@ -124,10 +127,22 @@ func _begin_leader_migration(leader: Node) -> void:
 	if not is_instance_valid(leader) or not leader.has_method("begin_migration"):
 		return
 
-	var offset := Vector3(
-		_rng.randf_range(-9.0, 9.0),
+	var group := _leader_group(leader)
+	var group_ids: Array = []
+	for other: Node in _leaders:
+		if not is_instance_valid(other):
+			continue
+		var other_group := _leader_group(other)
+		if not group_ids.has(other_group):
+			group_ids.append(other_group)
+
+	var group_index := maxi(group_ids.find(group), 0)
+	var angle := TAU * float(group_index) / float(maxi(group_ids.size(), 1))
+	var offset := Vector3(cos(angle), 0.0, sin(angle)) * migration_group_spread
+	offset += Vector3(
+		_rng.randf_range(-6.0, 6.0),
 		_rng.randf_range(-2.0, 4.0),
-		_rng.randf_range(-9.0, 9.0)
+		_rng.randf_range(-6.0, 6.0)
 	)
 	leader.begin_migration(_migration_target + offset)
 
@@ -200,20 +215,72 @@ func _leader_centroid() -> Vector3:
 
 func _sync_leaders() -> void:
 	var emitters := get_tree().get_nodes_in_group(EMITTER_GROUP)
-	var desired: int = mini(emitters.size(), MAX_LEADERS)
+	var groups: Dictionary = {} # StringName -> Array[Node]
 
-	while _leaders.size() > desired:
-		var extra: Node = _leaders.pop_back()
-		extra.queue_free()
+	for node: Node in emitters:
+		if not (node is Node3D):
+			continue
 
-	while _leaders.size() < desired:
-		var index: int = _leaders.size()
-		var emitter: Node3D = emitters[index] as Node3D if index < emitters.size() else null
+		var group := _emitter_group(node)
+		if not groups.has(group):
+			groups[group] = []
+		groups[group].append(node)
+
+	# One visibility layer per flock group. Each group's particles and its
+	# leaders' attractors share that layer, so other flocks' attractors cannot
+	# drag them across the map into one merged cloud.
+	var group_layers: Dictionary = {}
+	var layer_index := 0
+	for group: StringName in groups.keys():
+		group_layers[group] = 1 << (layer_index % 20)
+		layer_index += 1
+
+	for group: StringName in groups.keys():
+		var layer: int = int(group_layers[group])
+		for node: Node in groups[group]:
+			if node.has_method("set_flock_layer"):
+				node.set_flock_layer(layer)
+
+	# Remove leaders whose source emitter was deleted and any beyond the cap.
+	for index in range(_leaders.size() - 1, -1, -1):
+		var leader: Node = _leaders[index]
+		var source: Node = null
+
+		if is_instance_valid(leader) and leader.has_method("get_source_emitter"):
+			source = leader.get_source_emitter()
+
+		if (
+			not is_instance_valid(leader)
+			or source == null
+			or not is_instance_valid(source)
+			or not emitters.has(source)
+			or index >= MAX_LEADERS
+		):
+			if is_instance_valid(leader):
+				leader.queue_free()
+			_leaders.remove_at(index)
+
+	# Each emitter owns one leader. Leaders in the same flock group align and
+	# cohere; leaders in other groups only repel/spook.
+	for node: Node in emitters:
+		if _leaders.size() >= MAX_LEADERS:
+			break
+
+		if _leader_for_emitter(node) != null:
+			continue
+
+		var emitter := node as Node3D
+		if emitter == null:
+			continue
+
+		var group := _emitter_group(emitter)
+		var layer: int = int(group_layers.get(group, 1))
 		var leader: Node3D = LEADER_SCRIPT.new()
-		leader.name = "FalseBoidLeader%d" % index
+		leader.name = "FalseBoidLeader%d" % _leaders.size()
+		leader.position = to_local(emitter.global_position)
 
-		if emitter != null:
-			leader.position = to_local(emitter.global_position)
+		if leader.has_method("setup_from_emitter"):
+			leader.setup_from_emitter(emitter, layer)
 
 		add_child(leader)
 		_leaders.append(leader)
@@ -221,12 +288,53 @@ func _sync_leaders() -> void:
 		if _migration_active:
 			_begin_leader_migration(leader)
 
+	for leader: Node in _leaders:
+		if not is_instance_valid(leader):
+			continue
+
+		var source: Node = null
+		if leader.has_method("get_source_emitter"):
+			source = leader.get_source_emitter()
+
+		var group := _emitter_group(source) if source != null else &"default"
+
+		if leader.has_method("set_flock_group"):
+			leader.set_flock_group(group)
+
+		if leader.has_method("set_flock_layer"):
+			leader.set_flock_layer(int(group_layers.get(group, 1)))
+
+		if leader.has_method("refresh_from_emitter"):
+			leader.refresh_from_emitter()
+
+
+func _leader_for_emitter(emitter: Node) -> Node:
+	for leader: Node in _leaders:
+		if (
+			is_instance_valid(leader)
+			and leader.has_method("get_source_emitter")
+			and leader.get_source_emitter() == emitter
+		):
+			return leader
+	return null
+
+
+func _emitter_group(node: Node) -> StringName:
+	if node.has_method("get_flock_group"):
+		return node.get_flock_group()
+
+	if "flock_group" in node:
+		var text := String(node.get("flock_group")).strip_edges()
+		return StringName(text) if not text.is_empty() else &"default"
+
+	return &"default"
+
 
 func _update_crowding() -> void:
 	var leaders := _leaders
 	var count: int = leaders.size()
 
-	if count < crowd_threshold:
+	if count < 2:
 		return
 
 	for index: int in range(count):
@@ -236,6 +344,7 @@ func _update_crowding() -> void:
 			continue
 
 		var near: int = 0
+		var leader_group := _leader_group(leader)
 		var leader_position: Vector3 = (
 			leader.get_leader_position()
 			if leader.has_method("get_leader_position")
@@ -256,12 +365,40 @@ func _update_crowding() -> void:
 				if other.has_method("get_leader_position")
 				else (other as Node3D).global_position
 			)
+			var distance: float = other_position.distance_to(leader_position)
 
-			if other_position.distance_to(leader_position) <= crowd_radius:
-				near += 1
+			if _leader_group(other) == leader_group:
+				if distance <= crowd_radius:
+					near += 1
+				continue
+
+			# Different flocks spook each other: both attractors flip to
+			# repulsors for a moment so the clouds visibly split apart.
+			var spook_radius := 18.0
+			if leader.has_method("get_inter_flock_spook_radius"):
+				spook_radius = float(leader.get_inter_flock_spook_radius())
+
+			if distance > spook_radius:
+				continue
+
+			var spook_duration := crowd_repel_duration
+			if leader.has_method("get_inter_flock_spook_duration"):
+				spook_duration = float(leader.get_inter_flock_spook_duration())
+
+			if leader.has_method("repel_for"):
+				leader.repel_for(spook_duration)
+
+			if other.has_method("repel_for"):
+				other.repel_for(spook_duration)
 
 		if near >= crowd_threshold - 1 and leader.has_method("repel_for"):
 			leader.repel_for(crowd_repel_duration)
+
+
+func _leader_group(node: Node) -> StringName:
+	if node.has_method("get_flock_group"):
+		return node.get_flock_group()
+	return &"default"
 
 
 func get_leader_count() -> int:
@@ -291,10 +428,41 @@ func get_cloud_direction() -> Vector3:
 	return total.normalized()
 
 
+## Average heading of one flock group; emitters mirror their own cloud with it.
+func get_cloud_direction_for_group(group: StringName) -> Vector3:
+	var total := Vector3.ZERO
+	var count: int = 0
+
+	for leader: Node in _leaders:
+		if not is_instance_valid(leader) or not leader.has_method("get_leader_velocity"):
+			continue
+
+		if _leader_group(leader) != group:
+			continue
+
+		total += leader.get_leader_velocity()
+		count += 1
+
+	if count == 0 or total.length_squared() < 0.0001:
+		return Vector3.ZERO
+
+	return total.normalized()
+
+
 func get_director_state() -> Dictionary:
+	var group_ids: Array = []
+	for leader: Node in _leaders:
+		if not is_instance_valid(leader):
+			continue
+		var group := _leader_group(leader)
+		if not group_ids.has(group):
+			group_ids.append(group)
+
 	return {
 		"emitters": get_tree().get_nodes_in_group(EMITTER_GROUP).size(),
 		"leaders": _leaders.size(),
+		"groups": group_ids.size(),
+		"group_names": group_ids,
 		"max_leaders": MAX_LEADERS,
 		"migrating": _migration_active,
 		"migration_target": _migration_target,

@@ -107,11 +107,19 @@ func _revive(value: Variant) -> Variant:
 
 		if dictionary.has("__export_type"):
 			var kind := String(dictionary.get("__export_type", ""))
-			var raw: Array = dictionary.get("value", [])
+			var raw_value: Variant = dictionary.get("value", [])
+			# StringName is encoded with a plain String value, not an array, so
+			# this must not be typed as Array before the kind is known.
+			var raw: Array = []
+
+			if raw_value is Array:
+				raw = raw_value
 
 			match kind:
 				"StringName":
-					return StringName(String(dictionary.get("value", "")))
+					return StringName(
+						String(raw_value) if raw_value != null else ""
+					)
 				"Vector2":
 					if raw.size() >= 2:
 						return Vector2(float(raw[0]), float(raw[1]))

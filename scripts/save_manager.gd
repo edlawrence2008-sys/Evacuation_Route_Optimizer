@@ -480,6 +480,10 @@ func new_blank_map(map_name: String, world_options: Dictionary = {}) -> String:
 		# re-placed on the finished surface before the save is written.
 		if is_procgen:
 			player.set_physics_process(false)
+		else:
+			# The starter platform is placed into a fresh chunk; wait for its
+			# collision before letting the player fall onto it.
+			await _wait_for_spawn_collision(player)
 
 	if is_procgen:
 		# Fill the whole bounded footprint before saving. Otherwise the slot
@@ -720,7 +724,10 @@ func _generator_params(world: Dictionary) -> Dictionary:
 
 		params = {
 			"noise_seed": int(world.get("seed", 0)),
-			"footprint_origin": [-extent.x / 2, -extent.y / 2],
+			"footprint_origin": [
+				-int(extent.x * 0.5),
+				-int(extent.y * 0.5),
+			],
 			"footprint_size": [extent.x, extent.y],
 			"column_depth": 3,
 		}
@@ -877,6 +884,17 @@ func _apply_saved_props(target: Node, props: Dictionary) -> void:
 func _apply_manifest(manifest: Dictionary) -> void:
 	var tree := get_tree()
 
+	# Freeze the newly loaded player until the chunk under the saved position
+	# has streamed in and built its collision. Otherwise gravity runs against an
+	# empty physics world and the player falls through the floor.
+	var player := tree.get_first_node_in_group("Player") as Node3D
+	var player_physics_was_enabled := true
+	if player != null:
+		player_physics_was_enabled = player.is_physics_processing()
+		player.set_physics_process(false)
+		if player is CharacterBody3D:
+			(player as CharacterBody3D).velocity = Vector3.ZERO
+
 	for node in tree.get_nodes_in_group("placeables"):
 		if is_instance_valid(node):
 			node.queue_free()
@@ -926,7 +944,6 @@ func _apply_manifest(manifest: Dictionary) -> void:
 					Vector3(values[9], values[10], values[11])
 				)
 
-	var player := tree.get_first_node_in_group("Player") as Node3D
 	var player_data: Dictionary = manifest.get("player", {})
 	if player != null and not player_data.is_empty():
 		var pos: Array = player_data.get("pos", [])
@@ -953,6 +970,13 @@ func _apply_manifest(manifest: Dictionary) -> void:
 		world
 	)
 
+	if player != null:
+		await _wait_for_spawn_collision(player)
+		if is_instance_valid(player):
+			player.set_physics_process(player_physics_was_enabled)
+			if player is CharacterBody3D:
+				(player as CharacterBody3D).velocity = Vector3.ZERO
+
 	var cycle := scene_root.get_node_or_null("CycleController") if scene_root != null else null
 	if cycle != null and manifest.has("cycle_time"):
 		cycle.set("_current_time", float(manifest.get("cycle_time", 0.0)))
@@ -975,6 +999,83 @@ func _apply_manifest(manifest: Dictionary) -> void:
 			runtime.call("apply_live", runtime_block)
 		elif runtime.has_method("apply_defaults_to_live"):
 			runtime.call("apply_defaults_to_live")
+
+
+## Keeps the player frozen until the saved spawn chunk has streamed in and the
+## mesher has committed its collision body. The physics server gets two extra
+## frames so move_and_slide cannot run before the new shape is registered.
+func _wait_for_spawn_collision(player: Node3D) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+
+	var tree := get_tree()
+	var grid = tree.get_first_node_in_group("grid_map")
+	var was_physics := player.is_physics_processing()
+	player.set_physics_process(false)
+	if player is CharacterBody3D:
+		(player as CharacterBody3D).velocity = Vector3.ZERO
+
+	if grid != null:
+		var streamer = tree.get_first_node_in_group("chunk_streamer")
+		var chunk: Vector2i = grid.position_to_chunk(player.global_position)
+
+		if streamer != null and streamer.has_method("refresh_streaming"):
+			streamer.call("refresh_streaming")
+
+		var uses_mesher: bool = (
+			grid.has_method("get_mesher")
+			and grid.get_mesher() != null
+		)
+		var deadline: int = Time.get_ticks_msec() + 10000
+		var spawn_ready := false
+		var spawn_empty := false
+
+		while Time.get_ticks_msec() < deadline:
+			if not is_instance_valid(player):
+				break
+
+			var loaded := true
+			if streamer != null and streamer.has_method("is_chunk_loaded"):
+				loaded = bool(streamer.call("is_chunk_loaded", chunk))
+
+			var collision_ready := true
+			if uses_mesher and grid.has_method("has_chunk_collision"):
+				collision_ready = bool(grid.call("has_chunk_collision", chunk))
+				if not collision_ready:
+					var mesher = grid.get_mesher()
+					if (
+						mesher != null
+						and mesher.has_method("queue_chunk")
+						and not grid.is_chunk_dirty(chunk)
+					):
+						mesher.queue_chunk(chunk, true)
+
+			if loaded and collision_ready:
+				spawn_ready = true
+				break
+
+			# An empty loaded chunk has no floor to wait for (and no collision
+			# body will ever appear), so stop blocking instead of timing out.
+			if loaded and grid.has_method("get_chunk_cell_count"):
+				if int(grid.call("get_chunk_cell_count", chunk)) == 0:
+					spawn_empty = true
+					break
+
+			await tree.process_frame
+
+		if not spawn_ready and not spawn_empty:
+			push_warning(
+				"SaveManager: spawn chunk %s was not ready after 10 s." % chunk
+			)
+
+		# Let the physics server register the freshly added collision shape.
+		await tree.physics_frame
+		await tree.physics_frame
+
+	if is_instance_valid(player):
+		player.set_physics_process(was_physics)
+		if player is CharacterBody3D:
+			(player as CharacterBody3D).velocity = Vector3.ZERO
 
 
 func _flush_world() -> void:

@@ -476,8 +476,14 @@ func _update_ghost_block() -> void:
 		_hide_ghost_block()
 		return
 
+	# An empty hand has no block ghost. Clear/Flatten can still act, but there
+	# is nothing to preview until a block, placeable or palette is selected.
+	var palette_id := _active_palette_id()
+	if palette_id.is_empty() and _current_build_item() == -1:
+		_hide_ghost_block()
+		return
+
 	if brush_mode:
-		var palette_id := _active_palette_id()
 		if (
 			not palette_id.is_empty()
 			and _palette_block_ids(palette_id).is_empty()
@@ -487,38 +493,38 @@ func _update_ghost_block() -> void:
 			_show_brush_placeable_preview(hit)
 			return
 
-		var face := _normal_to_cell(hit.normal)
+		var brush_face := _normal_to_cell(hit.normal)
 		var target_cell := grid_map.get_hit_cell(hit.position, hit.normal)
 		var target_item := int(grid_map.get_block_item(target_cell))
 		var clearing := build_tool == BuildTool.CLEAR
 		var volume := _brush_volume(
 			target_cell,
-			face,
+			brush_face,
 			target_item,
 			-1,
 			clearing
 		)
 
 		var selected := _current_build_item()
-		var needs_item := (
+		var brush_needs_item := (
 			build_tool != BuildTool.CLEAR
 			and build_tool != BuildTool.FLATTEN
 		)
-		var affected: Array[Vector3i] = []
-		if not (needs_item and selected == -1):
-			affected = _brush_affected(
+		var brush_affected_cells: Array[Vector3i] = []
+		if not (brush_needs_item and selected == -1):
+			brush_affected_cells = _brush_affected(
 				volume,
 				target_cell,
-				face,
+				brush_face,
 				target_item
 			)
 
-		var no_op := affected.is_empty()
+		var brush_no_op := brush_affected_cells.is_empty()
 
 		if volume.is_empty():
 			# Dynamic brushes can have no matching cells. Still show a ghost at
 			# the target so the player can see the setting has a reachable aim.
-			var fallback := target_cell + face
+			var fallback := target_cell + brush_face
 			if grid_map.has_block(fallback):
 				fallback = target_cell
 			var fallback_cells: Array[Vector3i] = [fallback]
@@ -526,8 +532,8 @@ func _update_ghost_block() -> void:
 
 		_show_area_preview(
 			volume,
-			build_tool == BuildTool.CLEAR and not no_op,
-			no_op
+			build_tool == BuildTool.CLEAR and not brush_no_op,
+			brush_no_op
 		)
 		return
 
@@ -1306,8 +1312,14 @@ func _finish_area() -> void:
 		_remove_placeables_in_cells(cells)
 		_play_sfx(_sfx_land, 0.7, 0.9)
 	elif area_placeable_scene != null:
-		_spawn_placeables_in_cells(area_placeable_scene, cells, area_placeable_hit)
-		_play_sfx(_sfx_land, 1.0, 1.2)
+		var placeable_cells := _pattern_cells(cells)
+		if not placeable_cells.is_empty():
+			_spawn_placeables_in_cells(
+				area_placeable_scene,
+				placeable_cells,
+				area_placeable_hit
+			)
+			_play_sfx(_sfx_land, 1.0, 1.2)
 	elif not area_palette_id.is_empty():
 		_finish_palette_area(area_palette_id, cells, area_anchor_hit)
 	else:
@@ -1518,9 +1530,9 @@ func _cuboid_positions() -> Array[Vector3i]:
 	var height := clampi(brush_params.y, 1, 32)
 	var length := clampi(brush_params.z, 1, 32)
 	var result: Array[Vector3i] = []
-	for x in range(-int((width - 1) / 2), int(width / 2) + 1):
-		for y in range(-int((height - 1) / 2), int(height / 2) + 1):
-			for z in range(-int((length - 1) / 2), int(length / 2) + 1):
+	for x in range(-floori((width - 1) * 0.5), floori(width * 0.5) + 1):
+		for y in range(-floori((height - 1) * 0.5), floori(height * 0.5) + 1):
+			for z in range(-floori((length - 1) * 0.5), floori(length * 0.5) + 1):
 				result.append(Vector3i(x, y, z))
 	return result
 
@@ -1541,7 +1553,7 @@ func _cylinder_positions() -> Array[Vector3i]:
 	var height := clampi(brush_params.y, 1, 8)
 	var result: Array[Vector3i] = []
 	for layer in height:
-		var y := layer - int(height / 2)
+		var y := layer - floori(height * 0.5)
 		for x in range(-radius - 1, radius + 2):
 			for z in range(-radius - 1, radius + 2):
 				if Vector2(x, z).length() < float(radius) + 0.42:
@@ -1567,7 +1579,7 @@ func _placement_offset(face: Vector3i) -> Vector3i:
 		return Vector3i.ZERO
 
 	var axis := _face_axis(face)
-	var sign := 1 if face[axis] >= 0 else -1
+	var face_sign := 1 if face[axis] >= 0 else -1
 	var amount := 0
 
 	match brush_kind:
@@ -1579,8 +1591,8 @@ func _placement_offset(face: Vector3i) -> Vector3i:
 			]
 			var step := 0
 			if placement_mode == PlacementMode.ATTACHED:
-				step = 2 if sign < 0 else 1
-			amount = int((int(dims[axis]) + step) / 2)
+				step = 2 if face_sign < 0 else 1
+			amount = floori((int(dims[axis]) + step) * 0.5)
 		BrushKind.SPHERE:
 			var radius := clampi(brush_params.x, 1, 10)
 			amount = (
@@ -1593,10 +1605,10 @@ func _placement_offset(face: Vector3i) -> Vector3i:
 			var height := clampi(brush_params.y, 1, 8)
 			var y_offset := 0
 			if placement_mode == PlacementMode.ATTACHED:
-				y_offset = 1 if sign < 0 else 2
+				y_offset = 1 if face_sign < 0 else 2
 			else:
-				y_offset = 0 if sign < 0 else -1
-			var vertical := int((height + y_offset) / 2)
+				y_offset = 0 if face_sign < 0 else -1
+			var vertical := floori((height + y_offset) * 0.5)
 			amount = (
 				vertical
 				if axis == 1
@@ -1606,7 +1618,7 @@ func _placement_offset(face: Vector3i) -> Vector3i:
 	# `relative(face, amount)` from the reference: Attached moves along the hit
 	# face, Inserted moves the opposite way. Forgetting the face sign made
 	# negative-facing placements shift into the block instead of out of it.
-	var direction := sign if placement_mode == PlacementMode.ATTACHED else -sign
+	var direction := face_sign if placement_mode == PlacementMode.ATTACHED else -face_sign
 	var result := Vector3i.ZERO
 	result[axis] = amount * direction
 	return result
@@ -1767,7 +1779,7 @@ func _brush_affected(
 	volume: Array[Vector3i],
 	target_cell: Vector3i,
 	face: Vector3i,
-	target_item: int,
+	_target_item: int,
 	tool_override: int = -1
 ) -> Array[Vector3i]:
 	if volume.is_empty():
@@ -2068,7 +2080,7 @@ func _place_palette_cells(
 	cells: Array[Vector3i],
 	target_cell: Vector3i,
 	face: Vector3i,
-	target_item: int,
+	_target_item: int,
 	tool: int,
 	anchor_hit: Dictionary,
 	direct_cells: bool = false
@@ -3070,8 +3082,8 @@ func _pick_aimed() -> void:
 		if scene == null or hud_manager == null:
 			return
 
-		var slot := hud_manager.get_hotbar_selected_slot()
-		hud_manager.assign_hotbar_placeable(slot, scene)
+		var placeable_slot := hud_manager.get_hotbar_selected_slot()
+		hud_manager.assign_hotbar_placeable(placeable_slot, scene)
 		_selected_placeable_scene = scene
 		_preview_item = -1
 		_manual_rotation = 0

@@ -52,7 +52,7 @@ func apply_params(params: Dictionary) -> void:
 	size_x = int(params.get("size_x", size_x))
 	size_z = int(params.get("size_z", size_z))
 	infinite = bool(params.get("infinite", infinite))
-	fill = int(params.get("fill", fill))
+	fill = int(params.get("fill", fill)) as Fill
 	column_depth = maxi(1, int(params.get("column_depth", column_depth)))
 
 

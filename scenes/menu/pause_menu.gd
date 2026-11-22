@@ -1240,9 +1240,10 @@ func _ensure_saves_ui() -> void:
 	var left := saves.get_node_or_null("LeftActions") as Node3D
 	var right := saves.get_node_or_null("RightActions") as Node3D
 	if left != null:
-		_place_saves_button(left, "Save", -0.48)
-		_place_saves_button(left, "SaveAs", -0.65)
-		_place_saves_button(left, "Load", -0.82)
+		var header_scale := Vector3(0.7, 0.85, 1.0)
+		_place_saves_button(left, "Save", -0.48, header_scale, 20)
+		_place_saves_button(left, "SaveAs", -0.65, header_scale, 20)
+		_place_saves_button(left, "Load", -0.82, header_scale, 20)
 	if right != null:
 		_place_saves_button(right, "Duplicate", -0.48)
 		_place_saves_button(right, "Delete", -0.65)

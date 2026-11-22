@@ -224,7 +224,6 @@ caption = "Back"
 label_size = 22
 
 [node name="SavesPanel" type="Node3D" parent="Panel" unique_id=1781424098]
-visible = false
 
 [node name="SaveList" type="Node3D" parent="Panel/SavesPanel" unique_id=157823095]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.5, 0.035)
@@ -287,24 +286,24 @@ width = 320.0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.62, 0, 0.035)
 
 [node name="Save" parent="Panel/SavesPanel/LeftActions" unique_id=420399152 instance=ExtResource("2_btn")]
-transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.48, 0)
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.48, 0)
 action = &"save"
 caption = "Save"
-label_size = 22
+label_size = 20
 keep_label_aspect = true
 
 [node name="SaveAs" parent="Panel/SavesPanel/LeftActions" unique_id=824707774 instance=ExtResource("2_btn")]
-transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.65, 0)
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.65, 0)
 action = &"save_as"
 caption = "Save As"
-label_size = 22
+label_size = 20
 keep_label_aspect = true
 
 [node name="Load" parent="Panel/SavesPanel/LeftActions" unique_id=1949032858 instance=ExtResource("2_btn")]
-transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.82, 0)
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.82, 0)
 action = &"load"
 caption = "Load Selected"
-label_size = 22
+label_size = 20
 keep_label_aspect = true
 
 [node name="RightActions" type="Node3D" parent="Panel/SavesPanel" unique_id=1162907072]
