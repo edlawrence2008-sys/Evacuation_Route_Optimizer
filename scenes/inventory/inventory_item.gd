@@ -63,6 +63,9 @@ func setup(
 	if label:
 		var clean_name: String = item_name.trim_prefix("Auto_")
 		var lower_name: String = clean_name.to_lower()
+		if lower_name.begins_with("connect_"):
+			clean_name = clean_name.substr(8)
+			lower_name = clean_name.to_lower()
 
 		# Present shape variants as one human-readable "<material>_<shape>".
 		# All slab variants share the same "Slab" label; the placement zone
@@ -107,6 +110,10 @@ func setup(
 			material = clean_name.substr(6)
 			shape_suffix = "_Stairs"
 
+		# Colored variants share one group label; the swatch, not the name,
+		# communicates the chosen palette color.
+		if item_name.to_lower().contains("_colorbase"):
+			material = BlockMaterials.block_group_label(item_name)
 		label.text = material + shape_suffix
 		tooltip_text = label.text
 

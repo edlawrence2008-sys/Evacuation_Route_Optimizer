@@ -1,10 +1,15 @@
+@tool
 class_name ConnectedBlockGenerator
-extends RefCounted
+extends EditorScript
 
 ## Generates connected-texture block items from textures in
 ## textures/auto_connecting_blocks. One visible base item is created per
 ## texture; the world mesher selects the CTM tile from the item's 8-neighbour
 ## mask, so there are no per-state inventory items.
+##
+## Editor entry point: File > Run on this script, or
+## Project > Tools > Content: Generate Connected Blocks. The plugin calls
+## generate_runtime() directly so it never has to instantiate an EditorScript.
 
 const TEXTURES_FOLDER := "res://textures/auto_connecting_blocks/"
 const BLOCKS_SCENE_PATH := "res://models/Blocks/blocks.tscn"
@@ -12,6 +17,19 @@ const MESH_LIBRARY_PATH := "res://resources/blocks/.tres"
 const SYNC_SCRIPT := preload("res://scripts/block_mesh_library_sync.gd")
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
 const ITEM_PREFIX := "Auto_Connect_"
+
+
+## File > Run entry point.
+func _run() -> void:
+	var result := generate_runtime()
+	if result.has("error"):
+		push_error("Connected blocks: " + String(result["error"]))
+		return
+	var added: Array = result.get("added", [])
+	print("Connected blocks: %d item(s), %d MeshLibrary item(s) synced." % [
+		added.size(),
+		int(result.get("synced", 0)),
+	])
 
 
 static func generate_runtime() -> Dictionary:
@@ -38,12 +56,78 @@ static func generate_runtime() -> Dictionary:
 			continue
 
 		var item_name := ITEM_PREFIX + base_name
-		var display := _make_display_texture(texture)
+		var display := _make_display_texture(texture, 0)
+		var surface := _make_display_texture(texture, 255)
 		var node := _create_item(item_name, display)
 		blocks_root.add_child(node)
 		node.owner = blocks_root
 		added.append(item_name)
 		previews[item_name] = _make_preview(display)
+
+		# Slabs and stairs use the connected texture's interior tile as their
+		# preview/fallback material. In the world the mesher overrides it with
+		# the shared CTM atlas and computes per-face border masks, so slabs and
+		# stairs get the same dynamic borders as full blocks.
+		var variants: Array = [
+			[
+				ITEM_PREFIX + "Slab_Top_" + base_name,
+				BlockGenerator._create_block_mesh(
+					surface,
+					Vector3(1.0, 0.5, 1.0),
+					Vector3(0.0, 0.25, 0.0)
+				),
+				BlockGenerator._create_block_collision(
+					Vector3(1.0, 0.5, 1.0),
+					Vector3(0.0, 0.25, 0.0)
+				),
+			],
+			[
+				ITEM_PREFIX + "Slab_Bottom_" + base_name,
+				BlockGenerator._create_block_mesh(
+					surface,
+					Vector3(1.0, 0.5, 1.0),
+					Vector3(0.0, -0.25, 0.0)
+				),
+				BlockGenerator._create_block_collision(
+					Vector3(1.0, 0.5, 1.0),
+					Vector3(0.0, -0.25, 0.0)
+				),
+			],
+			[
+				ITEM_PREFIX + "Slab_Side_" + base_name,
+				BlockGenerator._create_block_mesh(
+					surface,
+					Vector3(0.5, 1.0, 1.0),
+					Vector3(0.25, 0.0, 0.0)
+				),
+				BlockGenerator._create_block_collision(
+					Vector3(0.5, 1.0, 1.0),
+					Vector3(0.25, 0.0, 0.0)
+				),
+			],
+			[
+				ITEM_PREFIX + "Stairs_" + base_name,
+				BlockGenerator._create_stairs_mesh(surface, false),
+				BlockGenerator._create_stairs_collision(false),
+			],
+			[
+				ITEM_PREFIX + "Stairs_UpsideDown_" + base_name,
+				BlockGenerator._create_stairs_mesh(surface, true),
+				BlockGenerator._create_stairs_collision(true),
+			],
+		]
+
+		for variant: Array in variants:
+			var variant_name: String = variant[0]
+			var variant_node := _create_mesh_item(
+				variant_name,
+				variant[1],
+				variant[2]
+			)
+			blocks_root.add_child(variant_node)
+			variant_node.owner = blocks_root
+			added.append(variant_name)
+			previews[variant_name] = _make_preview(surface)
 
 	var scene := PackedScene.new()
 	if scene.pack(blocks_root) != OK:
@@ -128,15 +212,38 @@ static func _create_item(
 	return node
 
 
+static func _create_mesh_item(
+	item_name: String,
+	mesh: Mesh,
+	body: StaticBody3D
+) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.name = item_name
+	node.mesh = mesh
+	body.name = "StaticBody3D"
+	node.add_child(body)
+	return node
+
+
 static func _make_material(texture: Texture2D) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_texture = texture
 	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.cull_mode = BaseMaterial3D.CULL_BACK
 	material.roughness = 0.15
 	material.metallic = 0.0
+
+	var image := texture.get_image()
+	if image != null:
+		match image.detect_alpha():
+			Image.ALPHA_BLEND:
+				material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			Image.ALPHA_BIT:
+				material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+				material.alpha_scissor_threshold = 0.5
+			_:
+				material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	return material
 
 
@@ -155,7 +262,10 @@ static func _make_preview(texture: Texture2D) -> Texture2D:
 
 ## Builds the isolated-cell tile (atlas tile 0) so the held item and inventory
 ## preview show one finished pane instead of the four-quadrant source layout.
-static func _make_display_texture(texture: Texture2D) -> Texture2D:
+static func _make_display_texture(
+	texture: Texture2D,
+	mask: int = 0
+) -> Texture2D:
 	var image := texture.get_image()
 	if image == null:
 		return texture
@@ -171,7 +281,16 @@ static func _make_display_texture(texture: Texture2D) -> Texture2D:
 
 	var size := image.get_height()
 	var tile := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	tile.blit_rect(atlas, Rect2i(0, 0, size, size), Vector2i.ZERO)
+	tile.blit_rect(
+		atlas,
+		Rect2i(
+			(mask % 16) * size,
+			int(mask / 16) * size,
+			size,
+			size
+		),
+		Vector2i.ZERO
+	)
 	return ImageTexture.create_from_image(tile)
 
 

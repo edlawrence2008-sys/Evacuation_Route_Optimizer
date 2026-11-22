@@ -348,6 +348,9 @@ func _collect_optimizer() -> Dictionary:
 	return {
 		"enabled": bool(bridge.get("enabled")),
 		"auto_solve": bool(bridge.get("auto_solve")),
+		"re_solve_enabled": bool(bridge.get("re_solve_enabled")),
+		"re_solve_interval": float(bridge.get("re_solve_interval")),
+		"overlay_enabled": bool(bridge.get("overlay_enabled")),
 		"algorithm": String(bridge.get("algorithm")),
 		"mode": String(bridge.get("mode")),
 		"cohort_size": float(bridge.get("cohort_size")),
@@ -442,6 +445,39 @@ func _apply_optimizer(block: Dictionary, fallback: Dictionary) -> void:
 		bridge.call(
 			"set_auto_solve",
 			bool(_resolve(block, fallback, "auto_solve", bridge.get("auto_solve")))
+		)
+
+	if block.has("re_solve_enabled") or fallback.has("re_solve_enabled"):
+		bridge.call(
+			"set_re_solve_enabled",
+			bool(_resolve(
+				block,
+				fallback,
+				"re_solve_enabled",
+				bridge.get("re_solve_enabled")
+			))
+		)
+
+	if block.has("re_solve_interval") or fallback.has("re_solve_interval"):
+		bridge.call(
+			"set_re_solve_interval",
+			float(_resolve(
+				block,
+				fallback,
+				"re_solve_interval",
+				bridge.get("re_solve_interval")
+			))
+		)
+
+	if block.has("overlay_enabled") or fallback.has("overlay_enabled"):
+		bridge.call(
+			"set_overlay_enabled",
+			bool(_resolve(
+				block,
+				fallback,
+				"overlay_enabled",
+				bridge.get("overlay_enabled")
+			))
 		)
 
 	if block.has("enabled") or fallback.has("enabled"):

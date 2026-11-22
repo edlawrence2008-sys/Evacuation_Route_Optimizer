@@ -42,7 +42,7 @@ shading_mode = 0
 texture_filter = 0
 
 [sub_resource type="QuadMesh" id="QuadMesh_thumb"]
-size = Vector2(0.95, 0.95)
+size = Vector2(0.72, 0.72)
 
 [node name="PauseMenu" type="Node3D" unique_id=237577611]
 process_mode = 3
@@ -227,22 +227,24 @@ label_size = 22
 visible = false
 
 [node name="SaveList" type="Node3D" parent="Panel/SavesPanel" unique_id=157823095]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.4, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.5, 0.035)
 
 [node name="NewMap" parent="Panel/SavesPanel" unique_id=1395742453 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0.74, 0.035)
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, -0.62, 0.8, 0.035)
 action = &"new_map"
 caption = "New Map..."
-label_size = 24
+label_size = 20
+keep_label_aspect = true
 
 [node name="WorldType" parent="Panel/SavesPanel" unique_id=136614253 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0.58, 0.035)
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, -0.62, 0.66, 0.035)
 action = &"world_type"
 caption = "World: Blank Platform"
-label_size = 20
+label_size = 18
+keep_label_aspect = true
 
 [node name="PageLabel" type="Label3D" parent="Panel/SavesPanel" unique_id=1280640653]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, -0.2, 0.04)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, -0.36, 0.04)
 pixel_size = 0.0018
 no_depth_test = true
 render_priority = 5
@@ -252,7 +254,7 @@ font = ExtResource("4_body_font")
 font_size = 20
 
 [node name="StatusLabel" type="Label3D" parent="Panel/SavesPanel" unique_id=398770466]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, -0.97, 0.04)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.96, 0.04)
 pixel_size = 0.0016
 no_depth_test = true
 render_priority = 5
@@ -261,13 +263,13 @@ font = ExtResource("4_body_font")
 font_size = 18
 
 [node name="Thumbnail" type="MeshInstance3D" parent="Panel/SavesPanel" unique_id=1621921201]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.72, 0.35, 0.03)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.6, 0.2, 0.03)
 material_override = SubResource("Mat_thumb")
 cast_shadow = 0
 mesh = SubResource("QuadMesh_thumb")
 
 [node name="SaveDetails" type="Label3D" parent="Panel/SavesPanel" unique_id=256225360]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.72, -0.22, 0.04)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.6, -0.22, 0.04)
 pixel_size = 0.0022
 no_depth_test = true
 render_priority = 5
@@ -279,51 +281,71 @@ horizontal_alignment = 0
 vertical_alignment = 0
 line_spacing = 5.0
 autowrap_mode = 3
-width = 360.0
+width = 320.0
 
 [node name="LeftActions" type="Node3D" parent="Panel/SavesPanel" unique_id=552493494]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
-
-[node name="Rename" parent="Panel/SavesPanel/LeftActions" unique_id=768864641 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.34, 0)
-action = &"rename"
-caption = "Rename"
-label_size = 24
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.62, 0, 0.035)
 
 [node name="Save" parent="Panel/SavesPanel/LeftActions" unique_id=420399152 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.48, 0)
 action = &"save"
 caption = "Save"
+label_size = 22
+keep_label_aspect = true
 
 [node name="SaveAs" parent="Panel/SavesPanel/LeftActions" unique_id=824707774 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.66, 0)
+transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.65, 0)
 action = &"save_as"
 caption = "Save As"
+label_size = 22
+keep_label_aspect = true
 
 [node name="Load" parent="Panel/SavesPanel/LeftActions" unique_id=1949032858 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.82, 0)
+transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.82, 0)
 action = &"load"
 caption = "Load Selected"
+label_size = 22
+keep_label_aspect = true
 
 [node name="RightActions" type="Node3D" parent="Panel/SavesPanel" unique_id=1162907072]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.62, 0, 0.035)
+
+[node name="Sort" parent="Panel/SavesPanel/RightActions" unique_id=1781424100 instance=ExtResource("2_btn")]
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, 0.8, 0)
+action = &"save_sort"
+caption = "Sort: Last Played"
+label_size = 18
+keep_label_aspect = true
+
+[node name="Rename" parent="Panel/SavesPanel/RightActions" unique_id=768864641 instance=ExtResource("2_btn")]
+transform = Transform3D(0.7, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, 0.66, 0)
+action = &"rename"
+caption = "Rename"
+label_size = 20
+keep_label_aspect = true
 
 [node name="Duplicate" parent="Panel/SavesPanel/RightActions" unique_id=725784749 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.48, 0)
 action = &"duplicate"
 caption = "Duplicate"
+label_size = 22
+keep_label_aspect = true
 
 [node name="Delete" parent="Panel/SavesPanel/RightActions" unique_id=1598864417 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.66, 0)
+transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.65, 0)
 action = &"delete"
 caption = "Delete"
+label_size = 22
+keep_label_aspect = true
 base_color = Color(0.2, 0.07, 0.07, 0.96)
 hover_color = Color(0.58, 0.13, 0.13, 1)
 
 [node name="Back" parent="Panel/SavesPanel/RightActions" unique_id=1957148520 instance=ExtResource("2_btn")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.82, 0)
+transform = Transform3D(0.52, 0, 0, 0, 0.85, 0, 0, 0, 1, 0, -0.82, 0)
 action = &"back_main"
 caption = "Back"
+label_size = 22
+keep_label_aspect = true
 
 [node name="DemosPanel" type="Node3D" parent="Panel" unique_id=126307516]
 visible = false

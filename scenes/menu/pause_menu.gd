@@ -39,8 +39,8 @@ const BINDABLE_ACTIONS: Array[StringName] = [
 	&"ui_console_toggle",
 ]
 
-@export var save_row_step: float = 0.165
-@export var save_rows_per_page: int = 4
+@export var save_row_step: float = 0.15
+@export var save_rows_per_page: int = 6
 ## When true this instance is a saves-only overlay for the main menu: Save and
 ## Save As are hidden, Back closes the overlay instead of showing the pause
 ## menu's main page, and the tree is never paused.
@@ -263,6 +263,15 @@ func _apply_saves_only_layout() -> void:
 			node.set("visible", false)
 			if node is Area3D:
 				(node as Area3D).collision_layer = 0
+
+	# With Save/Save As hidden, lift Load into the first action row so the
+	# left column does not end up with a lone button at the bottom.
+	var load_button := _saves_panel.get_node_or_null(
+		"LeftActions/Load"
+	) as Node3D
+	if load_button != null:
+		load_button.position = Vector3(0.0, -0.48, 0.0)
+		load_button.set("_rest_position", load_button.position)
 
 	# World Type stays available: New Map needs it in both menus.
 
@@ -1205,47 +1214,87 @@ func _ensure_saves_ui() -> void:
 	var saves := get_node_or_null("Panel/SavesPanel") as Node3D
 	if saves == null:
 		return
+
+	# Sort is part of the saves view even in older scene copies that already
+	# have the other controls.
+	_ensure_save_sort_button(saves)
+
+	var has_rename := (
+		saves.get_node_or_null("LeftActions/Rename") != null
+		or saves.get_node_or_null("RightActions/Rename") != null
+	)
 	if (
 		saves.get_node_or_null("NewMap") != null
 		and saves.get_node_or_null("WorldType") != null
-		and saves.get_node_or_null("LeftActions/Rename") != null
+		and has_rename
 	):
 		return
 
 	var save_list := saves.get_node_or_null("SaveList") as Node3D
 	if save_list != null:
-		save_list.position = Vector3(-0.55, 0.40, 0.035)
+		save_list.position = Vector3(-0.55, 0.50, 0.035)
 	var page := saves.get_node_or_null("PageLabel") as Label3D
 	if page != null:
-		page.position = Vector3(-0.55, -0.20, 0.04)
+		page.position = Vector3(-0.55, -0.36, 0.04)
 
 	var left := saves.get_node_or_null("LeftActions") as Node3D
 	var right := saves.get_node_or_null("RightActions") as Node3D
 	if left != null:
-		_place_saves_button(left, "Save", -0.50)
-		_place_saves_button(left, "SaveAs", -0.66)
+		_place_saves_button(left, "Save", -0.48)
+		_place_saves_button(left, "SaveAs", -0.65)
 		_place_saves_button(left, "Load", -0.82)
-		_ensure_water_button(left, "Rename", "rename", "Rename", -0.34)
 	if right != null:
-		_place_saves_button(right, "Duplicate", -0.50)
-		_place_saves_button(right, "Delete", -0.66)
+		_place_saves_button(right, "Duplicate", -0.48)
+		_place_saves_button(right, "Delete", -0.65)
 		_place_saves_button(right, "Back", -0.82)
+		_ensure_water_button(
+			right, "Rename", "rename", "Rename", 0.66,
+			Vector3(0.7, 0.85, 1.0), 20, 0.0, true
+		)
 
 	_ensure_water_button(
-		saves, "NewMap", "new_map", "New Map...", 0.74,
-		Vector3.ONE, 24, -0.68
+		saves, "NewMap", "new_map", "New Map...", 0.80,
+		Vector3(0.7, 0.85, 1.0), 20, -0.62, true
 	)
 	_ensure_water_button(
-		saves, "WorldType", "world_type", "World: Blank Platform", 0.58,
-		Vector3.ONE, 18, -0.68
+		saves, "WorldType", "world_type", "World: Blank Platform", 0.66,
+		Vector3(0.7, 0.85, 1.0), 18, -0.62, true
 	)
 
 
-func _place_saves_button(parent: Node3D, node_name: String, local_y: float) -> void:
+func _ensure_save_sort_button(saves: Node3D) -> void:
+	var right := saves.get_node_or_null("RightActions") as Node3D
+	var parent: Node3D = right if right != null else saves
+	var local_x: float = 0.0 if right != null else 0.62
+	_ensure_water_button(
+		parent,
+		"Sort",
+		"save_sort",
+		"Sort: Last Played",
+		0.80,
+		Vector3(0.7, 0.85, 1.0),
+		18,
+		local_x,
+		true
+	)
+
+
+func _place_saves_button(
+	parent: Node3D,
+	node_name: String,
+	local_y: float,
+	button_scale: Vector3 = Vector3(0.52, 0.85, 1.0),
+	label_size_value: int = 22
+) -> void:
 	var button := parent.get_node_or_null(node_name) as Node3D
 	if button == null:
 		return
 	button.position = Vector3(0.0, local_y, 0.0)
+	button.scale = button_scale
+	button.set("label_size", label_size_value)
+	button.set("keep_label_aspect", true)
+	if button.has_method("refresh_label_aspect"):
+		button.call("refresh_label_aspect")
 	button.set("_rest_position", button.position)
 
 
@@ -1808,7 +1857,8 @@ func _ensure_water_button(
 	local_y: float,
 	button_scale: Vector3 = Vector3.ONE,
 	label_size_value: int = 24,
-	local_x: float = 0.0
+	local_x: float = 0.0,
+	keep_aspect: bool = false
 ) -> void:
 	if parent.get_node_or_null(node_name) != null:
 		return
@@ -1818,6 +1868,7 @@ func _ensure_water_button(
 	button.action = StringName(action)
 	button.caption = caption
 	button.label_size = label_size_value
+	button.set("keep_label_aspect", keep_aspect)
 	button.position = Vector3(local_x, local_y, 0.0)
 	button.scale = button_scale
 	parent.add_child(button)
@@ -2125,6 +2176,12 @@ func _dynamic_caption(action: String) -> String:
 			return "Wake: " + PerformanceSettings.water_wake_name()
 		"world_type":
 			return _world_caption()
+		"save_sort":
+			return "Sort: " + (
+				"Last Played"
+				if _save_manager == null
+				else String(_save_manager.sort_mode_label())
+			)
 		"demo_folder_filter":
 			return "Folder: " + (_demo_folder_filter if not _demo_folder_filter.is_empty() else "All")
 		"volume":
@@ -2380,6 +2437,8 @@ func _click_at(screen_position: Vector2) -> void:
 			_prompt_rename()
 		"world_type":
 			_prompt_world_settings()
+		"save_sort":
+			_cycle_save_sort()
 		"load":
 			_on_load()
 		"duplicate":
@@ -2452,6 +2511,14 @@ func _display_name(slug: String) -> String:
 	return String(_save_manager.display_name(slug))
 
 
+func _cycle_save_sort() -> void:
+	if _save_manager == null:
+		return
+	_save_manager.cycle_sort_mode()
+	_refresh_labels()
+	_set_status("Sorted by " + _save_manager.sort_mode_label())
+
+
 func _refresh_save_list() -> void:
 	for child in _save_list.get_children():
 		child.free()
@@ -2485,13 +2552,27 @@ func _refresh_save_list() -> void:
 
 	for index in range(_save_start, last):
 		var entry: Dictionary = _saves[index]
+		var raw_name := String(entry.get("name", "Save"))
+		var list_name := raw_name
+		var list_label_size := 22
+
+		# Long save names overflow the narrower list rows. Keep the list tidy
+		# and show the full name in the details panel.
+		if raw_name.length() > 32:
+			list_name = raw_name.substr(0, 29).strip_edges() + "..."
+			list_label_size = 18
+		elif raw_name.length() > 25:
+			list_label_size = 20
+
 		var button := _button_scene.instantiate()
 		button.action = &"load_save"
-		button.caption = String(entry.get("name", "Save"))
+		button.caption = list_name
 		button.payload = String(entry.get("slug", ""))
 		button.position = Vector3(0, -save_row_step * (index - _save_start), 0)
-		button.label_size = 22
+		button.scale = Vector3(0.9, 0.85, 1.0)
+		button.label_size = list_label_size
 		button.label_pixel = 0.0019
+		button.keep_label_aspect = true
 		_save_list.add_child(button)
 		if String(entry.get("slug", "")) == _selected_slug:
 			button.set_selected(true)
@@ -2595,7 +2676,7 @@ func _set_status(text: String) -> void:
 
 
 func _on_saves_changed() -> void:
-	if _paused and _saves_panel.visible:
+	if _saves_panel != null and _saves_panel.visible:
 		_refresh_save_list()
 
 

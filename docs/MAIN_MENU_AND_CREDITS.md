@@ -36,12 +36,16 @@ Backdrop: `scenes/menu/menu_backdrop.gd`
 - **Main panel:** Saves, Extras, Settings, Quit.
 - **Saves:** the main menu instances `scenes/menu/pause_menu.tscn` under its
   camera with `saves_only = true`. That overlay uses the pause menu's existing
-  save list, thumbnail, details and dialogs. **Save** and **Save As** are hidden
-  because no live world is loaded. **World Type** stays available so New Map can
+  save list, thumbnail, details and dialogs. The Saves page uses compact scaled
+  buttons, six save rows, a top header row (New Map / World Type / Sort /
+  Rename), and two bottom action columns; long names are shortened in the list.
+  **Save** and **Save As** are hidden because no live world is loaded. **World Type** stays available so New Map can
   choose Blank Platform or Heightmap Terrain; it opens a **World Settings**
-  dialog with type, size and seed. Load, New Map, Rename, Duplicate, Delete and
-  Back remain. Both menus therefore share one implementation of the save and
-  world-creation UI.
+  dialog with type, size and seed. Load, New Map, Rename, **Sort**, Duplicate,
+  Delete and Back remain. Both menus therefore share one implementation of the
+  save and world-creation UI. **Sort** cycles **Last Played** (default),
+  **Date Created**, **Alphabetically** and **Date Modified**; the choice is
+  persisted, and loading a save stamps its `last_played` timestamp.
 
 ### New Map and world settings
 

@@ -1,6 +1,10 @@
 class_name OptimizerBridge
 extends Node
 
+const OPTIMIZER_OVERLAY := preload(
+	"res://scripts/optimization/optimizer_overlay.gd"
+)
+
 ## Simulation-side adapter for the optimization layer.
 ##
 ## Responsibilities:
@@ -26,11 +30,26 @@ signal result_ready(result: OptimizationResult, applied: int, skipped: int)
 const COMMIT_RADIUS: float = 4.0
 const AUTO_SOLVE_DELAY: float = 1.0
 ## A late spawn is adopted by the nearest cohort of the last result only when it
-## appears within this radius. Farther spawns keep the local exit choice.
+## appears within this radius. Farther spawns are queued for the next solve.
 const ADOPT_RADIUS: float = 8.0
+## Never solve twice inside this window, even when a trigger fires.
+const RESOLVE_MIN_GAP: float = 2.0
+## A spawn wave this large (or a quiet period after any spawn) triggers a solve.
+const SPAWN_BATCH_TRIGGER: int = 8
+const SPAWN_DEBOUNCE: float = 1.5
+## Growing queue pressure this large above the last solve's baseline triggers a
+## solve between periodic intervals.
+const QUEUE_TRIGGER_DELTA: int = 4
+const LIVE_POLL_INTERVAL: float = 0.5
 
 var enabled: bool = false
 var auto_solve: bool = true
+## Re-solve while a run is active so assignments follow queues and late arrivals.
+var re_solve_enabled: bool = true
+## Periodic interval in seconds. Ignored when `re_solve_enabled` is false.
+var re_solve_interval: float = 15.0
+## Draw cohort -> exit lines, agent exit colours and exit load labels.
+var overlay_enabled: bool = false
 var algorithm: String = OptimizationRequest.ALGORITHM_GREEDY
 var mode: String = OptimizationRequest.MODE_BALANCED
 var cohort_size: float = 4.0
@@ -49,6 +68,8 @@ var parameters: Dictionary = {
 var last_result: OptimizationResult
 var last_applied: int = 0
 var last_skipped: int = 0
+var last_unchanged: int = 0
+var last_changed: int = 0
 var last_rejection: String = ""
 var solve_count: int = 0
 var adopted_spawns: int = 0
@@ -58,6 +79,17 @@ var _auto_pending: bool = false
 var _auto_at: float = 0.0
 var _serial_to_node: Dictionary = {}
 var _connected_grid: NavGridMap
+var _next_resolve_at: float = 0.0
+var _last_solved_at: float = -INF
+var _last_solved_environment: int = -1
+var _last_exit_signature: String = ""
+var _pending_spawns: int = 0
+var _spawn_solve_at: float = 0.0
+var _queue_baseline: int = 0
+var _queue_total_cached: int = 0
+var _exit_signature_cached: String = ""
+var _poll_at: float = 0.0
+var _overlay: Node3D = null
 
 
 func _ready() -> void:
@@ -87,6 +119,14 @@ func _apply_runtime_defaults() -> void:
 		max_cohorts = clampi(int(defaults["max_cohorts"]), 1, 400)
 	if defaults.has("auto_solve"):
 		auto_solve = bool(defaults["auto_solve"])
+	if defaults.has("re_solve_enabled"):
+		re_solve_enabled = bool(defaults["re_solve_enabled"])
+	if defaults.has("re_solve_interval"):
+		re_solve_interval = clampf(
+			float(defaults["re_solve_interval"]), 5.0, 120.0
+		)
+	if defaults.has("overlay_enabled"):
+		overlay_enabled = bool(defaults["overlay_enabled"])
 	if defaults.get("weights") is Dictionary:
 		weights = (defaults["weights"] as Dictionary).duplicate(true)
 	if defaults.get("parameters") is Dictionary:
@@ -99,14 +139,66 @@ func _apply_runtime_defaults() -> void:
 func _exit_tree() -> void:
 	_disconnect_grid()
 
+	if _overlay != null and is_instance_valid(_overlay):
+		_overlay.queue_free()
+
+	_overlay = null
+
 
 func _process(_delta: float) -> void:
-	if not enabled or _solving or not _auto_pending:
+	if not enabled or _solving:
 		return
 
-	if GlobalData.sim_now() >= _auto_at:
-		_auto_pending = false
+	var now: float = GlobalData.sim_now()
+
+	if _auto_pending:
+		if now >= _auto_at:
+			_auto_pending = false
+			request_solve()
+		return
+
+	if not auto_solve:
+		return
+
+	_poll_live_state(now)
+
+	if _should_re_solve(now):
 		request_solve()
+
+
+## Reads exit availability and queue pressure at a low rate. Scanning the
+## EvacPoint group every frame would be wasted work during a run.
+func _poll_live_state(now: float) -> void:
+	if now < _poll_at:
+		return
+
+	_poll_at = now + LIVE_POLL_INTERVAL
+	_exit_signature_cached = _exit_signature()
+	_queue_total_cached = _queue_total()
+
+
+func _should_re_solve(now: float) -> bool:
+	if _last_solved_at > -INF and now - _last_solved_at < RESOLVE_MIN_GAP:
+		return false
+
+	if _pending_spawns >= SPAWN_BATCH_TRIGGER:
+		return true
+
+	# A spawn burst, or a quiet gap after any spawn, brings unassigned agents
+	# into a new solve. The previous 8 m rule left far spawners uncovered.
+	if _pending_spawns > 0 and now >= _spawn_solve_at:
+		return true
+
+	if GlobalData.environment_version != _last_solved_environment:
+		return true
+
+	if _exit_signature_cached != _last_exit_signature:
+		return true
+
+	if _queue_total_cached - _queue_baseline >= QUEUE_TRIGGER_DELTA:
+		return true
+
+	return re_solve_enabled and now >= _next_resolve_at
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +211,13 @@ func set_enabled(value: bool) -> void:
 
 	if not value:
 		_auto_pending = false
+		_pending_spawns = 0
 		_publish_state("off")
+
+		if _overlay != null and is_instance_valid(_overlay):
+			_overlay.call("set_enabled", false)
 	else:
+		_next_resolve_at = GlobalData.sim_now() + re_solve_interval
 		_publish_state("enabled: Start or Run once")
 
 	_sync_recorder_configuration()
@@ -155,7 +252,37 @@ func set_max_cohorts(value: int) -> void:
 
 func set_auto_solve(value: bool) -> void:
 	auto_solve = value
+
+	if not value:
+		_auto_pending = false
+
 	_sync_recorder_configuration()
+
+
+func set_re_solve_enabled(value: bool) -> void:
+	re_solve_enabled = value
+
+	if value and enabled:
+		_next_resolve_at = GlobalData.sim_now() + re_solve_interval
+
+	_sync_recorder_configuration()
+
+
+func set_re_solve_interval(value: float) -> void:
+	re_solve_interval = clampf(value, 5.0, 120.0)
+	_next_resolve_at = GlobalData.sim_now() + re_solve_interval
+	_sync_recorder_configuration()
+
+
+func set_overlay_enabled(value: bool) -> void:
+	overlay_enabled = value
+	_ensure_overlay()
+
+	if _overlay == null:
+		return
+
+	_overlay.call("set_result", last_result if overlay_enabled else null)
+	_overlay.call("set_enabled", overlay_enabled)
 
 
 func request_solve() -> void:
@@ -192,6 +319,7 @@ func _on_run_started() -> void:
 		return
 
 	GlobalData.set_optimizer_enabled(true)
+	_clear_live_assignments()
 	last_result = null
 	last_applied = 0
 	last_skipped = 0
@@ -201,6 +329,16 @@ func _on_run_started() -> void:
 	GlobalData.optimizer_last_algorithm = ""
 	GlobalData.optimizer_last_mode = ""
 	_serial_to_node.clear()
+	_next_resolve_at = 0.0
+	_last_solved_at = -INF
+	_last_solved_environment = GlobalData.environment_version
+	_last_exit_signature = ""
+	_queue_baseline = 0
+	_queue_total_cached = 0
+	_exit_signature_cached = ""
+	_pending_spawns = 0
+	_spawn_solve_at = 0.0
+	_poll_at = 0.0
 
 	if auto_solve:
 		_auto_pending = true
@@ -210,31 +348,56 @@ func _on_run_started() -> void:
 
 func _on_run_reset() -> void:
 	_auto_pending = false
+	_clear_live_assignments()
 	_serial_to_node.clear()
 	last_result = null
 	last_applied = 0
 	last_skipped = 0
+	last_unchanged = 0
+	last_changed = 0
 	last_rejection = ""
 	adopted_spawns = 0
+	_last_solved_at = -INF
+	_next_resolve_at = 0.0
+	_last_exit_signature = ""
+	_queue_baseline = 0
+	_pending_spawns = 0
+	_spawn_solve_at = 0.0
+	_poll_at = 0.0
+
+	if _overlay != null and is_instance_valid(_overlay):
+		_overlay.call("set_result", null)
+
 	_publish_state("enabled" if enabled else "off")
 
 
 ## New agents that appear after a solve are adopted by the nearest cohort of the
-## last feasible result. A spawner that is still emitting is therefore covered
-## without another full solve; spawns farther than ADOPT_RADIUS keep the local
-## logit choice.
+## last feasible result when they appear close to it. Farther spawns are queued
+## for the next periodic/triggered solve, so a distant spawner is still covered.
 func _on_agent_spawned(agent: Node) -> void:
-	if not enabled or last_result == null:
+	if not enabled:
 		return
 
-	if last_result.source_environment_version != GlobalData.environment_version:
+	if (
+		last_result != null
+		and last_result.source_environment_version
+		== GlobalData.environment_version
+	):
+		call_deferred("_adopt_spawned_agent", agent)
+	elif auto_solve:
+		_queue_spawn_for_solve()
+
+
+func _queue_spawn_for_solve() -> void:
+	if not auto_solve:
 		return
 
-	call_deferred("_adopt_spawned_agent", agent)
+	_pending_spawns += 1
+	_spawn_solve_at = GlobalData.sim_now() + SPAWN_DEBOUNCE
 
 
 func _adopt_spawned_agent(agent: Node) -> void:
-	if not enabled or last_result == null:
+	if not enabled:
 		return
 
 	if agent == null or not is_instance_valid(agent) or not agent.is_inside_tree():
@@ -252,34 +415,37 @@ func _adopt_spawned_agent(agent: Node) -> void:
 	if status in ["arrived", "queued", "evacuated", "dead"]:
 		return
 
-	var position: Vector3 = agent.global_position
-	var nearest: Dictionary = {}
-	var nearest_sq: float = INF
+	if last_result != null:
+		var position: Vector3 = agent.global_position
+		var nearest: Dictionary = {}
+		var nearest_sq: float = INF
 
-	for cohort: Dictionary in last_result.cohorts:
-		var distance_sq: float = position.distance_squared_to(
-			cohort.get("position", Vector3.ZERO)
-		)
+		for cohort: Dictionary in last_result.cohorts:
+			var distance_sq: float = position.distance_squared_to(
+				cohort.get("position", Vector3.ZERO)
+			)
 
-		if distance_sq < nearest_sq:
-			nearest_sq = distance_sq
-			nearest = cohort
+			if distance_sq < nearest_sq:
+				nearest_sq = distance_sq
+				nearest = cohort
 
-	if nearest.is_empty() or nearest_sq > ADOPT_RADIUS * ADOPT_RADIUS:
-		return
+		if (
+			not nearest.is_empty()
+			and nearest_sq <= ADOPT_RADIUS * ADOPT_RADIUS
+		):
+			var exit_id: String = String(nearest.get("exit_id", ""))
 
-	var exit_id: String = String(nearest.get("exit_id", ""))
+			if not exit_id.is_empty() and _live_exit_ids().has(exit_id):
+				var target: Vector3 = _exit_position(exit_id)
 
-	if exit_id.is_empty() or not _live_exit_ids().has(exit_id):
-		return
+				if (
+					target != Vector3.ZERO
+					and agent.call("set_optimizer_assignment", exit_id, target)
+				):
+					adopted_spawns += 1
+					return
 
-	var target: Vector3 = _exit_position(exit_id)
-
-	if target == Vector3.ZERO:
-		return
-
-	if agent.call("set_optimizer_assignment", exit_id, target):
-		adopted_spawns += 1
+	_queue_spawn_for_solve()
 
 
 func _exit_position(exit_id: String) -> Vector3:
@@ -323,6 +489,7 @@ func _run_solve() -> void:
 	if snapshot == null:
 		_solving = false
 		last_rejection = ""
+		_mark_solve_finished()
 		_publish_state("nothing to optimize (no agents or exits)")
 		return
 
@@ -367,33 +534,47 @@ func _run_solve() -> void:
 	var rejection: String = _validate(result, snapshot)
 	var applied: int = 0
 	var skipped: int = 0
+	var unchanged: int = 0
 
 	if rejection.is_empty():
 		var outcome: Dictionary = _apply(result)
 		applied = int(outcome.get("applied", 0))
 		skipped = int(outcome.get("skipped", 0))
+		unchanged = int(outcome.get("unchanged", 0))
 		last_rejection = ""
 	else:
 		last_rejection = rejection
 		skipped = result.agent_exit_assignments.size()
 
 	last_applied = applied
+	last_changed = applied
 	last_skipped = skipped
+	last_unchanged = unchanged
+	result.detail["apply"] = {
+		"changed": applied,
+		"unchanged": unchanged,
+		"skipped": skipped,
+	}
 
 	_record(result, applied, skipped, rejection, Time.get_ticks_usec() - started_usec)
 	_solving = false
 	solve_count += 1
+	_mark_solve_finished()
+	_refresh_overlay()
 
 	if not rejection.is_empty():
 		_publish_state("rejected: " + rejection)
 	elif applied == 0:
-		_publish_state("solved; no agents needed changing")
+		_publish_state(
+			"solved; %d unchanged, %d skipped" % [unchanged, skipped]
+		)
 	else:
 		_publish_state(
-			"applied %d / %d | %d cohorts | T≈%.1f s | %.0f ms"
+			"changed %d | unchanged %d | skipped %d | %d cohorts | T=%.1f s | %.0f ms"
 			% [
 				applied,
-				applied + skipped,
+				unchanged,
+				skipped,
 				result.cohorts.size(),
 				result.estimated_completion_time,
 				result.computation_time_ms,
@@ -401,6 +582,103 @@ func _run_solve() -> void:
 		)
 
 	result_ready.emit(result, applied, skipped)
+
+
+## Records the state a fresh re-solve is measured against. Called even when the
+## snapshot was empty so a periodic retry does not storm every frame.
+func _mark_solve_finished() -> void:
+	var now: float = GlobalData.sim_now()
+	_last_solved_at = now
+	_last_solved_environment = GlobalData.environment_version
+	_last_exit_signature = _exit_signature()
+	_exit_signature_cached = _last_exit_signature
+	_queue_baseline = _queue_total()
+	_queue_total_cached = _queue_baseline
+	_next_resolve_at = now + re_solve_interval
+	_pending_spawns = 0
+	_spawn_solve_at = 0.0
+	_auto_pending = false
+	_poll_at = 0.0
+
+
+func _exit_signature() -> String:
+	var ids: Array = _live_exit_ids().keys()
+	ids.sort()
+
+	var parts: Array[String] = []
+
+	for id: Variant in ids:
+		parts.append(String(id))
+
+	return ",".join(parts)
+
+
+func _clear_live_assignments() -> void:
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return
+
+	for node: Node in tree.get_nodes_in_group("npc"):
+		if node.has_method("clear_optimizer_assignment"):
+			node.call("clear_optimizer_assignment")
+
+
+func _queue_total() -> int:
+	var total: int = 0
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return total
+
+	for node: Node in tree.get_nodes_in_group("EvacPoint"):
+		if not is_instance_valid(node) or not node.has_method("get_exit_status"):
+			continue
+
+		var status: Dictionary = node.call("get_exit_status")
+		total += int(status.get("current_queue", 0))
+
+	return total
+
+
+func _ensure_overlay() -> void:
+	if not overlay_enabled:
+		return
+
+	if _overlay != null and is_instance_valid(_overlay):
+		return
+
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return
+
+	var host: Node = tree.current_scene
+
+	if host == null:
+		host = tree.root
+
+	if host == null:
+		return
+
+	var overlay: Node3D = OPTIMIZER_OVERLAY.new()
+	overlay.name = "OptimizerOverlay"
+	host.add_child(overlay)
+	overlay.call("setup", self)
+	_overlay = overlay
+
+
+func _refresh_overlay() -> void:
+	if not overlay_enabled:
+		return
+
+	_ensure_overlay()
+
+	if _overlay == null or not is_instance_valid(_overlay):
+		return
+
+	_overlay.call("set_result", last_result)
+	_overlay.call("set_enabled", true)
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +857,7 @@ func _validate(result: OptimizationResult, snapshot: SimulationSnapshot) -> Stri
 func _apply(result: OptimizationResult) -> Dictionary:
 	var applied: int = 0
 	var skipped: int = 0
+	var unchanged: int = 0
 
 	for serial_value: Variant in result.agent_exit_assignments.keys():
 		var serial: int = int(serial_value)
@@ -622,13 +901,27 @@ func _apply(result: OptimizationResult) -> Dictionary:
 
 		var exit_id: String = String(result.agent_exit_assignments[serial])
 		var target: Vector3 = result.agent_targets.get(serial, Vector3.ZERO)
+		var previous_exit: String = ""
+
+		if (
+			node.has_method("has_optimizer_assignment")
+			and bool(node.call("has_optimizer_assignment"))
+		):
+			previous_exit = String(node.call("get_optimizer_exit_id"))
+
+		# A periodic solve usually reproduces most of the previous assignment.
+		# Leaving those agents untouched avoids re-pathing the whole crowd every
+		# interval and makes the "changed" count meaningful.
+		if previous_exit == exit_id:
+			unchanged += 1
+			continue
 
 		if node.call("set_optimizer_assignment", exit_id, target):
 			applied += 1
 		else:
 			skipped += 1
 
-	return {"applied": applied, "skipped": skipped}
+	return {"applied": applied, "skipped": skipped, "unchanged": unchanged}
 
 
 func _live_exit_ids() -> Dictionary:
@@ -704,6 +997,9 @@ func _sync_recorder_configuration() -> void:
 		"cohort_size": cohort_size,
 		"max_cohorts": max_cohorts,
 		"auto_solve": auto_solve,
+		"re_solve_enabled": re_solve_enabled,
+		"re_solve_interval": re_solve_interval,
+		"overlay_enabled": overlay_enabled,
 		"environment_version": GlobalData.environment_version,
 	})
 

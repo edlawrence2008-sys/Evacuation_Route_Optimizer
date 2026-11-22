@@ -66,6 +66,9 @@ var _mode_description: Label = null
 var _cohort: SpinBox = null
 var _max_cohorts: SpinBox = null
 var _auto: CheckButton = null
+var _resolve: CheckButton = null
+var _interval: SpinBox = null
+var _overlay: CheckButton = null
 var _run: Button = null
 var _status: Label = null
 var _result: Label = null
@@ -298,9 +301,40 @@ func _build_ui() -> void:
 
 	_auto = CheckButton.new()
 	_auto.text = "Solve at run start"
-	_auto.tooltip_text = "Run one solve 1 s after Start. Late spawns are adopted by the nearest cohort of that result."
+	_auto.tooltip_text = "Run one solve 1 s after Start; with Keep re-solving on, continue during the run."
 	_auto.toggled.connect(_on_auto_toggled)
 	column.add_child(_auto)
+
+	_resolve = CheckButton.new()
+	_resolve.text = "Keep re-solving"
+	_resolve.tooltip_text = "When Solve at run start is on, re-solve every interval so queues and late arrivals change the assignment."
+	_resolve.toggled.connect(_on_resolve_toggled)
+	column.add_child(_resolve)
+
+	var interval_row := HBoxContainer.new()
+	interval_row.add_theme_constant_override("separation", 6)
+	column.add_child(interval_row)
+
+	var interval_label := Label.new()
+	interval_label.text = "Every (s)"
+	interval_label.add_theme_color_override("font_color", MUTED)
+	interval_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	interval_row.add_child(interval_label)
+
+	_interval = SpinBox.new()
+	_interval.min_value = 5.0
+	_interval.max_value = 120.0
+	_interval.step = 1.0
+	_interval.value = 15.0
+	_interval.custom_minimum_size = Vector2(80, 0)
+	_interval.value_changed.connect(_on_interval_changed)
+	interval_row.add_child(_interval)
+
+	_overlay = CheckButton.new()
+	_overlay.text = "Show assignment overlay"
+	_overlay.tooltip_text = "Colour agents by exit, draw cohort->exit lines and show live exit load."
+	_overlay.toggled.connect(_on_overlay_toggled)
+	column.add_child(_overlay)
 
 	_run = Button.new()
 	_run.text = "Run once"
@@ -351,6 +385,9 @@ func _sync_controls() -> void:
 	_cohort.set_value_no_signal(bridge.cohort_size)
 	_max_cohorts.set_value_no_signal(bridge.max_cohorts)
 	_auto.set_pressed_no_signal(bridge.auto_solve)
+	_resolve.set_pressed_no_signal(bridge.re_solve_enabled)
+	_interval.set_value_no_signal(bridge.re_solve_interval)
+	_overlay.set_pressed_no_signal(bridge.overlay_enabled)
 	_ants.set_value_no_signal(int(bridge.parameters.get("aco_ants", 16)))
 	_iterations.set_value_no_signal(
 		int(bridge.parameters.get("aco_iterations", 40))
@@ -422,6 +459,21 @@ func _on_auto_toggled(pressed: bool) -> void:
 		bridge.set_auto_solve(pressed)
 
 
+func _on_resolve_toggled(pressed: bool) -> void:
+	if bridge != null:
+		bridge.set_re_solve_enabled(pressed)
+
+
+func _on_interval_changed(value: float) -> void:
+	if bridge != null:
+		bridge.set_re_solve_interval(value)
+
+
+func _on_overlay_toggled(pressed: bool) -> void:
+	if bridge != null:
+		bridge.set_overlay_enabled(pressed)
+
+
 func _on_ants_changed(value: float) -> void:
 	if bridge != null:
 		bridge.parameters["aco_ants"] = int(value)
@@ -482,6 +534,8 @@ func _on_bridge_result(
 	var terms: Dictionary = result.terms
 	var normalised: Dictionary = result.detail.get("normalised_terms", {})
 	var solver: Dictionary = result.detail.get("solver", {})
+	var apply: Dictionary = result.detail.get("apply", {})
+	var unchanged: int = int(apply.get("unchanged", 0))
 	var budget_note: String = ""
 
 	if bool(solver.get("timed_out", false)):
@@ -493,7 +547,7 @@ func _on_bridge_result(
 		"%s\n"
 		+ "predicted T %.1f s · avg %.1f s\n"
 		+ "queue %.0f s (%.1f s/agent) · congestion %.0f s (%.1f s/agent)\n"
-		+ "applied %d · skipped %d · %d cohorts · %.0f ms%s\n"
+		+ "changed %d · unchanged %d · skipped %d · %d cohorts · %.0f ms%s\n"
 		+ "exits: %s"
 	) % [
 		OptimizerManager.algorithm_label(result.algorithm),
@@ -504,6 +558,7 @@ func _on_bridge_result(
 		float(terms.get("congestion", 0.0)),
 		float(normalised.get("congestion", 0.0)),
 		applied,
+		unchanged,
 		skipped,
 		result.cohorts.size(),
 		result.computation_time_ms,

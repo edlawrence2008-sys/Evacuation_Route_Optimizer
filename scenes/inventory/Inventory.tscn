@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://bdv73usdpdgrg" path="res://scenes/inventory/AgentPanel.tscn" id="4_agents"]
 [ext_resource type="PackedScene" uid="uid://bwtqhe6oj7lyp" path="res://scenes/inventory/property_tab.tscn" id="5_mmgv4"]
 [ext_resource type="PackedScene" path="res://scenes/inventory/OptimizerPanel.tscn" id="6_optimizer"]
+[ext_resource type="PackedScene" path="res://scenes/inventory/BuildTab.tscn" id="7_build"]
 
 [sub_resource type="Theme" id="Theme_ect3m"]
 
@@ -139,6 +140,13 @@ custom_minimum_size = Vector2(445, 0)
 custom_maximum_size = Vector2(445, -1)
 layout_mode = 2
 columns = 5
+
+[node name="BuildTab" parent="." unique_id=1442000004 instance=ExtResource("7_build")]
+layout_mode = 1
+offset_left = -246.0
+offset_top = -16.0
+offset_right = 0.0
+offset_bottom = 320.0
 
 [node name="Property_tab" parent="." unique_id=888378270 instance=ExtResource("5_mmgv4")]
 layout_mode = 1

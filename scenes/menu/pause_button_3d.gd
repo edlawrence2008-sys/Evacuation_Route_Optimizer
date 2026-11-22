@@ -59,14 +59,23 @@ func _ready() -> void:
 		label.width = 520
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.text = caption
+	refresh_label_aspect()
+	_apply_color(true)
+
+
+## Counter-scales the Label3D against a non-uniform button scale so glyphs keep
+## their aspect ratio. Called at ready and after runtime layout changes.
+func refresh_label_aspect() -> void:
 	if keep_label_aspect:
 		_label_rest_scale = Vector3(
 			1.0 / maxf(absf(scale.x), 0.001),
 			1.0 / maxf(absf(scale.y), 0.001),
 			1.0 / maxf(absf(scale.z), 0.001)
 		)
+	else:
+		_label_rest_scale = Vector3.ONE
+	if is_instance_valid(label):
 		label.scale = _label_rest_scale
-	_apply_color(true)
 
 
 ## Drops the whole button into place, fading it in. Called by the menu with a

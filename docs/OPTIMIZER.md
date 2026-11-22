@@ -8,10 +8,11 @@
 > normalised the objective terms per agent, made the congestion term use peak
 > platoon flow, and let local search swap pairs. Multi-objective terms,
 > disruption-driven re-solve and hazards are still future work.
-> **Known scope limits (2026-11-21):** one solve 1 s after Start, 8 m late-spawn
-> adoption, and exit-only assignments over shared flow fields. Route authoring
-> and route alternatives do not exist. See
-> [`AUTHORED_EVACUATION_ROUTES.md`](AUTHORED_EVACUATION_ROUTES.md).
+> **Known scope limits (2026-11-21):** assignments remain exit-only over shared
+> flow fields, so the planner cannot split a cohort across parallel corridors.
+> Periodic/triggered re-solves, late-spawn coverage and an assignment overlay are
+> implemented; waypoint routes can be authored but the optimizer does not choose
+> them. See [`AUTHORED_EVACUATION_ROUTES.md`](AUTHORED_EVACUATION_ROUTES.md).
 > **Applies to (read-only contracts):** `scripts/NPCstuff/Member.gd`,
 > `scripts/gridmap.gd`, `scenes/evac_point.gd`, `scripts/CrowdManager.gd`,
 > `evacuation_manager.gd`, `scripts/GlobalData.gd`, `scripts/sim_recorder.gd`,
@@ -99,7 +100,9 @@ novelty statement.
 | Environment-change notification | Yes | `GlobalData.environment_changed(location, change_type, detail)` |
 | Runtime route assignment | Yes | `Member.request_evacuation_target(target)`; records a `destination` event and a route assignment |
 | Assignment persistence | **Yes, opt-in** | `Member.set_optimizer_assignment()` stores an exit and target and suppresses the per-cycle logit re-choice. It is cleared on rejection, path failure, exit unavailability, admission or an evacuation-mode change. Pre-movement agents keep their delay and use the assignment when it expires |
-| Late spawns | **Yes, best effort** | Agents spawned after a solve are adopted by the nearest cohort of the last feasible result within 8 m; farther spawns keep the local choice. No full re-solve is triggered |
+| Late spawns | **Yes** | Agents within 8 m of a cohort adopt its exit immediately; farther spawns are queued and included in the next periodic/triggered solve |
+| Periodic re-solve | **Yes** | `re_solve_interval` (default 15 s) plus queue-growth, exit-set, environment-version and spawn-wave triggers; agents whose exit is unchanged are skipped |
+| Route authoring | **No** | Removed after a hand-placed waypoint prototype felt like a step backwards. `Member` uses the normal A*/flow path to the assigned exit; the design questions are in `AUTHORED_EVACUATION_ROUTES.md` |
 | Measured outcome + replay | Yes | `EvacuationManager.get_summary()`, `get_evacuation_records()`, `SimRecorder` (`recording.jsonl`, `manifest.json`, `summary.json`) |
 | Optimizer recording hooks | Yes | `SimRecorder.record_optimizer_execution(name, duration_usec, detail)`; the manifest already carries an `optimizer` block (`available: false` today) |
 | Experiment comparison | Yes | Pause menu **Demos** → **Compare** (2–6 runs, metrics, exit assignments, disruption and configuration diffs) |
@@ -291,7 +294,9 @@ A\*/flow → `EvacPoint` admission → metrics → recording.
    identical.
 2. With auto-solve on, the bridge captures a snapshot **1 s after Start** (or
    immediately on **Run once**). Snapshot capture and the solve run in deferred
-   idle frames, never inside a physics tick.
+   idle frames, never inside a physics tick. After the first solve it re-solves at
+   `re_solve_interval` (default 15 s) and when queue pressure, the exit set,
+   `environment_version` or a spawn wave changes.
 3. The optimizer returns a result. The bridge validates the source
    `environment_version`, the available exit set, and the presence of at least
    one assignable agent.
@@ -307,9 +312,10 @@ A\*/flow → `EvacPoint` admission → metrics → recording.
    the configuration.
 7. Predicted cost and measured outcome are both stored, and their difference is
    the experiment’s most interesting number.
-8. A second solve is **not** automatic on world edits yet. `environment_version`
-   invalidates stale results, but disruption-driven re-solve is phase 5; until
-   then, press **Run once**.
+8. Re-solving is now automatic: the periodic interval, queue growth of four
+   above the last baseline, an exit-set change, an `environment_version` change,
+   or a spawn wave each request a solve. A 2 s minimum gap prevents storms, and
+   agents whose assigned exit is unchanged are skipped.
 
 **What “Run once” does with spawners.** It is a **point-in-time** decision, not a
 subscription:
@@ -323,17 +329,17 @@ subscription:
   result when it appears within **8 m** of that cohort's centroid. Adoption uses
   the same `Member` override, so the new agent walks to that exit instead of
   drawing the local logit choice.
-- A late spawn farther than 8 m from every cohort keeps the local choice. A later
-  **Run once** captures it normally.
+- A late spawn farther than 8 m from every cohort is counted as pending and is
+  included in the next solve. A spawn wave of eight, or a 1.5 s quiet period
+  after any unadopted spawn, triggers that solve.
 - Adoption stops when `environment_version` no longer matches the last result
-  (exit or layout changed). The panel then waits for another solve.
-- New spawns do **not** trigger a full re-solve. That is deliberate: a solve is
-  several hundred milliseconds at 600 agents, and re-solving on every spawn
-  would stall the run. Phase 5 adds debounced re-solves for disruptions.
+  (exit or layout changed). The next solve reconciles it.
+- Spawns can trigger a full re-solve, but only through the debounced/batched path:
+  a solve is several hundred milliseconds at 600 agents, so every individual
+  spawn does not trigger one.
 - With the **auto-solve** option, the first solve runs 1 s after Start. Pressing
   **Run once** after **Populate** covers a population that did not go through
-  `start_spawning()`. For a spawner that keeps emitting for a long time, either
-  solve once after the main wave or accept nearest-cohort adoption for the tail.
+  `start_spawning()`.
 
 Spawner configuration (quota, interval, batch, cap) is untouched by the
 optimizer; it only assigns destinations to agents that already exist.
@@ -807,7 +813,9 @@ objective normalisation, every algorithm's registry entry, exact-reference
 bounds, local-search swaps, determinism, and the seed guards. The scale test
 adds **7**, the comparer/player layout test adds **28**,
 `demo_restore_test.tscn` adds **22**, and `recording_control_test.tscn` adds
-**31**. Total coverage is **407 assertions** across nine harnesses.
+**31**. `optimizer_feedback_test.tscn` adds **11** for the overlay, periodic
+re-solve, late-spawn coverage and the console `opt_overlay` toggle.
+Total coverage is **542 assertions** across thirteen harnesses.
 
 ### 8.5 Late arrivals: measured cause and fixes (2026-11-20)
 
@@ -861,11 +869,12 @@ active immediately while the routes resolve over the next few frames.
 
 ---
 
-## 9. Dynamic reoptimization (phase 5)
+## 9. Dynamic reoptimization
 
-**Not implemented yet.** Phase 2 bumps `environment_version` and releases agents
-from a disabled exit, but it does not schedule a new solve; press **Run once**.
-The design below is the phase-5 target.
+**Implemented (2026-11-21) for periodic, queue, exit-set, environment and
+spawn-wave triggers.** Agents whose exit is unchanged are skipped; a 2 s floor
+prevents solve storms. The remaining design goal is route-aware reoptimization
+(cohort -> exit + corridor) once a route graph exists.
 
 Triggers (all already exist):
 
@@ -1152,7 +1161,8 @@ deliberately weaker reference.
 7. **Objective-scale check (done):** `normalised_terms.queue == terms.queue / N`
    and the cost is the weighted sum of the normalised terms.
 8. **Late spawns (done):** an agent spawned after a solve is adopted by the
-   nearest cohort within 8 m and keeps the assigned exit.
+   nearest cohort within 8 m; farther spawns are queued and included in the next
+   periodic/triggered solve.
 9. **Baseline parity (partially done):** with the optimizer disabled, the bridge
    does nothing and the local logit path is unchanged. A full same-seed baseline
    versus optimized comparison is still experiment work.

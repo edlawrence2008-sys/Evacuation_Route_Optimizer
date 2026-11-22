@@ -1,6 +1,8 @@
 class_name BlockMeshLibrarySync
 extends RefCounted
 
+const COLOR_PALETTE := preload("res://scripts/color_palette_db.gd")
+
 ## Mirrors the nodes in models/Blocks/blocks.tscn into the MeshLibrary used by
 ## the GridMap. Existing item IDs are preserved by matching item names; new
 ## nodes are appended with fresh IDs. Existing previews and navigation data are
@@ -130,6 +132,10 @@ static func _make_texture_preview(
 			base = base.trim_prefix(prefix)
 			break
 
+	var color_index := COLOR_PALETTE.color_index(base)
+	if color_index >= 0:
+		base = base.substr(0, base.length() - 4)
+
 	var auto_base := base.trim_prefix("Connect_")
 	var candidates: Array[String] = [
 		"res://textures/autoblocks/" + base + ".png",
@@ -164,6 +170,13 @@ static func _make_texture_preview(
 			return null
 
 	image.convert(Image.FORMAT_RGBA8)
+	if color_index >= 0:
+		image = COLOR_PALETTE.tint_image(
+			image,
+			COLOR_PALETTE.color_at(color_index)
+		)
+		if image == null:
+			return null
 	image.resize(64, 64, Image.INTERPOLATE_NEAREST)
 	return ImageTexture.create_from_image(image)
 

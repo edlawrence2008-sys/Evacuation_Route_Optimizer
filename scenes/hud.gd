@@ -27,6 +27,7 @@ extends Control
 ## registry before Godot rebuilds its global class cache.
 const BlockMaterialsDB := preload("res://scripts/block_materials.gd")
 const BlockVariantSlot := preload("res://scenes/inventory/block_variant_slot.gd")
+const ColorPaletteDBScript := preload("res://scripts/color_palette_db.gd")
 const PaletteSlotScript := preload("res://scenes/inventory/palette_slot.gd")
 const PaletteStoreScript := preload("res://scripts/palette_store.gd")
 const PixelPanelScript := preload("res://scenes/ui/pixel_panel.gd")
@@ -121,9 +122,13 @@ var _search_query: String = ""
 ## value is the item id currently shown for that group. Slab/stairs/panel
 ## choices persist for the session and survive inventory rebuilds.
 var _block_group_display: Dictionary = {}
+## Selected palette color per colorbase group.
+var _block_color_choice: Dictionary = {}
 var _variants_panel: Control = null
 var _variants_content: MarginContainer = null
 var _variants_grid: GridContainer = null
+var _variants_color_box: GridContainer = null
+var _variants_color_label: Label = null
 var _variants_title: Label = null
 var _variants_group_id: String = ""
 
@@ -593,7 +598,8 @@ func _get_item_tags(item_name: String) -> Array[String]:
 	# Strip the shape prefix and keep the material as the second tag.
 	if lower.begins_with("connect_"):
 		clean = clean.substr(8)
-	elif lower.begins_with("slab_top_"):
+		lower = clean.to_lower()
+	if lower.begins_with("slab_top_"):
 		tags.append("Slab")
 		clean = clean.substr(9)
 	elif lower.begins_with("slab_bottom_"):
@@ -651,6 +657,12 @@ func _is_hidden_block_variant(item_name: String) -> bool:
 		for code in ["_tl", "_t", "_tr", "_l", "_c", "_r", "_bl", "_b", "_br"]:
 			if lower.ends_with(code):
 				return true
+		if (
+			lower.begins_with("auto_connect_slab_bottom_")
+			or lower.begins_with("auto_connect_slab_side_")
+			or lower.begins_with("auto_connect_stairs_upsidedown_")
+		):
+			return true
 	return (
 		lower.begins_with("auto_slab_bottom_")
 		or lower.begins_with("auto_slab_side_")
@@ -902,6 +914,12 @@ func _display_variant_for(group_id: String, variants: Array) -> Dictionary:
 func _visible_variants_for_group(group_id: String) -> Array:
 	if not _cached_mesh_library:
 		return []
+	var color_indices := _group_color_indices(group_id)
+	var selected_color := -1
+	if not color_indices.is_empty():
+		selected_color = int(
+			_block_color_choice.get(group_id, color_indices[0])
+		)
 	var variants: Array = []
 	for id in _cached_build_items:
 		var item_name: String = String(_cached_mesh_library.get_item_name(id))
@@ -909,6 +927,9 @@ func _visible_variants_for_group(group_id: String) -> Array:
 			continue
 		if BlockMaterialsDB.block_group_id(item_name) != group_id:
 			continue
+		if not color_indices.is_empty():
+			if ColorPaletteDBScript.color_index(item_name) != selected_color:
+				continue
 		if not _passes_active_filters(_get_item_tags(item_name)):
 			continue
 		variants.append({"id": id, "name": item_name})
@@ -917,6 +938,90 @@ func _visible_variants_for_group(group_id: String) -> Array:
 			return _variant_sort_index(String(a["name"])) < _variant_sort_index(String(b["name"]))
 	)
 	return variants
+
+
+## Palette indices present for a colorbase group, in palette order.
+func _group_color_indices(group_id: String) -> Array[int]:
+	var result: Array[int] = []
+	if not _cached_mesh_library:
+		return result
+	for id in _cached_build_items:
+		var item_name: String = String(_cached_mesh_library.get_item_name(id))
+		if BlockMaterialsDB.block_group_id(item_name) != group_id:
+			continue
+		var index := ColorPaletteDBScript.color_index(item_name)
+		if index >= 0 and not result.has(index):
+			result.append(index)
+	result.sort()
+	return result
+
+
+## Renders the palette as colored squares at the bottom-right of the group
+## chooser. Clicking one switches the displayed/selected variant color.
+func _rebuild_color_swatches(group_id: String) -> void:
+	if _variants_color_box == null:
+		return
+	for child in _variants_color_box.get_children():
+		_variants_color_box.remove_child(child)
+		child.queue_free()
+
+	var indices := _group_color_indices(group_id)
+	var show_colors := not indices.is_empty()
+	_variants_color_box.visible = show_colors
+	if _variants_color_label != null:
+		_variants_color_label.visible = show_colors
+	if not show_colors:
+		return
+
+	var selected := int(
+		_block_color_choice.get(group_id, indices[0])
+	)
+	for index: int in indices:
+		var color := ColorPaletteDBScript.color_at(index)
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(18.0, 18.0)
+		button.tooltip_text = "Color %d" % index
+		button.focus_mode = Control.FOCUS_NONE
+
+		var style := StyleBoxFlat.new()
+		style.bg_color = color
+		style.border_width_left = 1
+		style.border_width_top = 1
+		style.border_width_right = 1
+		style.border_width_bottom = 1
+		style.border_color = (
+			Color.WHITE if index == selected else Color(0.05, 0.05, 0.05, 1)
+		)
+		button.add_theme_stylebox_override("normal", style)
+		button.add_theme_stylebox_override("hover", style)
+		button.add_theme_stylebox_override("pressed", style)
+
+		button.pressed.connect(
+			_on_color_chosen.bind(group_id, index)
+		)
+		_variants_color_box.add_child(button)
+
+
+func _on_color_chosen(group_id: String, color_index: int) -> void:
+	_block_color_choice[group_id] = color_index
+
+	# Make the group cell show the full block of that color. The chooser is
+	# reopened below so the user can still pick slab/stairs.
+	for id in _cached_build_items:
+		var item_name: String = String(_cached_mesh_library.get_item_name(id))
+		if BlockMaterialsDB.block_group_id(item_name) != group_id:
+			continue
+		if ColorPaletteDBScript.color_index(item_name) != color_index:
+			continue
+		if BlockMaterialsDB.variant_of(item_name) != "block":
+			continue
+		_block_group_display[group_id] = id
+		break
+
+	# The button that emitted `pressed` is still locked for this frame; rebuild
+	# after the signal returns instead of freeing it inside the callback.
+	call_deferred("_refresh_inventory_display")
+	call_deferred("_show_block_variants", group_id)
 
 
 func _variant_sort_index(item_name: String) -> int:
@@ -965,6 +1070,25 @@ func _ensure_variants_panel() -> void:
 	_variants_grid.add_theme_constant_override("v_separation", 4)
 	box.add_child(_variants_grid)
 
+	_variants_color_label = Label.new()
+	_variants_color_label.text = "Color"
+	_variants_color_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_variants_color_label.add_theme_font_size_override("font_size", 12)
+	_variants_color_label.add_theme_color_override(
+		"font_color",
+		Color(0.78, 0.78, 0.74, 1.0)
+	)
+	_variants_color_label.visible = false
+	box.add_child(_variants_color_label)
+
+	_variants_color_box = GridContainer.new()
+	_variants_color_box.columns = 8
+	_variants_color_box.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_variants_color_box.add_theme_constant_override("h_separation", 2)
+	_variants_color_box.add_theme_constant_override("v_separation", 2)
+	_variants_color_box.visible = false
+	box.add_child(_variants_color_box)
+
 
 func _on_block_variants_requested(
 	_item_id: int,
@@ -996,7 +1120,8 @@ func _show_block_variants(
 		return
 
 	for child in _variants_grid.get_children():
-		child.free()
+		_variants_grid.remove_child(child)
+		child.queue_free()
 
 	_variants_group_id = group_id
 	_variants_title.text = BlockMaterialsDB.block_group_label(
@@ -1010,6 +1135,7 @@ func _show_block_variants(
 			entry,
 			int(entry["id"]) == displayed_id
 		)
+	_rebuild_color_swatches(group_id)
 
 	_variants_panel.visible = true
 	_set_variants_badge_open(group_id)
@@ -1179,14 +1305,11 @@ func _on_variant_chosen(group_id: String, item_id: int) -> void:
 	_hide_variants_panel(false)
 	_refresh_inventory_display()
 
-	var pinned_name := String(_property_pinned_item.get("raw_name", ""))
-	if (
-		not pinned_name.is_empty()
-		and BlockMaterialsDB.block_group_id(pinned_name) == group_id
-	):
-		_property_pinned_item = _block_item_data(item_id)
-	_property_hover_item.clear()
-	_refresh_property_tab()
+	# Clicking a shape is also a pick: run the same path as clicking the group
+	# cell itself, so the chosen block/slab/stairs lands in the active hotbar
+	# slot and the held item follows it. The color swatches keep their existing
+	# display-only behaviour.
+	_on_inventory_item_selected(item_id)
 
 
 func _hide_variants_panel(refresh_property: bool = true) -> void:

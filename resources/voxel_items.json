@@ -72,6 +72,18 @@
 			"scene": "res://scenes/placeables/sim/sim_evac_point.tscn",
 			"viewmodel": "scene"
 		},
+		"res://scenes/placeables/sim/sim_false_boid_emitter.tscn": {
+			"icon": "res://resources/voxel_items/sim_false_boid_emitter.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/sim/sim_false_boid_emitter.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/placeables/sim/sim_false_boid_perch.tscn": {
+			"icon": "res://resources/voxel_items/sim_false_boid_perch.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/sim/sim_false_boid_perch.tscn",
+			"viewmodel": "scene"
+		},
 		"res://scenes/placeables/sim/sim_spawner.tscn": {
 			"icon": "res://resources/voxel_items/sim_spawner.tres",
 			"mesh": "",

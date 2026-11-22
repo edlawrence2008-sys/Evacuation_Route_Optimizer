@@ -15,10 +15,11 @@ and links to the code it describes.
 | [`PROCGEN.md`](PROCGEN.md) | Packed 3D section storage, the v2 chunk format, per-chunk collision with the runtime GridMap mirror dropped, the generator/recipe contract, the heightmap terrain generator and its measured cost, opt-in distance LOD with far-collision gating, New Map procgen in both menus, save pinning, and the roadmap. **P0 + P0b + P0c + P1 + heightmap + save/menu implemented.** |
 | [`RENDERER_AND_ENGINE.md`](RENDERER_AND_ENGINE.md) | Renderer and engine assessment: what `mobile` actually is, profiler evidence, the `forward_plus` experiment, and why `Zylann/godot_voxel` / `rimworld3d` do not justify a switch. **Decision: stay on Godot 4.7 `mobile`.** |
 | [`JIGSAW_STRUCTURES.md`](JIGSAW_STRUCTURES.md) | Feasibility study for a deterministic jigsaw structure system and an in-game template/socket editor. **Investigation only; not implemented.** |
-| [`AUTHORED_EVACUATION_ROUTES.md`](AUTHORED_EVACUATION_ROUTES.md) | Investigation of missing route authoring and why the optimizer feels ineffective: end-to-end trace, limits, route-model options and a quick-win order. **Investigation only; not implemented.** |
+| [`AUTHORED_EVACUATION_ROUTES.md`](AUTHORED_EVACUATION_ROUTES.md) | Investigation into authored evacuation routes and optimizer usefulness. A hand-placed waypoint prototype was removed after it felt like a step backwards. **Parked; route model needs redesign.** |
+| [`CONTENT_GENERATORS.md`](CONTENT_GENERATORS.md) | Editor-side block, connected-block, foliage and voxel-item generators: inputs, outputs, why they are not runtime/Extras tools, and the Project → Tools menu. |
 | [`SIM_MEASUREMENTS.md`](SIM_MEASUREMENTS.md) | Every measurement the simulator records, the `SimRecorder` file format, disruption attribution, and what is not modelled. |
 | [`DEMOS.md`](DEMOS.md) | Per-save demo library, naming/descriptions/folders/duplication, the in-map Demo Player, and the synchronized Demo Comparer. |
-| [`OPTIMIZER.md`](OPTIMIZER.md) | The decision layer: gap analysis, boundary, data contracts, objective, measured cost, roadmap and risks. **Phases 1–3 implemented** (analysis layer, bridge, ACO, side panel); multi-objective terms, disruption re-solve and hazards pending. |
+| [`OPTIMIZER.md`](OPTIMIZER.md) | The decision layer: gap analysis, boundary, data contracts, objective, measured cost, roadmap and risks. **Phases 1-3 implemented** (analysis layer, bridge, ACO/PSO/flow, side panel, periodic/triggered re-solve, overlay); multi-objective terms, route selection and hazards pending. |
 | [`MAIN_MENU_AND_CREDITS.md`](MAIN_MENU_AND_CREDITS.md) | Boot menu, save browser, `MusicManager`, BGM pop-up, 3D credits and their data files. |
 
 ## Archive
@@ -59,6 +60,19 @@ and links to the code it describes.
   folders, duplicates and plays them (`DEMOS.md`).
 - Player: in-map playback with timeline, speed, frame stepping, agent
   inspection, route/exit/density/contact views and an event timeline.
+- Build: the left inventory tab is authored in `BuildTab.tscn` and has a
+  **Brushes** toggle plus Tool/Placement/Pattern rows. Brushes are one click and
+  disable stretch/drag; breaking removes the same brush shape, and the Clear
+  tool carves the same centred volume. Placeable brushes spawn one copy per
+  footprint column, and palette brushes/drags roll a random palette entry per
+  block rather than once per shape. With brushes off the same
+  Tool/Placement/Pattern settings apply to the normal drag plane. The ghost is
+  always drawn when there is a target and is white when the click would change
+  nothing. Stair backs follow the clicked face quadrant, so wall
+  left/right/top/bottom placements produce sideways stairs. CTM sources also
+  get slabs/stairs with the same dynamic per-face borders as full blocks, and
+  `_colorbase` autoblocks expand into palette colors with swatches in the
+  block-group chooser; clicking a shape assigns it to the active hotbar slot. See `CODEBASE_ANALYSIS.md` §4.6–4.7.
 - Comparer: **Compare** runs 2–6 recordings on one timeline with metric charts,
   overlaid agents and trajectory/exit/disruption/config differences. It reports
   differences; it does not optimize or rank layouts.
@@ -67,12 +81,14 @@ and links to the code it describes.
   `testing_testing_things_just_got_interesting`.
 - The “optimizer” half of the title is **implemented through phase 3**: spatial
   cohorts, per-exit cost fields, the objective, five baselines plus ACO, the
-  `OptimizerBridge` (snapshot → solve → validate → apply → late-spawn adoption),
-  Member assignments, manifest/event/summary recording and a right-side Optimizer
-  panel beside the inventory. Optimized runs assign exits globally; baseline runs
-  still use the local logit choice. Multi-objective terms, disruption-driven
-  re-solve and hazards are not implemented. Contracts, measured cost and the
-  phased roadmap are in [`OPTIMIZER.md`](OPTIMIZER.md).
+  `OptimizerBridge` (snapshot -> solve -> validate -> apply -> periodic/triggered
+  re-solve -> late-spawn coverage), Member assignments, a world-space assignment
+  overlay, manifest/event/summary recording and a right-side Optimizer panel
+  beside the inventory. Optimized runs assign exits globally; baseline runs still
+  use the local logit choice. Authored waypoint routes are a separate soft hint
+  (`AUTHORED_EVACUATION_ROUTES.md`); the optimizer does not choose routes yet.
+  Multi-objective terms and hazards are not implemented. Contracts, measured cost
+  and the phased roadmap are in [`OPTIMIZER.md`](OPTIMIZER.md).
 
 ## Conventions
 

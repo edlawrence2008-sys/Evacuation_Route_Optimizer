@@ -19,6 +19,7 @@ godot --headless --path . res://tests/recording_control_test.tscn
 godot --headless --path . --script res://tests/procgen_test.gd
 godot --headless --path . --script res://tests/chunk_store_test.gd
 godot --headless --path . --script res://tests/heightmap_generator_test.gd
+godot --headless --path . res://tests/optimizer_feedback_test.tscn
 godot --headless --path . --script res://tests/optimizer_benchmark.gd
 ```
 
@@ -36,16 +37,18 @@ godot --headless --path . --script res://tests/optimizer_benchmark.gd
 | `procgen_test.gd` | `VoxelSectionStore`: sparse and dense encodings, palette growth and >256 overflow, dense↔sparse hysteresis, negative/extreme Y, min/max, deterministic serialization, ZSTD round-trip, malformed blobs, memory ceilings; `FlatGenerator`'s 80-cell platform; `WorldRecipe` determinism and manifest | `checks=50 failures=0` |
 | `chunk_store_test.gd` | Real `NavGridMap` v2 section round-trip, v1 legacy load and upgrade-on-save, `WorldRecipe` → `load_chunk`, `ChunkFileStore` disk round-trip, section-index memory, dropped runtime GridMap mirror, per-chunk collision body and physics ray, compressed section fast import (dense and sparse), cells+items read, and the `/slabs` retrofit (placement and idempotence) | `checks=38 failures=0` |
 | `heightmap_generator_test.gd` | Heightmap terrain: hard one-block-per-cell slope guarantee, half-step bottom-slab placement on every lower side of a step, footprint bounds, determinism across instances and repeated calls, `get_params`/`apply_params` round-trip, 256×256 generation cost, store size, per-chunk collision cost on a real grid, render LOD levels and far-collision gating, cross-chunk navigation, and end-to-end `ChunkStreamer.world_recipe` generation | `checks=36 failures=0`; prints generation, store and collision timings |
+| `optimizer_feedback_test.tscn` | Real agents/exits/bridge: auto-solve, overlay with one label per exit, periodic re-solve with unchanged skipping, far late-spawn queueing/assignment, and the console `opt_overlay` toggle | `checks=11 failures=0` |
 | `optimizer_benchmark.gd` | Timing only: 600 agents in 40 cohorts against 4 exits | Prints setup/algorithm timings; no assertions |
 
-Total: **531 assertions** across twelve harnesses.
+Total: **542 assertions** across thirteen harnesses.
 
 Notes:
 
 - The nav and phase-1 tests are pure `SceneTree` scripts. **`--script` mode does
   not register autoload names at compile time**, so anything that references
   `GlobalData`, `SimRecorder` or another autoload must run as a scene
-  (`optimizer_phase2_test.tscn`, `optimizer_scale_test.tscn`).
+  (`optimizer_phase2_test.tscn`, `optimizer_scale_test.tscn`,
+  `optimizer_feedback_test.tscn`).
 - The nav test builds its own `NavGridMap` with a one-item `MeshLibrary` and
   defers one frame because `Node3D` transforms are only valid once the
   `SceneTree` root is live.

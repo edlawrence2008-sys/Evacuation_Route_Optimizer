@@ -495,12 +495,13 @@ func _build_item_info() -> void:
 
 			info["opaque"] = opaque
 
-		# Connected-texture blocks are always full cubes, but each face must be
-		# emitted separately so it can pick the atlas tile for its neighbour
-		# mask. Override the authored material with the runtime CTM atlas.
+		# Connected-texture items each face separately so they can pick the
+		# atlas tile for their neighbour mask. Full blocks stay in the cube
+		# branch; slabs/stairs keep `cube = false` and are emitted as item
+		# meshes with dynamic CTM UVs. Override the authored material with the
+		# runtime CTM atlas in both cases.
 		if _grid.is_ctm_item(id):
 			info["ctm"] = true
-			info["cube"] = true
 			info["opaque"] = false
 			info["material"] = _grid.get_ctm_material(id)
 
@@ -739,7 +740,10 @@ func _rebuild_chunk(chunk: Vector2i) -> void:
 			continue
 
 		if info["ctm"]:
-			_emit_ctm_block(surfaces, cell, item)
+			if info["cube"]:
+				_emit_ctm_block(surfaces, cell, item)
+			else:
+				_emit_ctm_item_mesh(surfaces, cell, item)
 			continue
 
 		if not info["cube"]:
@@ -1170,8 +1174,11 @@ func _emit_item_mesh(
 	if parts.is_empty():
 		return
 
+	# The runtime GridMap mirror is dropped, so `GridMap.get_cell_item_basis()`
+	# is always identity here. Read the orientation from the section store,
+	# which is the source of truth, and convert it back to a basis.
 	var placement := Transform3D(
-		_grid.get_cell_item_basis(cell),
+		_grid.get_orientation_basis(_grid.get_block_orientation(cell)),
 		_grid.map_to_local(cell)
 	)
 	var mesh_transform: Transform3D = (
@@ -1325,6 +1332,7 @@ func _emit_ctm_block(
 		_grid.get_ctm_material(item)
 	)
 	var size: Vector3 = _grid.cell_size
+	var base: String = _grid.get_ctm_base(item)
 
 	for direction_id: int in 6:
 		var neighbor: int = _snap_item(
@@ -1335,44 +1343,65 @@ func _emit_ctm_block(
 
 		var axis: int = direction_id >> 1
 		var face_sign: int = 1 if (direction_id & 1) == 1 else -1
-		var u_dir: Vector3i
-		var v_dir: Vector3i
-
-		# Direction that increases texture U / texture V for this face. V points
-		# "down" the sprite, matching Image row order.
-		match axis:
-			0:
-				u_dir = Vector3i(0, 0, -face_sign)
-				v_dir = Vector3i(0, -1, 0)
-			1:
-				u_dir = Vector3i(1, 0, 0)
-				v_dir = Vector3i(0, 0, face_sign)
-			_:
-				u_dir = Vector3i(face_sign, 0, 0)
-				v_dir = Vector3i(0, -1, 0)
-
-		# Mask bit order: N=1 E=2 S=4 W=8 NE=16 SE=32 SW=64 NW=128, where N is
-		# the top of the sprite. This matches ConnectedTextureBuilder.
-		var mask: int = 0
-		var checks: Array = [
-			[1, -v_dir],
-			[2, u_dir],
-			[4, v_dir],
-			[8, -u_dir],
-			[16, u_dir - v_dir],
-			[32, u_dir + v_dir],
-			[64, -u_dir + v_dir],
-			[128, -u_dir - v_dir],
-		]
-		for check: Array in checks:
-			if _snap_item(cell + check[1]) == item:
-				mask |= int(check[0])
+		var dirs: Array = _ctm_face_dirs(axis, face_sign)
+		var u_dir: Vector3i = dirs[0]
+		var v_dir: Vector3i = dirs[1]
+		var mask: int = _ctm_mask_for_base(cell, base, u_dir, v_dir)
 
 		_emit_ctm_quad(
 			surface, axis, face_sign, u_dir, v_dir, cell, size, mask, direction_id
 		)
 		_debug_faces += 1
 		_debug_quads += 1
+
+
+## Texture-space U/V world directions for a face. V points "down" the sprite,
+## matching Image row order; this also defines which world offsets the eight
+## mask bits sample.
+func _ctm_face_dirs(axis: int, face_sign: int) -> Array:
+	var u_dir: Vector3i
+	var v_dir: Vector3i
+	match axis:
+		0:
+			u_dir = Vector3i(0, 0, -face_sign)
+			v_dir = Vector3i(0, -1, 0)
+		1:
+			u_dir = Vector3i(1, 0, 0)
+			v_dir = Vector3i(0, 0, face_sign)
+		_:
+			u_dir = Vector3i(face_sign, 0, 0)
+			v_dir = Vector3i(0, -1, 0)
+	return [u_dir, v_dir]
+
+
+## Eight-neighbour CTM mask for a face, comparing the CTM source group rather
+## than the exact item id, so a full block and its slab/stair variants connect.
+## Bit order: N=1 E=2 S=4 W=8 NE=16 SE=32 SW=64 NW=128.
+func _ctm_mask_for_base(
+	cell: Vector3i,
+	base: String,
+	u_dir: Vector3i,
+	v_dir: Vector3i
+) -> int:
+	if base.is_empty():
+		return 0
+
+	var mask: int = 0
+	var checks: Array = [
+		[1, -v_dir],
+		[2, u_dir],
+		[4, v_dir],
+		[8, -u_dir],
+		[16, u_dir - v_dir],
+		[32, u_dir + v_dir],
+		[64, -u_dir + v_dir],
+		[128, -u_dir - v_dir],
+	]
+	for check: Array in checks:
+		var neighbor: int = _snap_item(cell + check[1])
+		if neighbor >= 0 and _grid.get_ctm_base(neighbor) == base:
+			mask |= int(check[0])
+	return mask
 
 
 func _emit_ctm_quad(
@@ -1409,9 +1438,13 @@ func _emit_ctm_quad(
 	var normal: Vector3 = Vector3.ZERO
 	normal[axis] = float(face_sign)
 
+	# Tile coordinates, not atlas UVs: both components must be whole tile
+	# indices. `mask / grid` is integer division; using a float here shifts
+	# every non-multiple-of-16 mask down by up to 15 source pixels and bleeds
+	# into the next atlas row.
 	var tile := Vector2(
 		float(mask % CTM_ATLAS_GRID),
-		float(mask) / float(CTM_ATLAS_GRID)
+		float(mask / CTM_ATLAS_GRID)
 	)
 	var first_index: int = surface.vertices.size()
 	var corners: Array[Vector3] = [p00, p10, p11, p01]
@@ -1464,6 +1497,149 @@ func _emit_ctm_quad(
 			first_index + 2,
 			first_index + 3,
 		]))
+
+
+## Dynamic CTM for non-cube items (slabs, stairs, panels). The item's triangles
+## keep their authored geometry, but each triangle samples the CTM atlas tile
+## selected by its face's eight in-plane neighbours. UVs use the same
+## cell-space projection as full blocks, so partial faces sample the matching
+## slice of the tile instead of stretching it.
+func _emit_ctm_item_mesh(
+	surfaces: Dictionary,
+	cell: Vector3i,
+	item: int
+) -> void:
+	var parts: Array = _get_item_parts(item)
+	if parts.is_empty():
+		return
+
+	var surface: MeshSurface = _get_surface(
+		surfaces,
+		_grid.get_ctm_material(item)
+	)
+	var size: Vector3 = _grid.cell_size
+	var base: String = _grid.get_ctm_base(item)
+	var cell_min: Vector3 = _cell_min_corner(cell)
+
+	var placement := Transform3D(
+		_grid.get_orientation_basis(_grid.get_block_orientation(cell)),
+		_grid.map_to_local(cell)
+	)
+	var mesh_transform: Transform3D = (
+		_grid.mesh_library.get_item_mesh_transform(item)
+	)
+	var transform: Transform3D = placement * mesh_transform
+
+	# The mask only depends on the face axis/sign, so one tile is reused for
+	# every triangle of that face direction (both stair steps, all four sides).
+	var tile_cache: Dictionary = {}
+
+	for part: Dictionary in parts:
+		var vertices: PackedVector3Array = part["vertices"]
+		var normals: PackedVector3Array = part["normals"]
+		var indices: PackedInt32Array = part["indices"]
+		var count: int = (
+			indices.size() if not indices.is_empty() else vertices.size()
+		)
+		if count < 3:
+			continue
+
+		for t in range(0, count - 2, 3):
+			var i0: int = indices[t] if not indices.is_empty() else t
+			var i1: int = indices[t + 1] if not indices.is_empty() else t + 1
+			var i2: int = indices[t + 2] if not indices.is_empty() else t + 2
+
+			if (
+				i0 >= vertices.size()
+				or i1 >= vertices.size()
+				or i2 >= vertices.size()
+			):
+				continue
+
+			var world: Array[Vector3] = [
+				transform * vertices[i0],
+				transform * vertices[i1],
+				transform * vertices[i2],
+			]
+			var face_normal := Vector3.ZERO
+			for index: int in [i0, i1, i2]:
+				if index < normals.size():
+					face_normal += (
+						transform.basis * normals[index]
+					).normalized()
+			if face_normal.length_squared() < 0.000001:
+				face_normal = (
+					(world[1] - world[0]).cross(world[2] - world[0])
+				)
+			face_normal = face_normal.normalized()
+
+			var abs_normal := face_normal.abs()
+			var axis: int = 0
+			if (
+				abs_normal.y >= abs_normal.x
+				and abs_normal.y >= abs_normal.z
+			):
+				axis = 1
+			elif abs_normal.z >= abs_normal.x:
+				axis = 2
+
+			var face_sign: int = 1 if face_normal[axis] >= 0.0 else -1
+			var dirs: Array = _ctm_face_dirs(axis, face_sign)
+			var u_vec := Vector3(dirs[0])
+			var v_vec := Vector3(dirs[1])
+			var dir_key := Vector2i(axis, face_sign)
+			var tile: Vector2 = tile_cache.get(
+				dir_key,
+				Vector2(-1.0, -1.0)
+			)
+
+			if tile.x < 0.0:
+				var mask: int = _ctm_mask_for_base(
+					cell,
+					base,
+					dirs[0],
+					dirs[1]
+				)
+				tile = Vector2(
+					float(mask % CTM_ATLAS_GRID),
+					float(mask / CTM_ATLAS_GRID)
+				)
+				tile_cache[dir_key] = tile
+
+			var u_extent: float = absf(u_vec.dot(size))
+			var v_extent: float = absf(v_vec.dot(size))
+			var u_base: float = minf(0.0, u_vec.dot(size))
+			var v_base: float = minf(0.0, v_vec.dot(size))
+			var normal := Vector3.ZERO
+			normal[axis] = float(face_sign)
+
+			var first_index: int = surface.vertices.size()
+			for corner: Vector3 in world:
+				var local: Vector3 = corner - cell_min
+				var uv := Vector2(
+					(local.dot(u_vec) - u_base) / u_extent,
+					(local.dot(v_vec) - v_base) / v_extent
+				)
+				surface.vertices.append(corner)
+				surface.normals.append(normal)
+				surface.uvs.append(
+					(tile + uv) / float(CTM_ATLAS_GRID)
+				)
+
+				if debug_colors:
+					surface.colors.append(Color.WHITE)
+				elif baked_ao_enabled:
+					surface.colors.append(
+						_item_vertex_ao(cell, corner, normal)
+					)
+				else:
+					surface.colors.append(Color.WHITE)
+
+			surface.indices.append_array(PackedInt32Array([
+				first_index,
+				first_index + 1,
+				first_index + 2,
+			]))
 
 
 # ---------------------------------------------------------------------------

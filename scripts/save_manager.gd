@@ -12,6 +12,16 @@ const ACTIVE_PATH := "user://active_save.cfg"
 const MANIFEST := "save.json"
 const THUMBNAIL := "thumb.png"
 const VERSION := 1
+const SORT_LAST_PLAYED := "last_played"
+const SORT_CREATED := "created"
+const SORT_NAME := "name"
+const SORT_MODIFIED := "modified"
+const SORT_MODES: Array[String] = [
+	SORT_LAST_PLAYED,
+	SORT_CREATED,
+	SORT_NAME,
+	SORT_MODIFIED,
+]
 const MAP_RENDERER := preload("res://scripts/map_renderer.gd")
 const WORLD_RECIPE_SCRIPT := preload("res://scripts/world/WorldRecipe.gd")
 const WORLD_GENERATOR_REGISTRY := preload("res://scripts/world/WorldGeneratorRegistry.gd")
@@ -30,6 +40,9 @@ const PLACEABLE_SKIP := [
 signal saves_changed
 
 var active_slug: String = ""
+## Order used by list_saves(): last played (default), date created,
+## alphabetically, or date modified. Persisted in active_save.cfg.
+var sort_mode: String = SORT_LAST_PLAYED
 
 
 func _ready() -> void:
@@ -54,10 +67,13 @@ func list_saves() -> Array:
 		var manifest := _read_manifest(slug)
 		if manifest.is_empty():
 			continue
+		var modified := float(manifest.get("modified", 0.0))
 		result.append({
 			"slug": slug,
 			"name": String(manifest.get("name", slug)),
-			"modified": float(manifest.get("modified", 0.0)),
+			"created": float(manifest.get("created", modified)),
+			"modified": modified,
+			"last_played": float(manifest.get("last_played", modified)),
 			"thumbnail": _thumbnail_path(slug),
 			"world_type": String(
 				manifest.get("world", {}).get("type", "existing")
@@ -70,10 +86,56 @@ func list_saves() -> Array:
 				manifest.get("world", {}).get("size", "")
 			),
 		})
-	result.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return String(a["name"]).to_lower() < String(b["name"]).to_lower()
-	)
+	result.sort_custom(_save_sort_before)
 	return result
+
+
+## True when `a` should appear before `b` under the current sort mode.
+func _save_sort_before(a: Dictionary, b: Dictionary) -> bool:
+	if sort_mode == SORT_NAME:
+		var a_name := String(a.get("name", "")).to_lower()
+		var b_name := String(b.get("name", "")).to_lower()
+		if a_name == b_name:
+			return float(a.get("modified", 0.0)) > float(b.get("modified", 0.0))
+		return a_name < b_name
+
+	var field := SORT_LAST_PLAYED
+	if sort_mode == SORT_CREATED:
+		field = "created"
+	elif sort_mode == SORT_MODIFIED:
+		field = "modified"
+
+	var a_time := float(a.get(field, 0.0))
+	var b_time := float(b.get(field, 0.0))
+	if absf(a_time - b_time) < 0.0001:
+		return (
+			String(a.get("name", "")).to_lower()
+			< String(b.get("name", "")).to_lower()
+		)
+	return a_time > b_time
+
+
+## Cycles "last played" -> "date created" -> "alphabetically" -> "date
+## modified" -> back. The choice is persisted with the active-save pointer.
+func cycle_sort_mode() -> String:
+	var index := SORT_MODES.find(sort_mode)
+	sort_mode = SORT_MODES[(index + 1) % SORT_MODES.size()]
+	_save_active()
+	saves_changed.emit()
+	return sort_mode
+
+
+## Human-readable name for the current sort mode, used by the Saves button.
+func sort_mode_label() -> String:
+	match sort_mode:
+		SORT_CREATED:
+			return "Date Created"
+		SORT_NAME:
+			return "Alphabetically"
+		SORT_MODIFIED:
+			return "Date Modified"
+		_:
+			return "Last Played"
 
 
 func get_thumbnail(slug: String) -> Texture2D:
@@ -154,6 +216,10 @@ func load_save(slug: String) -> void:
 	if not DirAccess.dir_exists_absolute(saved_chunks):
 		return
 
+	# Loading is the "play" event that the default sort uses.
+	manifest["last_played"] = Time.get_unix_time_from_system()
+	_write_manifest(folder, manifest)
+
 	var streamer := get_tree().get_first_node_in_group("chunk_streamer")
 	if streamer != null and streamer.has_method("prepare_for_scene_reload"):
 		streamer.prepare_for_scene_reload()
@@ -214,6 +280,7 @@ func duplicate_save(slug: String, new_name: String) -> String:
 	manifest["name"] = display
 	manifest["modified"] = Time.get_unix_time_from_system()
 	manifest["created"] = Time.get_unix_time_from_system()
+	manifest["last_played"] = Time.get_unix_time_from_system()
 	_write_manifest(target, manifest)
 	saves_changed.emit()
 	return new_slug
@@ -546,6 +613,7 @@ func _build_manifest(display: String, world: Dictionary = {}) -> Dictionary:
 		"name": display,
 		"created": now,
 		"modified": now,
+		"last_played": now,
 		"map": map_path,
 		"thumbnail": THUMBNAIL,
 		"player": player_data,
@@ -1026,6 +1094,7 @@ func _remove_dir(path: String) -> void:
 func _save_active() -> void:
 	var config := ConfigFile.new()
 	config.set_value("save", "active_slug", active_slug)
+	config.set_value("save", "sort_mode", sort_mode)
 	config.save(ACTIVE_PATH)
 
 
@@ -1034,3 +1103,9 @@ func _load_active() -> void:
 	if config.load(ACTIVE_PATH) != OK:
 		return
 	active_slug = String(config.get_value("save", "active_slug", ""))
+	var loaded_sort := String(
+		config.get_value("save", "sort_mode", SORT_LAST_PLAYED)
+	)
+	sort_mode = (
+		loaded_sort if SORT_MODES.has(loaded_sort) else SORT_LAST_PLAYED
+	)

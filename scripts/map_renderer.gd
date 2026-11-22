@@ -339,7 +339,7 @@ static func format_statistics(grid: NavGridMap) -> String:
 		"Columns %d   Height %d..%d" % [columns.size(), heights.x, heights.y],
 		"Exits %d   Spawners %d" % [exits.size(), spawners.size()],
 		"Heat %d cells   Peak %.2f" % [heat_map.size(), max_heat],
-		"Ideal routes %d   Avg %.0f m" % [route_count, route_total / maxf(float(route_count), 1.0)],
+		"Ideal routes (nearest exit) %d   Avg %.0f m" % [route_count, route_total / maxf(float(route_count), 1.0)],
 	]
 	lines.append_array(map_lines)
 	return "\n".join(PackedStringArray(lines))

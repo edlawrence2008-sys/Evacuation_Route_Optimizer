@@ -1,0 +1,15 @@
+EmacEArt Stylized Grass - grass shader with wind
+Copyright (c) 2026 EmacEArt (Maciej)
+
+EMACEART ASSET LICENSE
+
+You may use these assets - shader, mesh, textures, materials, scenes and
+documentation - in your own projects, personal and commercial alike.
+No credit is required, though it is always welcome.
+
+You may not sell or redistribute the assets themselves, whether on their own,
+modified, or as part of another pack, asset collection or template.
+
+The assets are provided as is, without warranty of any kind.
+
+Contact: EmacEArt - https://emaceart.itch.io

@@ -52,7 +52,7 @@ mouse_cursor/custom_image="uid://q4uijdgfug2i"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/crt/plugin.cfg", "res://addons/day_and_night_cycle/plugin.cfg")
+enabled=PackedStringArray("res://addons/crt/plugin.cfg", "res://addons/day_and_night_cycle/plugin.cfg", "res://addons/content_generators/plugin.cfg")
 
 [global_group]
 

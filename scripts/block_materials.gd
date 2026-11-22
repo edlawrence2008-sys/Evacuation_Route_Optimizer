@@ -104,9 +104,26 @@ static func material_name(item_name: String) -> String:
 		clean = clean.substr(5)
 	var lower := clean.to_lower()
 
+	# CTM items carry Connect_ before the shape prefix:
+	# Auto_Connect_Slab_Top_foo -> slab_top_foo -> foo.
+	var is_ctm := lower.begins_with("connect_")
+	if is_ctm:
+		lower = lower.substr(8)
+
 	for prefix in SHAPE_PREFIXES:
-		if lower.begins_with(prefix):
-			return lower.substr(prefix.length())
+		if lower.begins_with(prefix) and prefix != "connect_":
+			lower = lower.substr(prefix.length())
+			break
+
+	# Autoblock color variants keep `_colorbase_cNN` in the item name but
+	# belong to the same inventory group as the uncolored base. For CTM
+	# sources the `_colorbase` suffix is part of the source name: merging
+	# hardwood_cornered and hardwood_cornered_colorbase would hide one of
+	# them, so CTM groups keep the full source name.
+	if not is_ctm:
+		var colorbase := lower.find("_colorbase")
+		if colorbase != -1:
+			lower = lower.substr(0, colorbase)
 
 	return lower
 
@@ -166,6 +183,8 @@ static func variant_of(item_name: String) -> String:
 	var lower := item_name.to_lower()
 	if lower.begins_with("auto_"):
 		lower = lower.substr(5)
+	if lower.begins_with("connect_"):
+		lower = lower.substr(8)
 
 	if lower.begins_with("slab_"):
 		return "slab"

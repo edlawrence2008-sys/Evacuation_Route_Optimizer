@@ -30,10 +30,24 @@ how the evacuation went.
 2. The game boots into the 3D main menu.
    - **Saves** → pick a slot, then **Load Selected**, or **New Map...** for a
      Blank Platform or Heightmap Terrain. **World Type** opens the shared World
-     Settings dialog (type, size, seed).
+     Settings dialog (type, size, seed). **Sort** cycles Last Played (default),
+     Date Created, Alphabetically and Date Modified.
    - **Extras** → Credits · **Settings** → Graphics / Gameplay / Audio.
 3. In game, open the inventory (**R**) → **Placeables** and place a
-   `Spawner` and an `Evac Point`.
+   `Spawner` and an `Evac Point`. The **Build** tab on the left has a
+   **Brushes** toggle (Cuboid/Sphere/Cylinder/Surface/Cluster) plus
+   Tool/Placement/Pattern rows. Brushes are one click and disable stretch/drag;
+   breaking with a brush removes the same brush shape instead of starting a
+   drag, placeable brushes spawn one copy per footprint cell, and palette
+   brushes/drags roll a random palette block for every cell. With brushes off,
+   the same Tool/Placement/Pattern settings apply to the normal drag plane. The
+   ghost turns white when
+   the click would change nothing. The tab's layout is authored in
+   `scenes/inventory/BuildTab.tscn`. Connected blocks also generate slabs and
+   stairs with the same dynamic CTM borders, and `_colorbase` autoblocks expand
+   into the palette colors from `textures/color_palettes/`; the block-group
+   chooser shows color swatches, and clicking a shape assigns it to the active
+   hotbar slot.
 4. Open **Simulation** and press **Start**. **F3** shows statistics, **F4**
    opens the evacuation results.
 5. **Esc** opens the pause menu (Settings, Water Tuning, Statistics, Saves,
@@ -104,12 +118,14 @@ godot --headless --path . res://tests/optimizer_scale_test.tscn
 godot --headless --path . --script res://tests/demo_ui_test.gd
 godot --headless --path . res://tests/demo_restore_test.tscn
 godot --headless --path . res://tests/recording_control_test.tscn
+godot --headless --path . res://tests/optimizer_feedback_test.tscn
 ```
 
-Expected: `51`, `18`, `27`, `151`, `72`, `7`, `28`, `22` and `31` checks with
-`failures=0` - 407 optimizer/demo assertions. The phase-2 test records and
-deletes its own demo; the restore and recording tests use temporary demo folders
-and clean them up. Details in [`tests/README.md`](tests/README.md).
+Expected: `51`, `18`, `27`, `151`, `72`, `7`, `28`, `22`, `31` and `11`
+checks with `failures=0` - 542 optimizer/demo assertions across thirteen
+harnesses. The phase-2 test records and deletes its own demo; the restore and
+recording tests use temporary demo folders and clean them up. Details in
+[`tests/README.md`](tests/README.md).
 
 Procgen foundation (124 assertions): `procgen_test.gd` 50,
 `chunk_store_test.gd` 38, `heightmap_generator_test.gd` 36 - run the same way
@@ -128,7 +144,8 @@ with `--script res://tests/...`.
 - [`docs/MAIN_MENU_AND_CREDITS.md`](docs/MAIN_MENU_AND_CREDITS.md) — menu, saves, music, credits.
 - [`docs/RENDERER_AND_ENGINE.md`](docs/RENDERER_AND_ENGINE.md) — renderer/engine decision: stay on `mobile`, profiler evidence, godot_voxel and rimworld3d review.
 - [`docs/JIGSAW_STRUCTURES.md`](docs/JIGSAW_STRUCTURES.md) — feasibility study for deterministic jigsaw structures and an in-game editor (not implemented).
-- [`docs/AUTHORED_EVACUATION_ROUTES.md`](docs/AUTHORED_EVACUATION_ROUTES.md) — why there is no authored route primitive, why the exit-only optimizer feels weak, and the route/feedback options (investigation only).
+- [`docs/AUTHORED_EVACUATION_ROUTES.md`](docs/AUTHORED_EVACUATION_ROUTES.md) - investigation into authored routes and optimizer usefulness (route prototype removed; redesign pending).
+- [`docs/CONTENT_GENERATORS.md`](docs/CONTENT_GENERATORS.md) - editor-side block/connected-block/foliage/voxel-icon generators and the Project → Tools menu.
 - [`docs/archive/`](docs/archive/) — dated changelog, verification log, earlier analyses.
 
 ## Repository layout
@@ -147,7 +164,8 @@ with `--script res://tests/...`.
 
 - No authored level or shipped scenario; the game scene is a starter platform.
 - The optimizer is implemented through phase 3b (assignment, baselines, ACO,
-  PSO, two min-cost-flow models, recording, side panel, late-spawn adoption).
+  PSO, two min-cost-flow models, recording, side panel, periodic re-solve,
+  late-spawn coverage, assignment overlay and authored waypoint routes).
   Multi-objective terms, automatic disruption re-solve and hazards are not
   implemented; a full 600-agent recorded evacuation is still a manual run.
   Phased plan in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md).

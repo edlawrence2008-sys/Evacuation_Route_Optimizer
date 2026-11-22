@@ -140,8 +140,13 @@ enum DirectionalKind {
 }
 
 var _directional_kinds: Dictionary = {} # item id -> DirectionalKind
-## Connected-texture base item id -> runtime atlas material.
+## Connected-texture item id -> runtime atlas material. Shared by the full
+## block and its slab/stair variants so they sample one atlas.
 var _ctm_materials: Dictionary = {}
+## Connected-texture item id -> source base name (e.g. "concrete_polished").
+## Shape variants map back to the same base, which is what the mesher compares
+## when building per-face neighbour masks.
+var _ctm_bases: Dictionary = {}
 
 const WALL_CHECK_DIRS: Array[Vector3i] = [
 	Vector3i.RIGHT,
@@ -2236,28 +2241,61 @@ func get_directional_kind(item: int) -> int:
 	return int(_directional_kinds.get(item, -1))
 
 
-## Scans the MeshLibrary for connected-texture base items and builds their
-## runtime atlas material from the matching source texture.
+## Scans the MeshLibrary for connected-texture items and builds their runtime
+## atlas material from the matching source texture. Full blocks and their
+## slab/stair variants share one material per source: the mesher picks the
+## per-face atlas tile for all of them.
 func _build_ctm_items() -> void:
 	_ctm_materials.clear()
+	_ctm_bases.clear()
 	if mesh_library == null:
 		return
 
+	var base_materials: Dictionary = {}
 	for id: int in mesh_library.get_item_list():
 		var item_name := String(mesh_library.get_item_name(id))
-		if not item_name.begins_with("Auto_Connect_"):
+		var base_name := ctm_base_name(item_name)
+		if base_name.is_empty():
 			continue
-		var base_name := item_name.trim_prefix("Auto_Connect_")
-		var source_path := (
-			"res://textures/auto_connecting_blocks/"
-			+ base_name
-			+ ".png"
-		)
-		if not FileAccess.file_exists(source_path):
-			continue
-		var material := CTM_BUILDER.build_material(source_path)
-		if material != null:
-			_ctm_materials[id] = material
+		var material: Material = base_materials.get(base_name)
+		if material == null:
+			var source_path := (
+				"res://textures/auto_connecting_blocks/"
+				+ base_name
+				+ ".png"
+			)
+			if not FileAccess.file_exists(source_path):
+				continue
+			material = CTM_BUILDER.build_material(source_path)
+			if material == null:
+				continue
+			base_materials[base_name] = material
+		_ctm_materials[id] = material
+		_ctm_bases[id] = base_name
+
+
+## Maps an `Auto_Connect_*` item name to its CTM source base name, stripping
+## the shape prefix for slabs, stairs and panels. Returns "" for non-CTM items.
+func ctm_base_name(item_name: String) -> String:
+	if not item_name.begins_with("Auto_Connect_"):
+		return ""
+	var base_name := item_name.trim_prefix("Auto_Connect_")
+	for prefix: String in [
+		"Slab_Top_",
+		"Slab_Bottom_",
+		"Slab_Side_",
+		"Slab_",
+		"Stairs_UpsideDown_",
+		"Stairs_",
+		"Stair_",
+		"Panel_Top_",
+		"Panel_Bottom_",
+		"Panel_Side_",
+		"Panel_",
+	]:
+		if base_name.begins_with(prefix):
+			return base_name.substr(prefix.length())
+	return base_name
 
 
 func is_ctm_item(item: int) -> bool:
@@ -2266,6 +2304,12 @@ func is_ctm_item(item: int) -> bool:
 
 func get_ctm_material(item: int) -> Material:
 	return _ctm_materials.get(item) as Material
+
+
+## CTM source group for an item. Adjacent shapes with the same base connect in
+## the mesher's per-face border mask.
+func get_ctm_base(item: int) -> String:
+	return String(_ctm_bases.get(item, ""))
 
 
 func get_orientation_basis(orientation: int) -> Basis:

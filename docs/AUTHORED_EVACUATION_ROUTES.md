@@ -1,9 +1,10 @@
 # Authored evacuation routes and optimizer usefulness - investigation
 
-> **Status:** 2026-11-21. **Investigation only.** No route-authoring node, route
-> graph, or optimizer route assignment was added. This page records what exists,
-> why the two complaints are accurate, and the smallest changes that would make
-> them true.
+> **Status:** 2026-11-22. **Parked after a prototype.** A hand-placed route-point
+> prototype (click-to-connect markers, direction/bidirectional arrows,
+> nearest-point entry, route-via A* legs) was built and then removed because it
+> felt like a step backwards. The investigation below is retained; the route
+> model still needs a redesign before implementation.
 > **Questions:** (1) Why is there no way to author an evacuation route?
 > (2) Why does the optimizer's "evacuation route" feel useless?
 > **Decision requested:** choose a route model (section 7) and whether to start

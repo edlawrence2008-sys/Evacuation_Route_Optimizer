@@ -99,6 +99,9 @@ func _process_command(cmd_line: String) -> void:
 				out.print_to_console("  slabs                    - Adds half-step bottom slabs to the loaded world's risers.")
 				out.print_to_console("  path_mode [astar|flow]  - Switches between A* and baked flow fields.")
 				out.print_to_console("  show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
+				out.print_to_console("  opt_overlay [on|off]    - Toggles the optimizer assignment overlay.")
+				out.print_to_console("  opt_resolve             - Requests one optimizer solve now.")
+				out.print_to_console("  opt_interval <s>        - Sets the periodic re-solve interval.")
 				out.print_to_console("  clear                   - Clears the console window.")
 
 				out.print_to_console("\n--- GlobalData Script Methods ---")
@@ -220,6 +223,59 @@ func _process_command(cmd_line: String) -> void:
 				if out:
 					out.print_to_console("Path debug drawing: %s" % ("ON" if enabled else "OFF"))
 
+		"opt_overlay", "optimizer_overlay":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			else:
+				var enabled: bool = _resolve_toggle(
+					args, bool(bridge.get("overlay_enabled"))
+				)
+				bridge.call("set_overlay_enabled", enabled)
+
+				if out:
+					out.print_to_console(
+						"Optimizer overlay: %s" % ("ON" if enabled else "OFF")
+					)
+
+		"opt_resolve", "optimizer_solve":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			else:
+				bridge.call("request_solve")
+
+				if out:
+					out.print_to_console("Optimizer solve requested.")
+
+		"opt_interval", "optimizer_interval":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			elif args.is_empty():
+				if out:
+					out.print_to_console(
+						"Re-solve interval: %.1f s."
+						% float(bridge.get("re_solve_interval"))
+					)
+			elif str(args[0]).is_valid_float():
+				bridge.call("set_re_solve_interval", float(args[0]))
+
+				if out:
+					out.print_to_console(
+						"Re-solve interval: %.1f s."
+						% float(bridge.get("re_solve_interval"))
+					)
+			else:
+				if out:
+					out.print_to_console("Usage: opt_interval <seconds>")
+
 		"clear":
 			if out and out.has_method("clear_console"):
 				out.clear_console()
@@ -260,3 +316,7 @@ func _resolve_toggle(args: Array, current_value: bool) -> bool:
 			return false
 		_:
 			return not current_value
+
+
+func _optimizer_bridge() -> Node:
+	return get_tree().get_first_node_in_group("optimizer_bridge")

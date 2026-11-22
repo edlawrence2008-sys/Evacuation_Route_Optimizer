@@ -1,7 +1,7 @@
-[gd_scene format=3 uid="uid://vn7owm57j4gs"]
+[gd_scene format=3]
 
-[ext_resource type="Texture2D" uid="uid://cb8qvy720c4rg" path="res://textures/placeables/foilage/foilage_thin_tree_3.png" id="1_otnp6"]
-[ext_resource type="Script" uid="uid://b0idmtnwib52i" path="res://scripts/foliage_sway.gd" id="2_sway"]
+[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_thin_tree_3.png" id="1_otnp6"]
+[ext_resource type="Script" path="res://scripts/foliage_sway.gd" id="2_sway"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_76jsm"]
 size = Vector3(2, 27.1875, 2)
@@ -18,8 +18,8 @@ monitoring = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.59375, 0)
 shape = SubResource("BoxShape3D_76jsm")
 
-[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=2124328800]
-transform = Transform3D(0.86360127, 0, 0.50417536, 0, 1, 0, -0.50417536, 0, 0.86360127, 0, 13.59375, 0)
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1781795256]
+transform = Transform3D(-0.07858443, 0, 0.9969075, 0, 1, 0, -0.9969075, 0, -0.07858443, 0, 13.59375, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true
@@ -27,8 +27,8 @@ alpha_cut = 1
 texture_filter = 0
 texture = ExtResource("1_otnp6")
 
-[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=1686937166]
-transform = Transform3D(0.50417525, 0, -0.8636014, 0, 1, 0, 0.8636014, 0, 0.50417525, 0, 13.59375, 0)
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=739883179]
+transform = Transform3D(0.9969075, 0, 0.07858437, 0, 1, 0, -0.07858437, 0, 0.9969075, 0, 13.59375, 0)
 cast_shadow = 2
 pixel_size = 0.0625
 shaded = true
