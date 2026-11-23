@@ -1,0 +1,29 @@
+[gd_scene format=3 uid="uid://duk4o8naa00np"]
+
+[ext_resource type="Script" uid="uid://btmwfww0tl4hj" path="res://scenes/spawner.gd" id="1_2vbf6"]
+[ext_resource type="PackedScene" uid="uid://b37ntkp8ap2rl" path="res://scenes/npcs/Member.tscn" id="2_ik2nu"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_g4v7s"]
+size = Vector3(1.2, 3, 1.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_g4v7s"]
+size = Vector3(1, 2, 1)
+
+[node name="Spawner" type="Node3D" unique_id=650907625 groups=["placeables"]]
+script = ExtResource("1_2vbf6")
+npc_scene = ExtResource("2_ik2nu")
+spawn_quota = 5
+spawn_interval = 0.1
+
+[node name="Area3D" type="Area3D" parent="." unique_id=364325050]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, 0)
+collision_layer = 7
+collision_mask = 3
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Area3D" unique_id=877930552]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.3999999, 0)
+shape = SubResource("BoxShape3D_g4v7s")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=1476163176]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("BoxMesh_g4v7s")

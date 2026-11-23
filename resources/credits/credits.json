@@ -1,0 +1,39 @@
+{
+	"title": "EVACUATION ROUTE OPTIMIZER",
+	"subtitle": "SHS Final Capstone Project",
+	"sections": [
+		{
+			"title": "LEAD DEVELOPER & RESEARCHER",
+			"entries": [
+				{
+					"name": "Ed Lawrence Zenarosa",
+					"roles": ["Lead Developer", "Researcher"]
+				}
+			]
+		},
+		{
+			"title": "ADDITIONAL CREDITS",
+			"entries": []
+		}
+	],
+	"music": [
+		{
+			"title": "1932 Lullaby Of The Leaves (with vocal group)",
+			"artist": "George Olsen",
+			"source": "res://sounds/songs/menu_themes/1932 Lullaby Of The Leaves (with vocal group)_by George Olsen.mp3",
+			"license": "Menu theme"
+		},
+		{
+			"title": "Goodnight, My Beautiful",
+			"artist": "Russ Morgan and His Orchestra",
+			"source": "res://sounds/songs/menu_themes/Goodnight, My Beautiful_by Russ Morgan and His Orchestra.mp3",
+			"license": "Menu theme"
+		},
+		{
+			"title": "This Is Romance",
+			"artist": "Hal Kemp and His Orchestra",
+			"source": "res://sounds/songs/menu_themes/This Is Romance_by Hal Kemp and His Orchestra.mp3",
+			"license": "Menu theme"
+		}
+	]
+}

@@ -1,0 +1,52 @@
+[gd_scene format=3 uid="uid://bdv73usdpdgrg"]
+
+[ext_resource type="Script" uid="uid://c2a3n8t6ahn8q" path="res://scenes/inventory/AgentPanel.gd" id="1_agent"]
+
+[node name="AgentPanel" type="VBoxContainer" unique_id=381793041]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 437.0
+offset_bottom = 274.0
+theme_override_constants/separation = 4
+script = ExtResource("1_agent")
+
+[node name="Title" type="Label" parent="." unique_id=861905269]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.35, 1)
+text = "Agents"
+
+[node name="Info" type="Label" parent="." unique_id=72078170]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Edit Member exports. Apply to live and future NPCs."
+autowrap_mode = 3
+
+[node name="PropertiesScroll" type="ScrollContainer" parent="." unique_id=1741923291]
+custom_minimum_size = Vector2(0, 150)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Properties" type="VBoxContainer" parent="PropertiesScroll" unique_id=1960605837]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Actions" type="HBoxContainer" parent="." unique_id=282190290]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Apply" type="Button" parent="Actions" unique_id=403982126]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Apply"
+
+[node name="Reset" type="Button" parent="Actions" unique_id=1054006349]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Reset"
+
+[node name="Status" type="Label" parent="." unique_id=1370407944]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Edit values, then Apply to live and future agents."
+autowrap_mode = 3

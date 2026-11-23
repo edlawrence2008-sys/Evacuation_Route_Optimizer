@@ -1,0 +1,61 @@
+[gd_resource type="ShaderMaterial" load_steps=4 format=3]
+
+[ext_resource type="Shader" path="res://addons/EmacEArtStylizedGrass/Shaders/EA_GrassWind.gdshader" id="1_shader"]
+[ext_resource type="Texture2D" path="res://addons/EmacEArtStylizedGrass/Textures/GRASS_DIFF.tga" id="2_diff"]
+[ext_resource type="Texture2D" path="res://addons/EmacEArtStylizedGrass/Textures/GRASS_NMAP.tga" id="3_nmap"]
+
+[resource]
+resource_name = "EA_Grass_Winter"
+shader = ExtResource("1_shader")
+shader_parameter/albedo_texture = ExtResource("2_diff")
+shader_parameter/base_color = Color(1, 1, 1, 1)
+shader_parameter/alpha_cutoff = 0.254
+shader_parameter/normal_texture = ExtResource("3_nmap")
+shader_parameter/normal_strength = 0.74
+shader_parameter/smoothness = 0.0
+shader_parameter/metallic = 0.0
+shader_parameter/wind_strength = 0.14
+shader_parameter/wind_speed = 1.0
+shader_parameter/wind_frequency = 0.8
+shader_parameter/wind_direction_x = 0.15
+shader_parameter/wind_direction_z = 1.0
+shader_parameter/anchor_height = 1.0
+shader_parameter/gust_use_texture = false
+shader_parameter/gust_strength = 0.37
+shader_parameter/gust_scale = 0.125
+shader_parameter/gust_speed = 0.4
+shader_parameter/tint_color_small = Color(0.822, 0.8003, 0.5548, 1)
+shader_parameter/stripes_mode_small = false
+shader_parameter/tint_scale_small_blob = 0.642
+shader_parameter/tint_intensity_small_blob = 0.739
+shader_parameter/tint_width_small_blob = 0.929
+shader_parameter/tint_speed_small_blob = 0.9
+shader_parameter/tint_scale_small_stripes = 0.22
+shader_parameter/tint_intensity_small_stripes = 0.595
+shader_parameter/tint_width_small_stripes = 0.941
+shader_parameter/tint_speed_small_stripes = 1.378
+shader_parameter/tint_color_large = Color(0.549, 0.713, 0.434, 1)
+shader_parameter/stripes_mode_large = true
+shader_parameter/tint_scale_large_blob = 0.175
+shader_parameter/tint_intensity_large_blob = 0.655
+shader_parameter/tint_width_large_blob = 0.553
+shader_parameter/tint_speed_large_blob = 1.046
+shader_parameter/tint_scale_large_stripes = 0.0775
+shader_parameter/tint_intensity_large_stripes = 1.0
+shader_parameter/tint_width_large_stripes = 0.62
+shader_parameter/tint_speed_large_stripes = 0.73
+shader_parameter/ambient_lift = 0.996
+shader_parameter/ambient_tint = Color(0.8639, 0.8701, 0.5802, 1)
+shader_parameter/normal_up_bias = 0.75
+shader_parameter/winter_amount = 1.0
+shader_parameter/winter_color = Color(0.66, 0.62, 0.52, 1)
+shader_parameter/winter_tint_keep = 0.3
+shader_parameter/winter_desaturate = 0.85
+shader_parameter/winter_ambient_tint = Color(0.72, 0.8, 0.95, 1)
+shader_parameter/snow_color = Color(0.94, 0.96, 1, 1)
+shader_parameter/snow_coverage = 0.55
+shader_parameter/snow_hardness = 0.45
+shader_parameter/snow_patchiness = 0.4
+shader_parameter/snow_patch_scale = 0.12
+shader_parameter/snow_smoothness = 0.45
+shader_parameter/snow_texture_keep = 0.4

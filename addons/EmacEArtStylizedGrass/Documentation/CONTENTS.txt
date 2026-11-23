@@ -1,0 +1,54 @@
+================================================================================
+  EmacEArt Stylized Grass - what is in this pack
+================================================================================
+
+OPEN IT
+  project.godot            open this with Godot 4.7 or newer
+  icon.svg                 the pack icon shown in the Godot project manager
+  README.txt               how to run the demo, controls, every folder explained
+  LICENSE.txt              the licence
+
+SHADER
+  Shaders/EA_GrassWind.gdshader
+      One shader for the whole pack. Wind, gusts, the cut-out blade silhouette,
+      two layers of colour variation and the winter dial live in it.
+
+MATERIALS - four ready fields of grass
+  Materials/EA_Grass_Green.tres     green summer meadow
+  Materials/EA_Grass_Dry.tres       dry, straw coloured grass
+  Materials/EA_Grass_Dead.tres      dead, brown grass
+  Materials/EA_Grass_Winter.tres    winter grass with snow on the blades
+
+MESH
+  Meshes/EA_Grass_Clump.mesh
+      One clump of blades. Every field in the demo is this clump repeated.
+
+TEXTURES
+  Textures/GRASS_DIFF.tga           colour and the blade shape
+  Textures/GRASS_NMAP.tga           surface detail
+
+SCENES
+  Scenes/GrassDemo.tscn             the demo: three fields side by side, the
+                                    winter field behind them and a panel of
+                                    sliders. This is what opens first.
+  Scenes/GrassSpectrum.tscn         five wind settings standing next to each
+                                    other, plus a field going from calm to gale
+  Scenes/UI_ParameterPanel.tscn     the slider panel used by the demo
+
+SCRIPTS - demo only, none of them is needed to use the grass
+  Scripts/GrassField.gd             fills a rectangle with clumps
+  Scripts/DemoCamera.gd             the camera you steer with the mouse
+  Scripts/WindSpectrum.gd           builds the five labelled groups
+  Scripts/SpectrumCamera.gd         the fixed camera move of that scene
+  Scripts/UI_ParameterPanel.gd      connects the sliders to the grass
+
+DOCUMENTATION
+  Documentation/EmacEArt_Stylized_Grass_QuickStart_EN.pdf
+  Documentation/EmacEArt_Stylized_Grass_Documentation_EN.pdf
+  Documentation/README.txt
+  Documentation/LICENSE.txt
+  Documentation/CONTENTS.txt        this file
+
+DISCORD
+  https://discord.com/invite/ctXaf5Ftqw
+================================================================================

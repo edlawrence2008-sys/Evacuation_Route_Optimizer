@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://n6feda7iryu0"]
+
+[ext_resource type="Script" uid="uid://dq8vd1i7yyuk7" path="res://scenes/inventory/inventory_check_box.gd" id="1_0788s"]
+
+[node name="CheckBox" type="CheckBox" unique_id=1079874178]
+offset_right = 24.0
+offset_bottom = 24.0
+script = ExtResource("1_0788s")

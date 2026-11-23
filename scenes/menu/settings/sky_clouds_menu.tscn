@@ -1,0 +1,84 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="1_btn"]
+
+[node name="SkyCloudsPanel" type="Node3D"]
+visible = false
+
+[node name="LeftColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="SkyTime" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.47, 0)
+action = &"sky_time"
+caption = "Time"
+
+[node name="Sun" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.29, 0)
+action = &"sky_sun"
+caption = "Sun"
+
+[node name="Moon" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.11, 0)
+action = &"sky_moon"
+caption = "Moon"
+
+[node name="Rainbow" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.07, 0)
+action = &"sky_rainbow"
+caption = "Rainbows"
+
+[node name="Storm" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.25, 0)
+action = &"sky_storm"
+caption = "Storm Flashes"
+
+[node name="StormPower" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.43, 0)
+action = &"sky_storm_power"
+caption = "Storm Power"
+
+[node name="FogOffset" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.61, 0)
+action = &"sky_fog_offset"
+caption = "Fog Offset"
+
+[node name="RightColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+
+[node name="Clouds" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.47, 0)
+action = &"clouds"
+caption = "Clouds"
+
+[node name="CloudSpeed" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.29, 0)
+action = &"cloud_speed"
+caption = "Cloud Speed"
+
+[node name="CloudCoverage" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.11, 0)
+action = &"cloud_coverage"
+caption = "Cloud Coverage"
+
+[node name="SkySpeed" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.07, 0)
+action = &"sky_speed"
+caption = "Cycle Speed"
+
+[node name="Fog" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.25, 0)
+action = &"sky_fog"
+caption = "Fog"
+
+[node name="ResetSkyClouds" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.43, 0)
+action = &"sky_clouds_reset"
+caption = "Reset Sky & Clouds"
+
+[node name="SkyCloudsBack" parent="." instance=ExtResource("1_btn")]
+transform = Transform3D(1.9, 0, 0, 0, 1.2, 0, 0, 0, 1, 0, -0.79, 0.035)
+action = &"back_graphics"
+caption = "Back"
+label_size = 24
+keep_label_aspect = true

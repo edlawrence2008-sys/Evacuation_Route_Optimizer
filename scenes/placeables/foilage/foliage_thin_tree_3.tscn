@@ -1,0 +1,37 @@
+[gd_scene format=3]
+
+[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_thin_tree_3.png" id="1_otnp6"]
+[ext_resource type="Script" path="res://scripts/foliage_sway.gd" id="2_sway"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_76jsm"]
+size = Vector3(2, 27.1875, 2)
+
+[node name="foliage_thin_tree_3" type="Node3D" unique_id=881796461 groups=["foliage", "placeables"]]
+script = ExtResource("2_sway")
+
+[node name="SelectionArea" type="Area3D" parent="." unique_id=1297099860]
+collision_layer = 7
+collision_mask = 3
+monitoring = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=641504582]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 13.59375, 0)
+shape = SubResource("BoxShape3D_76jsm")
+
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1781795256]
+transform = Transform3D(-0.07858443, 0, 0.9969075, 0, 1, 0, -0.9969075, 0, -0.07858443, 0, 13.59375, 0)
+cast_shadow = 2
+pixel_size = 0.0625
+shaded = true
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("1_otnp6")
+
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=739883179]
+transform = Transform3D(0.9969075, 0, 0.07858437, 0, 1, 0, -0.07858437, 0, 0.9969075, 0, 13.59375, 0)
+cast_shadow = 2
+pixel_size = 0.0625
+shaded = true
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("1_otnp6")

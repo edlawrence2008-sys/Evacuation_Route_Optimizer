@@ -1,0 +1,41 @@
+[
+	{
+		"choice": [
+			{
+				"goto": "help",
+				"text": "Yes"
+			},
+			{
+				"goto": "bye",
+				"text": "No"
+			}
+		],
+		"emote": "neutral",
+		"gaze": "cursor",
+		"gaze_radius": 700.0,
+		"gesture": "fist_rest",
+		"text": "Hey, I'm Consul. It looks like you're new around here.\nNeed any help?"
+	},
+	{
+		"label": "help"
+	},
+	{
+		"button": "Got it",
+		"emote": "happy",
+		"gesture": "palm_explain",
+		"say": "Alright! Open the console by pressing {console}. You can see statistics with {statistics} and results with {results}."
+	},
+	{
+		"end": true
+	},
+	{
+		"label": "bye"
+	},
+	{
+		"gesture": "palm_explain",
+		"wave": true
+	},
+	{
+		"end": true
+	}
+]

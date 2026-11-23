@@ -1,0 +1,132 @@
+[gd_scene format=3 uid="uid://d0013p24dqvja"]
+
+[ext_resource type="Script" uid="uid://by07slya6iq1m" path="res://Maps/Boid_attractor.gd" id="2_8ieeh"]
+[ext_resource type="AudioStream" uid="uid://cxt3p77smmi2s" path="res://sounds/entities/False Boids/mus_birdnoise.ogg" id="3_poou7"]
+[ext_resource type="AudioStream" uid="uid://xr8g4k6tfjwt" path="res://sounds/entities/False Boids/freesound_community-flapping-28206.mp3" id="4_gnm5u"]
+
+[sub_resource type="Curve" id="Curve_j6nr8"]
+_data = [Vector2(0.50892854, 1), 0.0, -4.3998427, 0, 0, Vector2(1, 0.010035396), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_g4u5o"]
+curve = SubResource("Curve_j6nr8")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_lxgg5"]
+lifetime_randomness = 0.1
+emission_shape = 6
+emission_ring_axis = Vector3(0, 0, 1)
+emission_ring_height = 1.0
+emission_ring_radius = 1.0
+emission_ring_inner_radius = 0.0
+emission_ring_cone_angle = 90.0
+initial_velocity_max = 1.0
+angular_velocity_min = -1.6093254e-05
+angular_velocity_max = -1.6093254e-05
+orbit_velocity_min = 9.49949e-08
+orbit_velocity_max = 2.0000002
+radial_velocity_min = -2.2351742e-05
+radial_velocity_max = -2.2351742e-05
+linear_accel_min = -2.2351742e-06
+linear_accel_max = 6.9599977
+radial_accel_min = -2.2351742e-06
+radial_accel_max = 25.159998
+tangential_accel_min = -2.2351742e-06
+tangential_accel_max = 7.549998
+scale_min = 0.5
+scale_max = 1.5
+alpha_curve = SubResource("CurveTexture_g4u5o")
+hue_variation_min = -1.0
+hue_variation_max = 0.99999994
+anim_speed_min = 248.04999
+anim_speed_max = 300.0
+anim_offset_max = 1.0
+turbulence_enabled = true
+turbulence_noise_scale = 5.0
+collision_mode = 1
+collision_friction = 1.0
+collision_bounce = 1.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0pst1"]
+transparency = 2
+alpha_scissor_threshold = 0.5
+alpha_antialiasing_mode = 0
+texture_filter = 0
+billboard_mode = 3
+particles_anim_h_frames = 3
+particles_anim_v_frames = 1
+particles_anim_loop = true
+grow = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_p7u1r"]
+material = SubResource("StandardMaterial3D_0pst1")
+
+[sub_resource type="TorusMesh" id="TorusMesh_hm1g5"]
+
+[node name="BoidPreviousImplementation" type="Node3D" unique_id=742626529]
+
+[node name="Birds" type="GPUParticles3D" parent="." unique_id=958019176]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -82, 3, 69)
+cast_shadow = 2
+amount = 1000
+lifetime = 200.0
+explosiveness = 0.8
+randomness = 0.1
+fixed_fps = 60
+visibility_aabb = AABB(-100, -100, -100, 200, 200, 200)
+process_material = SubResource("ParticleProcessMaterial_lxgg5")
+draw_pass_1 = SubResource("QuadMesh_p7u1r")
+
+[node name="Boid_Attractor" type="GPUParticlesAttractorSphere3D" parent="." unique_id=1737899530]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -31, 20, -6.5)
+strength = 30.0
+radius = 100.0
+script = ExtResource("2_8ieeh")
+weight_center = 1.5
+weight_random_point = 1.0
+constant_speed = 8.0
+min_radius = 10.0
+max_radius = 20.0
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Boid_Attractor" unique_id=1372263710]
+mesh = SubResource("TorusMesh_hm1g5")
+
+[node name="AudioStreamPlayer3D" type="AudioStreamPlayer3D" parent="Boid_Attractor" unique_id=1911871358]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -35, 0)
+stream = ExtResource("3_poou7")
+
+[node name="AudioStreamPlayer3D2" type="AudioStreamPlayer3D" parent="Boid_Attractor" unique_id=1417662335]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -35, 0)
+stream = ExtResource("4_gnm5u")
+unit_size = 100.0
+max_db = 6.0
+
+[node name="Boid_Attractor2" type="GPUParticlesAttractorSphere3D" parent="." unique_id=1884403144]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -31, 20, 7.5)
+strength = 30.0
+radius = 100.0
+script = ExtResource("2_8ieeh")
+weight_center = 1.5
+weight_random_point = 1.0
+constant_speed = 8.0
+min_radius = 10.0
+max_radius = 20.0
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Boid_Attractor2" unique_id=611001338]
+mesh = SubResource("TorusMesh_hm1g5")
+
+[node name="AudioStreamPlayer3D" type="AudioStreamPlayer3D" parent="Boid_Attractor2" unique_id=1632777628]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -35, 0)
+stream = ExtResource("3_poou7")
+
+[node name="AudioStreamPlayer3D2" type="AudioStreamPlayer3D" parent="Boid_Attractor2" unique_id=703187443]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -35, 0)
+stream = ExtResource("4_gnm5u")
+max_db = 6.0
+
+[node name="GPUParticlesCollisionBox3D" type="GPUParticlesCollisionBox3D" parent="." unique_id=23156911]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, -34, -0.5)
+size = Vector3(43, 2, 1)
+
+[node name="GPUParticlesCollisionBox3D2" type="GPUParticlesCollisionBox3D" parent="." unique_id=1129824612]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5, -1, 1)
+size = Vector3(245, 2, 242)

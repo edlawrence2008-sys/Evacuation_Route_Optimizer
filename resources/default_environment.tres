@@ -1,0 +1,16 @@
+[gd_resource type="Environment" format=3 uid="uid://cg4moryceonk"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_mensd"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_c0e4t"]
+sky_material = SubResource("ProceduralSkyMaterial_mensd")
+
+[resource]
+background_mode = 2
+sky = SubResource("Sky_c0e4t")
+ambient_light_color = Color(0.012340512, 1.4737035e-05, 0.052286357, 1)
+ambient_light_sky_contribution = 0.0
+reflected_light_source = 1
+volumetric_fog_density = 0.01

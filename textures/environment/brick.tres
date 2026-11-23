@@ -1,0 +1,11 @@
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3 uid="uid://c30wrl8imoyxs"]
+
+[ext_resource type="Texture2D" uid="uid://ckhuwt33fr7d6" path="res://textures/Red_Brick_Wall.png" id="1_qhcty"]
+
+[resource]
+albedo_color = Color(0.86, 0.86, 0.86, 1)
+albedo_texture = ExtResource("1_qhcty")
+roughness_texture_channel = 3
+uv1_triplanar = true
+uv1_world_triplanar = true
+texture_filter = 0

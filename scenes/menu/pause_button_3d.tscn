@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://dth7evi1dnfpi"]
+
+[ext_resource type="Script" uid="uid://c3hfe61e4wy4d" path="res://scenes/menu/pause_button_3d.gd" id="1_btn"]
+[ext_resource type="FontFile" uid="uid://ck7sm3xakovrl" path="res://font/dogicapixel.ttf" id="2_dogi"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_btn"]
+size = Vector3(1.25, 0.15, 0.02)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_btn"]
+size = Vector3(1.25, 0.15, 0.08)
+
+[node name="PauseButton3D" type="Area3D" unique_id=915368893]
+collision_layer = 512
+collision_mask = 0
+monitoring = false
+script = ExtResource("1_btn")
+label_font = ExtResource("2_dogi")
+
+[node name="Mesh" type="MeshInstance3D" parent="." unique_id=238335843]
+cast_shadow = 0
+mesh = SubResource("BoxMesh_btn")
+
+[node name="Label" type="Label3D" parent="." unique_id=455547386]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.02)
+pixel_size = 0.0021
+no_depth_test = true
+render_priority = 5
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "Button"
+font = ExtResource("2_dogi")
+font_size = 28
+outline_size = 6
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=777100640]
+shape = SubResource("BoxShape3D_btn")

@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://bi22f5rdk8agp"]
+
+[ext_resource type="MeshLibrary" path="res://resources/blocks/.tres" id="1_bunqd"]
+[ext_resource type="Script" uid="uid://g4vpw63k3ynt" path="res://scripts/gridmap.gd" id="2_lgqos"]
+
+[node name="Gridmap" type="GridMap" unique_id=291815369]
+mesh_library = ExtResource("1_bunqd")
+cell_size = Vector3(1, 1, 1)
+script = ExtResource("2_lgqos")
+baked_ao_enabled = true
+auto_stair_replace_existing = false
+enable_flow_fields = false

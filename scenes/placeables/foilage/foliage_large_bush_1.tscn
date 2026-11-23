@@ -1,0 +1,37 @@
+[gd_scene format=3]
+
+[ext_resource type="Texture2D" path="res://textures/placeables/foilage/foilage_large_bush_1.png" id="1_gr8mo"]
+[ext_resource type="Script" path="res://scripts/foliage_sway.gd" id="2_sway"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_4gu31"]
+size = Vector3(2, 9, 2)
+
+[node name="foliage_large_bush_1" type="Node3D" unique_id=586220299 groups=["foliage", "placeables"]]
+script = ExtResource("2_sway")
+
+[node name="SelectionArea" type="Area3D" parent="." unique_id=1653698710]
+collision_layer = 7
+collision_mask = 3
+monitoring = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=550035603]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.5, 0)
+shape = SubResource("BoxShape3D_4gu31")
+
+[node name="Sprite3D_A" type="Sprite3D" parent="." unique_id=1924082642]
+transform = Transform3D(0.31498674, 0, -0.9490961, 0, 1, 0, 0.9490961, 0, 0.31498674, 0, 4.5, 0)
+cast_shadow = 2
+pixel_size = 0.0625
+shaded = true
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("1_gr8mo")
+
+[node name="Sprite3D_B" type="Sprite3D" parent="." unique_id=994418735]
+transform = Transform3D(-0.94909614, 0, -0.3149866, 0, 1, 0, 0.3149866, 0, -0.94909614, 0, 4.5, 0)
+cast_shadow = 2
+pixel_size = 0.0625
+shaded = true
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("1_gr8mo")

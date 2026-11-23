@@ -1,0 +1,270 @@
+[gd_scene format=3 uid="uid://4inig44jfunw"]
+
+[ext_resource type="Script" uid="uid://d2hwi2wmy31t" path="res://scenes/inventory/BuildPanel.gd" id="1_script"]
+[ext_resource type="Texture2D" uid="uid://c7mow8p0o72dq" path="res://textures/menu/tab.png" id="2_bg"]
+[ext_resource type="FontFile" uid="uid://cyarj71gsgrnj" path="res://font/7-12-serif.otf" id="3_font"]
+
+[sub_resource type="Theme" id="Theme_build"]
+default_font = ExtResource("3_font")
+default_font_size = 13
+
+[node name="BuildTab" type="Control" unique_id=434658819]
+layout_mode = 3
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_right = 246.0
+offset_bottom = -352.0
+grow_vertical = 2
+theme = SubResource("Theme_build")
+script = ExtResource("1_script")
+
+[node name="Background" type="TextureRect" parent="." unique_id=869400206]
+z_index = -1
+texture_filter = 1
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("2_bg")
+expand_mode = 1
+
+[node name="Content" type="MarginContainer" parent="." unique_id=397102882]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 7.0
+offset_right = -1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 8
+
+[node name="Scroll" type="ScrollContainer" parent="Content" unique_id=1802473803]
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="Column" type="VBoxContainer" parent="Content/Scroll" unique_id=1436564066]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Title" type="Label" parent="Content/Scroll/Column" unique_id=66194852]
+custom_minimum_size = Vector2(0, 26)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.35, 1)
+theme_override_font_sizes/font_size = 20
+text = "Build"
+
+[node name="BrushToggle" type="CheckButton" parent="Content/Scroll/Column" unique_id=1911403964]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+tooltip_text = "When brushes are on, stretch/drag is disabled."
+text = "Brushes (click to place)"
+
+[node name="ShapeBox" type="VBoxContainer" parent="Content/Scroll/Column" unique_id=373039875]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="ShapeGrid" type="GridContainer" parent="Content/Scroll/Column/ShapeBox" unique_id=2020358220]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 3
+columns = 2
+
+[node name="BrushLabel" type="Label" parent="Content/Scroll/Column/ShapeBox/ShapeGrid" unique_id=2081688617]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.92, 0.88, 1)
+theme_override_font_sizes/font_size = 13
+text = "Brush"
+
+[node name="BrushOption" type="OptionButton" parent="Content/Scroll/Column/ShapeBox/ShapeGrid" unique_id=680868305]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+selected = 0
+item_count = 5
+popup/item_0/text = "Cuboid"
+popup/item_0/id = 0
+popup/item_1/text = "Sphere"
+popup/item_1/id = 1
+popup/item_2/text = "Cylinder"
+popup/item_2/id = 2
+popup/item_3/text = "Surface"
+popup/item_3/id = 3
+popup/item_4/text = "Cluster"
+popup/item_4/id = 4
+
+[node name="ParamsRow" type="HBoxContainer" parent="Content/Scroll/Column/ShapeBox" unique_id=1394795274]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Param1Box" type="VBoxContainer" parent="Content/Scroll/Column/ShapeBox/ParamsRow" unique_id=1712565731]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 0
+
+[node name="Param1Label" type="Label" parent="Content/Scroll/Column/ShapeBox/ParamsRow/Param1Box" unique_id=1394568410]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.68, 0.68, 0.64, 1)
+theme_override_font_sizes/font_size = 12
+text = "W"
+horizontal_alignment = 1
+
+[node name="Param1" type="SpinBox" parent="Content/Scroll/Column/ShapeBox/ParamsRow/Param1Box" unique_id=892961260]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 32.0
+value = 3.0
+
+[node name="Param2Box" type="VBoxContainer" parent="Content/Scroll/Column/ShapeBox/ParamsRow" unique_id=1780689840]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 0
+
+[node name="Param2Label" type="Label" parent="Content/Scroll/Column/ShapeBox/ParamsRow/Param2Box" unique_id=317025153]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.68, 0.68, 0.64, 1)
+theme_override_font_sizes/font_size = 12
+text = "H"
+horizontal_alignment = 1
+
+[node name="Param2" type="SpinBox" parent="Content/Scroll/Column/ShapeBox/ParamsRow/Param2Box" unique_id=787369672]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 32.0
+value = 3.0
+
+[node name="Param3Box" type="VBoxContainer" parent="Content/Scroll/Column/ShapeBox/ParamsRow" unique_id=1249612678]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 0
+
+[node name="Param3Label" type="Label" parent="Content/Scroll/Column/ShapeBox/ParamsRow/Param3Box" unique_id=1148051364]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.68, 0.68, 0.64, 1)
+theme_override_font_sizes/font_size = 12
+text = "L"
+horizontal_alignment = 1
+
+[node name="Param3" type="SpinBox" parent="Content/Scroll/Column/ShapeBox/ParamsRow/Param3Box" unique_id=1200443568]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 32.0
+value = 3.0
+
+[node name="BrushHint" type="Label" parent="Content/Scroll/Column/ShapeBox" unique_id=1346885573]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.68, 0.68, 0.64, 1)
+theme_override_font_sizes/font_size = 11
+text = "All tools; W/H/L cuboid."
+autowrap_mode = 3
+
+[node name="ToolGrid" type="GridContainer" parent="Content/Scroll/Column" unique_id=277100312]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 3
+columns = 2
+
+[node name="ToolLabel" type="Label" parent="Content/Scroll/Column/ToolGrid" unique_id=44031132]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.92, 0.88, 1)
+theme_override_font_sizes/font_size = 13
+text = "Tool"
+
+[node name="ToolOption" type="OptionButton" parent="Content/Scroll/Column/ToolGrid" unique_id=818660085]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+selected = 0
+item_count = 6
+popup/item_0/text = "Fill"
+popup/item_0/id = 0
+popup/item_1/text = "Place"
+popup/item_1/id = 1
+popup/item_2/text = "Overlay"
+popup/item_2/id = 2
+popup/item_3/text = "Flatten"
+popup/item_3/id = 3
+popup/item_4/text = "Replace"
+popup/item_4/id = 4
+popup/item_5/text = "Clear"
+popup/item_5/id = 5
+
+[node name="PlacementLabel" type="Label" parent="Content/Scroll/Column/ToolGrid" unique_id=1095403515]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.92, 0.88, 1)
+theme_override_font_sizes/font_size = 13
+text = "Placement"
+
+[node name="PlacementOption" type="OptionButton" parent="Content/Scroll/Column/ToolGrid" unique_id=1336906735]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+selected = 1
+item_count = 3
+popup/item_0/text = "Merged"
+popup/item_0/id = 0
+popup/item_1/text = "Attached"
+popup/item_1/id = 1
+popup/item_2/text = "Inserted"
+popup/item_2/id = 2
+
+[node name="PatternLabel" type="Label" parent="Content/Scroll/Column/ToolGrid" unique_id=1279139854]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.92, 0.88, 1)
+theme_override_font_sizes/font_size = 13
+text = "Pattern"
+
+[node name="PatternOption" type="OptionButton" parent="Content/Scroll/Column/ToolGrid" unique_id=1800433238]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+selected = 0
+item_count = 6
+popup/item_0/text = "Solid"
+popup/item_0/id = 0
+popup/item_1/text = "25%"
+popup/item_1/id = 1
+popup/item_2/text = "50%"
+popup/item_2/id = 2
+popup/item_3/text = "75%"
+popup/item_3/id = 3
+popup/item_4/text = "Checker"
+popup/item_4/id = 4
+popup/item_5/text = "Inverse"
+popup/item_5/id = 5
+
+[node name="DragBox" type="VBoxContainer" parent="Content/Scroll/Column" unique_id=1532529137]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="DragLabel" type="Label" parent="Content/Scroll/Column/DragBox" unique_id=1538123318]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.92, 0.88, 1)
+theme_override_font_sizes/font_size = 14
+text = "Drag settings"
+
+[node name="DragHint" type="Label" parent="Content/Scroll/Column/DragBox" unique_id=16066570]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.68, 0.68, 0.64, 1)
+theme_override_font_sizes/font_size = 11
+text = "Hold and drag to apply Tool, Placement and Pattern."
+autowrap_mode = 3

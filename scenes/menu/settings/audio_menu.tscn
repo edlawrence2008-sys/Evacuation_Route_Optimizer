@@ -1,0 +1,24 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="1_btn"]
+
+[node name="AudioPanel" type="Node3D"]
+visible = false
+
+[node name="LeftColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="Music" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.4, 0)
+action = &"music"
+caption = "Music"
+
+[node name="Volume" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.1, 0)
+action = &"volume"
+caption = "Volume"
+
+[node name="AudioBack" parent="." instance=ExtResource("1_btn")]
+position = Vector3(0, -0.15, 0.035)
+action = &"back_settings"
+caption = "Back"

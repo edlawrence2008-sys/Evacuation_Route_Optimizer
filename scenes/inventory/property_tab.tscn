@@ -1,0 +1,261 @@
+[gd_scene format=3 uid="uid://bwtqhe6oj7lyp"]
+
+[ext_resource type="Texture2D" uid="uid://c7mow8p0o72dq" path="res://textures/menu/tab.png" id="1_bg"]
+[ext_resource type="FontFile" uid="uid://cyarj71gsgrnj" path="res://font/7-12-serif.otf" id="2_kfvu1"]
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_color = Color(0, 0, 0, 0)
+ambient_light_source = 2
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 0.65
+
+[node name="Property_tab" type="Control" unique_id=556934285]
+layout_mode = 3
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_right = 246.0
+offset_bottom = -352.0
+grow_vertical = 2
+
+[node name="InventoryBgMain" type="Sprite2D" parent="." unique_id=2118426059]
+z_index = -1
+texture_filter = 1
+texture_repeat = 1
+position = Vector2(123, 148)
+scale = Vector2(2.3238342, 1.184)
+texture = ExtResource("1_bg")
+
+[node name="Content" type="MarginContainer" parent="." unique_id=577568945]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 2.0
+offset_right = -1.0
+offset_bottom = -1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="ContentScroll" type="ScrollContainer" parent="Content" unique_id=1539568956]
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="ListPadding" type="MarginContainer" parent="Content/ContentScroll" unique_id=401568249]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/margin_right = 16
+
+[node name="List" type="VBoxContainer" parent="Content/ContentScroll/ListPadding" unique_id=621235213]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 5
+
+[node name="Preview" type="Control" parent="Content/ContentScroll/ListPadding/List" unique_id=857291061]
+custom_minimum_size = Vector2(0, 132)
+clip_contents = true
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PreviewTexture" type="TextureRect" parent="Content/ContentScroll/ListPadding/List/Preview" unique_id=1291769890]
+visible = false
+texture_filter = 1
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="PreviewViewport" type="SubViewportContainer" parent="Content/ContentScroll/ListPadding/List/Preview" unique_id=1594654678]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+stretch = true
+
+[node name="MeshViewport" type="SubViewport" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport" unique_id=1592355383]
+own_world_3d = true
+transparent_bg = true
+handle_input_locally = false
+size = Vector2i(203, 132)
+render_target_update_mode = 0
+
+[node name="PreviewEnvironment" type="WorldEnvironment" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport/MeshViewport" unique_id=1172783143]
+environment = SubResource("Environment_preview")
+
+[node name="PreviewLight" type="DirectionalLight3D" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport/MeshViewport" unique_id=2007903348]
+transform = Transform3D(0.90630794, 0.24240361, -0.34618843, 0, 0.8191522, 0.5735762, 0.42261797, -0.51983666, 0.7424041, 0, 0, 0)
+light_energy = 1.25
+
+[node name="PreviewFill" type="DirectionalLight3D" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport/MeshViewport" unique_id=277648125]
+transform = Transform3D(-0.90630764, -0.14454411, 0.3971315, 0, 0.93969256, 0.34202027, -0.42261854, 0.3099756, -0.85165054, 0, 0, 0)
+light_energy = 0.55
+
+[node name="PreviewCamera" type="Camera3D" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport/MeshViewport" unique_id=1676259493]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 3)
+current = true
+fov = 34.0
+
+[node name="MeshPivot" type="Node3D" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport/MeshViewport" unique_id=493534103]
+
+[node name="PreviewMesh" type="MeshInstance3D" parent="Content/ContentScroll/ListPadding/List/Preview/PreviewViewport/MeshViewport/MeshPivot" unique_id=2128473233]
+
+[node name="TitleSlot" type="Control" parent="Content/ContentScroll/ListPadding/List" unique_id=991075444]
+custom_minimum_size = Vector2(0, 20)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Title" type="Label" parent="Content/ContentScroll/ListPadding/List/TitleSlot" unique_id=897715301]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/outline_size = 4
+theme_override_fonts/font = ExtResource("2_kfvu1")
+theme_override_font_sizes/font_size = 22
+text = "Item Name"
+autowrap_mode = 3
+
+[node name="BlockProperties" type="VBoxContainer" parent="Content/ContentScroll/ListPadding/List" unique_id=96813807]
+layout_mode = 2
+theme_override_constants/separation = 1
+
+[node name="BaseStability" type="HBoxContainer" parent="Content/ContentScroll/ListPadding/List/BlockProperties" unique_id=707861278]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Name" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BaseStability" unique_id=1650634491]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.82, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "Base Stability"
+
+[node name="Value" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BaseStability" unique_id=1632587908]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="BaseDurability" type="HBoxContainer" parent="Content/ContentScroll/ListPadding/List/BlockProperties" unique_id=1681435224]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Name" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BaseDurability" unique_id=1956921972]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.82, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "Base Durability"
+
+[node name="Value" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BaseDurability" unique_id=1951469912]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="BaseWeight" type="HBoxContainer" parent="Content/ContentScroll/ListPadding/List/BlockProperties" unique_id=1245816183]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Name" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BaseWeight" unique_id=1580698143]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.82, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "Base Weight"
+
+[node name="Value" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BaseWeight" unique_id=1803969294]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="Bouyancy" type="HBoxContainer" parent="Content/ContentScroll/ListPadding/List/BlockProperties" unique_id=1572730022]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Name" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/Bouyancy" unique_id=1459624282]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.82, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "Bouyancy"
+
+[node name="Value" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/Bouyancy" unique_id=1219650844]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="BasePathCost" type="HBoxContainer" parent="Content/ContentScroll/ListPadding/List/BlockProperties" unique_id=1997774568]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Name" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BasePathCost" unique_id=308455922]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.82, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "Base Path Cost"
+
+[node name="Value" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/BasePathCost" unique_id=555053196]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "1"
+horizontal_alignment = 2
+
+[node name="Flammability" type="HBoxContainer" parent="Content/ContentScroll/ListPadding/List/BlockProperties" unique_id=95886505]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Name" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/Flammability" unique_id=268784226]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.82, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "Flammability"
+
+[node name="Value" type="Label" parent="Content/ContentScroll/ListPadding/List/BlockProperties/Flammability" unique_id=1486283654]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "0"
+horizontal_alignment = 2
+
+[node name="Description" type="Label" parent="Content/ContentScroll/ListPadding/List" unique_id=339996714]
+visible = false
+layout_mode = 2
+theme_override_colors/font_color = Color(0.78, 0.78, 0.74, 1)
+theme_override_font_sizes/font_size = 16
+autowrap_mode = 3
+
+[node name="Separator" type="HSeparator" parent="Content/ContentScroll/ListPadding/List" unique_id=685529401]
+visible = false
+layout_mode = 2
+
+[node name="Exports" type="VBoxContainer" parent="Content/ContentScroll/ListPadding/List" unique_id=1877732456]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 2

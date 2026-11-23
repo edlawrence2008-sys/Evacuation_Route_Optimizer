@@ -1,0 +1,166 @@
+[gd_scene format=3]
+
+[ext_resource type="Texture2D" path="res://textures/NPC/NPC_Rajanah.png" id="1_4bxid"]
+[ext_resource type="Texture2D" path="res://textures/NPC/NPC_Rajanah_n.png" id="3_normal"]
+[ext_resource type="Script" path="res://scripts/NPCstuff/SpriteMemberVisual.gd" id="2_spritevis"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_0d0db"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(0, 700, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_6max2"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(400, 700, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_klmbi"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(800, 700, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_dnifm"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(0, 0, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_2a1j1"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(400, 0, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_n3v3f"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(800, 0, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_6saoq"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(0, 1400, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_40qs5"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(400, 1400, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_vudfb"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(800, 1400, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_spefw"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(800, 2100, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_87uk8"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(0, 2100, 400, 700)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_fa6b4"]
+atlas = ExtResource("1_4bxid")
+region = Rect2(400, 2100, 400, 700)
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_g4v7s"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0d0db")
+}],
+"loop": 1,
+"name": &"back_idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0d0db")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_6max2")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_0d0db")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_klmbi")
+}],
+"loop": 1,
+"name": &"back_walk",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_dnifm")
+}],
+"loop": 1,
+"name": &"front_idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_dnifm")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_2a1j1")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_dnifm")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_n3v3f")
+}],
+"loop": 1,
+"name": &"front_walk",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_6saoq")
+}],
+"loop": 1,
+"name": &"left_idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_6saoq")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_40qs5")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_6saoq")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_vudfb")
+}],
+"loop": 1,
+"name": &"left_walk",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_spefw")
+}],
+"loop": 1,
+"name": &"right_idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_spefw")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_87uk8")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_spefw")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_fa6b4")
+}],
+"loop": 1,
+"name": &"right_walk",
+"speed": 5.0
+}]
+
+[node name="Rajanah" type="AnimatedSprite3D"]
+gi_mode = 2
+sprite_frames = SubResource("SpriteFrames_g4v7s")
+animation = &"back_walk"
+frame_progress = 0.8097758
+script = ExtResource("2_spritevis")
+floor_offset = Vector3(0, 0.2, 0)
+frame_bottom = PackedInt32Array(656, 674, 678, 669, 675, 672, 656, 660, 656, 665, 669, 665)
+normal_map = ExtResource("3_normal")

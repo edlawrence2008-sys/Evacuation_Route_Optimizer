@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://dvre47tl2uqx5"]
+
+[ext_resource type="PackedScene" uid="uid://dc5lldv6dahx2" path="res://models/Specialblocks/device_bulb.gltf" id="1_bulb"]
+[ext_resource type="Script" uid="uid://dmpddi240j3s7" path="res://scripts/components/logic/logic_lamp_component.gd" id="2_lamp"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_bulb"]
+
+[node name="DeviceBulb" type="Node3D" unique_id=950530415 groups=["device", "placeables"]]
+
+[node name="Model" parent="." unique_id=801040014 instance=ExtResource("1_bulb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+
+[node name="BulbLight" type="OmniLight3D" parent="." unique_id=264264710]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+light_color = Color(1, 0.92, 0.78, 1)
+light_energy = 1.5
+shadow_enabled = true
+shadow_bias = 0.05
+omni_range = 6.0
+
+[node name="SelectionArea" type="Area3D" parent="." unique_id=574832725]
+collision_layer = 7
+collision_mask = 3
+monitoring = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea" unique_id=1939015332]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.41723633, 0)
+shape = SubResource("BoxShape3D_bulb")
+
+[node name="LogicLamp" type="Node" parent="." unique_id=218875992]
+script = ExtResource("2_lamp")
+starts_powered = true

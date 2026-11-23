@@ -1,0 +1,71 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="1_btn"]
+
+[node name="GraphicsPanel" type="Node3D"]
+
+[node name="LeftColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="Quality" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.45, 0)
+action = &"quality"
+caption = "Quality"
+
+[node name="RenderScale" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.27, 0)
+action = &"render"
+caption = "Render Scale"
+
+[node name="DrawDistance" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.09, 0)
+action = &"distance"
+caption = "Draw Distance"
+
+[node name="Shadows" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.09, 0)
+action = &"shadows"
+caption = "Shadows"
+
+[node name="ShadowDistance" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.27, 0)
+action = &"shadow_distance"
+caption = "Shadow Dist"
+
+[node name="Foliage" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.45, 0)
+action = &"foliage_distance"
+caption = "Foliage"
+
+[node name="RightColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+
+[node name="SkyClouds" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.45, 0)
+action = &"sky_clouds"
+caption = "Sky & Clouds"
+
+[node name="Occlusion" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.27, 0)
+action = &"ao"
+caption = "Ambient Occlusion"
+
+[node name="Fps" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.09, 0)
+action = &"fps"
+caption = "FPS Cap"
+
+[node name="WaterFx" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.09, 0)
+action = &"water"
+caption = "Water FX"
+
+[node name="Reset" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.27, 0)
+action = &"reset"
+caption = "Reset to Medium"
+
+[node name="GraphicsBack" parent="." instance=ExtResource("1_btn")]
+position = Vector3(0, -0.62, 0.035)
+action = &"back_settings"
+caption = "Back"

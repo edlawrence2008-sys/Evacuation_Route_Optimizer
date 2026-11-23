@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://b0q1y1pb6d4qr"
+path="res://.godot/imported/1932 Lullaby Of The Leaves (with vocal group)_by George Olsen.mp3-3ac084e3744c72fc6109e57c94ccbaa2.mp3str"
+
+[deps]
+
+source_file="res://sounds/songs/menu_themes/1932 Lullaby Of The Leaves (with vocal group)_by George Olsen.mp3"
+dest_files=["res://.godot/imported/1932 Lullaby Of The Leaves (with vocal group)_by George Olsen.mp3-3ac084e3744c72fc6109e57c94ccbaa2.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
