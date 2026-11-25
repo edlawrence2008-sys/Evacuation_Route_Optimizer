@@ -1,6 +1,18 @@
-class_name WaterSystem
+class_name LegacyWaterSystem
 extends Node3D
 
+## LEGACY ARCHIVE - the previous voxel water layer.
+##
+## This system is no longer wired into the project. It is kept under
+## `addons/legacy_water` because parts may be reused (waterloggable block
+## bounds, exposed-face chunk meshing, shoreline foam, wave rendering).
+##
+## It is a 2.5D cellular mass model, not a general fluid solver: every wet
+## cell stores a float depth, an active queue moves water down/out, and a
+## periodic hydrostatic pass levels each connected same-Y body. A separate 2D
+## wave field and splash pool provide the surface effects. See README.md for
+## how to run it in a scene again.
+##
 ## Lightweight voxel water layer.
 ##
 ## Every water cell stores a float depth from 0 to its capacity. Air and water
@@ -17,7 +29,8 @@ extends Node3D
 ## cellular mass model, while keeping one float per cell for cheap rendering.
 ##
 ## Surface and full water are the same volume; the exposed top renders slightly
-## lower and picks as "Water_Surface", while covered water picks as "Water_Full".
+## lower and picks as "Legacy_Water_Surface", while covered water picks as
+## "Legacy_Water_Full".
 
 const MAX_HEIGHT := 16
 ## Solid footprint of a bottom/top slab, in 1/16-block water units. Water can
@@ -30,10 +43,10 @@ const PANEL_UNITS := 3.0
 ## lowest block is destroyed instead of falling forever.
 const FALL_KILL_MARGIN_BLOCKS := 5.0
 
-const WATER_SURFACE := "Water_Surface"
-const WATER_FULL := "Water_Full"
-const WATER_SLAB := "Water_Slab"
-const WATER_PANEL := "Water_Panel"
+const WATER_SURFACE := "Legacy_Water_Surface"
+const WATER_FULL := "Legacy_Water_Full"
+const WATER_SLAB := "Legacy_Water_Slab"
+const WATER_PANEL := "Legacy_Water_Panel"
 
 const FACE_NORMALS: Array[Vector3i] = [
 	Vector3i(-1, 0, 0),
@@ -1273,21 +1286,21 @@ func _ensure_items() -> void:
 func _make_water_material() -> ShaderMaterial:
 	# Simple lit depth-fade + foam shader. The white shoreline edge and ripple
 	# pixels are separate meshes.
-	var shader := load("res://scripts/world/water.gdshader") as Shader
+	var shader := load("res://addons/legacy_water/shaders/legacy_water.gdshader") as Shader
 	var material := ShaderMaterial.new()
 	material.shader = shader
 	return material
 
 
 func _make_foam_material() -> ShaderMaterial:
-	var shader := load("res://scripts/world/water_edge.gdshader") as Shader
+	var shader := load("res://addons/legacy_water/shaders/legacy_water_edge.gdshader") as Shader
 	var material := ShaderMaterial.new()
 	material.shader = shader
 
 	# Load the source PNG directly too, so the foam works even before the
 	# texture has been imported by the editor.
 	var texture: Texture2D = null
-	var texture_path := "res://textures/particles/sea_foam.png"
+	var texture_path := "res://addons/legacy_water/textures/sea_foam.png"
 	if ResourceLoader.exists(texture_path, "Texture2D"):
 		texture = load(texture_path) as Texture2D
 	if texture == null:
@@ -1315,7 +1328,7 @@ func _make_foam_corner_material() -> StandardMaterial3D:
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	material.render_priority = 1
 
-	var path := "res://textures/particles/sea_foam_corner.png"
+	var path := "res://addons/legacy_water/textures/sea_foam_corner.png"
 	var texture: Texture2D = null
 	if ResourceLoader.exists(path, "Texture2D"):
 		texture = load(path) as Texture2D
@@ -2107,7 +2120,7 @@ func _create_renderer() -> void:
 
 func _create_splash_pool() -> void:
 	_splash_texture = load(
-		"res://textures/particles/splash_small.png"
+		"res://addons/legacy_water/textures/splash_small.png"
 	) as Texture2D
 	if _splash_texture == null:
 		return

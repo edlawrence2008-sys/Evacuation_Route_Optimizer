@@ -1,0 +1,23 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/useables/gas_tool_component.gd" id="1_tool"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_gas_tool"]
+albedo_color = Color(0.78, 0.62, 0.12, 1)
+metallic = 0.1
+roughness = 0.35
+
+[sub_resource type="BoxMesh" id="Mesh_gas_tool"]
+size = Vector3(0.18, 0.18, 0.36)
+material = SubResource("Mat_gas_tool")
+
+[node name="GasTool" type="Node3D"]
+metadata/hand_size = 0.18
+
+[node name="Canister" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.08, -0.12)
+mesh = SubResource("Mesh_gas_tool")
+
+[node name="GasToolComponent" type="Node" parent="."]
+cooldown = 0.4
+script = ExtResource("1_tool")

@@ -165,7 +165,6 @@ var _nav_chunks: Dictionary = {}
 var _dirty_chunks: Dictionary = {}
 
 var _mesher: ChunkMesher = null
-var _water_system: WaterSystem = null
 var request_queue: Array[Dictionary] = []
 
 ## Debug path drawing state.
@@ -242,7 +241,6 @@ func _ready() -> void:
 
 	initialize_navigation()
 	_build_ctm_items()
-	_ensure_water_system()
 
 	if enable_greedy_meshing:
 		_mesher = ChunkMesher.new(self)
@@ -2040,7 +2038,6 @@ func _generate_auto_stairs() -> void:
 			"Slab" in source_name
 			or "Stair" in source_name
 			or "Panel" in source_name
-			or "Water" in source_name
 			or "Connect" in source_name
 		):
 			continue
@@ -2548,6 +2545,7 @@ func get_mesher() -> ChunkMesher:
 	return _mesher
 
 
+<<<<<<< Updated upstream
 func _ensure_water_system() -> WaterSystem:
 	if _water_system == null or not is_instance_valid(_water_system):
 		_water_system = WaterSystem.new()
@@ -2565,6 +2563,38 @@ func _ensure_water_system() -> WaterSystem:
 
 func get_water_system() -> WaterSystem:
 	return _ensure_water_system()
+=======
+## Number of per-chunk collision bodies currently built by the mesher.
+func get_chunk_collision_body_count() -> int:
+	if _mesher == null:
+		return 0
+
+	return _mesher.get_collision_body_count()
+
+
+## True when the chunk already has physics collision. Without the mesher the
+## GridMap mirror owns collision, so loaded cells are enough.
+func has_chunk_collision(chunk: Vector2i) -> bool:
+	if _mesher == null:
+		return get_chunk_cell_count(chunk) > 0
+	return _mesher.has_chunk_collision(chunk)
+
+
+## Collision build stats: bodies, number of trimesh builds, total build usec.
+func get_chunk_collision_stats() -> Dictionary:
+	if _mesher == null:
+		return {"bodies": 0, "builds": 0, "build_usec": 0}
+
+	return _mesher.get_collision_stats()
+
+
+## LOD mesh counts and collision body count.
+func get_chunk_lod_stats() -> Dictionary:
+	if _mesher == null:
+		return {"lod0": 0, "lod1": 0, "lod2": 0, "meshed": 0, "collision": 0}
+
+	return _mesher.get_lod_stats()
+>>>>>>> Stashed changes
 
 
 func get_populated_chunks() -> Array[Vector2i]:

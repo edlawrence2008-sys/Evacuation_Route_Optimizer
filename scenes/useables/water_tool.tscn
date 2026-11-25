@@ -1,0 +1,23 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/useables/water_tool_component.gd" id="1_tool"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_water_tool"]
+albedo_color = Color(0.08, 0.38, 0.72, 1)
+metallic = 0.1
+roughness = 0.25
+
+[sub_resource type="BoxMesh" id="Mesh_water_tool"]
+size = Vector3(0.16, 0.16, 0.42)
+material = SubResource("Mat_water_tool")
+
+[node name="WaterTool" type="Node3D"]
+metadata/hand_size = 0.18
+
+[node name="Handle" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.08, -0.12)
+mesh = SubResource("Mesh_water_tool")
+
+[node name="WaterToolComponent" type="Node" parent="."]
+cooldown = 0.25
+script = ExtResource("1_tool")

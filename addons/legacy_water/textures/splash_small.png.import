@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cyeexoh2s8usp"
-path="res://.godot/imported/water_still.png-69f9dfb1d4096b175e323b2640f9500b.ctex"
+uid="uid://dg8xt7vtodaqg"
+path="res://.godot/imported/splash_small.png-ee097c1a84b3720a6d1de7bf14622417.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://textures/specialblocks/water_still.png"
-dest_files=["res://.godot/imported/water_still.png-69f9dfb1d4096b175e323b2640f9500b.ctex"]
+source_file="res://addons/legacy_water/textures/splash_small.png"
+dest_files=["res://.godot/imported/splash_small.png-ee097c1a84b3720a6d1de7bf14622417.ctex"]
 
 [params]
 

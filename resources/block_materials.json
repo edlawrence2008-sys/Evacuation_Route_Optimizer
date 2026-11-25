@@ -107,19 +107,6 @@
       }
     },
     {
-      "id": "water",
-      "label": "Water",
-      "prefixes": ["water"],
-      "properties": {
-        "base_stability": 0.05,
-        "base_durability": 0.05,
-        "base_weight": 1.0,
-        "buoyancy": 1.0,
-        "base_path_cost": 2.0,
-        "flammability": 0.0
-      }
-    },
-    {
       "id": "window",
       "label": "Window",
       "prefixes": ["window"],

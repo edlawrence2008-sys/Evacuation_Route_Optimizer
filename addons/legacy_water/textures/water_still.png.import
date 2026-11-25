@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bwdptwv7ymymi"
-path="res://.godot/imported/sea_foam.png-134c4586be0f3877ae9e887b4073a03c.ctex"
+uid="uid://cyeexoh2s8usp"
+path="res://.godot/imported/water_still.png-a5ada5dbc2b35d2f1c9d4ed4ac60b433.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://textures/particles/sea_foam.png"
-dest_files=["res://.godot/imported/sea_foam.png-134c4586be0f3877ae9e887b4073a03c.ctex"]
+source_file="res://addons/legacy_water/textures/water_still.png"
+dest_files=["res://.godot/imported/water_still.png-a5ada5dbc2b35d2f1c9d4ed4ac60b433.ctex"]
 
 [params]
 

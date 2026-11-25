@@ -46,7 +46,11 @@ action = &"fps"
 caption = "FPS Cap"
 
 [node name="Reset" parent="RightColumn" instance=ExtResource("1_btn")]
+<<<<<<< Updated upstream
 position = Vector3(0, -0.36, 0)
+=======
+position = Vector3(0, -0.09, 0)
+>>>>>>> Stashed changes
 action = &"reset"
 caption = "Reset to Medium"
 

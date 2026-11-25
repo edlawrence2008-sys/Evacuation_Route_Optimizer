@@ -9,6 +9,15 @@
 [ext_resource type="Script" uid="uid://c667l0deutopu" path="res://scripts/NPCstuff/SpriteLight3D.gd" id="8_sprite_light"]
 [ext_resource type="Script" uid="uid://dcxhosxk1aes" path="res://scripts/world/ChunkStreamer.gd" id="9_streamer"]
 [ext_resource type="Script" uid="uid://iy3vs73s7n2e" path="res://scripts/world/MinecraftClouds.gd" id="10_clouds"]
+<<<<<<< Updated upstream
+=======
+[ext_resource type="Texture2D" path="res://textures/sun.png" id="14_sun"]
+[ext_resource type="Texture2D" path="res://textures/moon.png" id="15_moon"]
+[ext_resource type="PackedScene" path="res://scenes/placeables/env/env_false_boid_emitter.tscn" id="11_false_boids"]
+[ext_resource type="PackedScene" path="res://scenes/placeables/env/env_false_boid_perch.tscn" id="12_false_boid_perch"]
+[ext_resource type="Script" path="res://scripts/world/water_world.gd" id="19_water"]
+[ext_resource type="Script" path="res://scripts/world/hazard_world.gd" id="20_hazard"]
+>>>>>>> Stashed changes
 
 [node name="Test" type="Node3D" unique_id=495423455]
 
@@ -51,3 +60,33 @@ script = ExtResource("9_streamer")
 [node name="MinecraftClouds" type="Node3D" parent="." unique_id=582652961]
 physics_interpolation_mode = 2
 script = ExtResource("10_clouds")
+<<<<<<< Updated upstream
+=======
+
+[node name="FalseBoidEmitter" parent="." unique_id=1789582304 instance=ExtResource("11_false_boids")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 8)
+
+[node name="FalseBoidEmitterB" parent="." unique_id=572087073 instance=ExtResource("11_false_boids")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 2, 10)
+
+[node name="FalseBoidEmitterC" parent="." unique_id=1833992384 instance=ExtResource("11_false_boids")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 2, 12)
+
+[node name="FalseBoidPerchA" parent="." unique_id=605853650 instance=ExtResource("12_false_boid_perch")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1.05, -2)
+
+[node name="FalseBoidPerchB" parent="." unique_id=72230012 instance=ExtResource("12_false_boid_perch")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1.05, -2)
+
+[node name="FalseBoidPerchC" parent="." unique_id=415975413 instance=ExtResource("12_false_boid_perch")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1.05, 2)
+
+[node name="FalseBoidPerchD" parent="." unique_id=1092507406 instance=ExtResource("12_false_boid_perch")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1.05, 3)
+
+[node name="WaterWorld" type="Node3D" parent="."]
+script = ExtResource("19_water")
+
+[node name="HazardWorld" type="Node" parent="."]
+script = ExtResource("20_hazard")
+>>>>>>> Stashed changes

@@ -22,7 +22,7 @@ const UI_SOUND_TYPE_0 := preload("res://sounds/ui/type_0.wav")
 const UI_SOUND_TYPE_1 := preload("res://sounds/ui/type_1.wav")
 const UI_SOUND_TYPING_FINISH := preload("res://sounds/ui/typing_input_finish.wav")
 const TRANSITION_ACTIONS := [
-	"settings", "stats", "saves", "water_tuning", "back_main", "back_settings",
+	"settings", "stats", "saves", "back_main", "back_settings",
 	"settings_graphics", "settings_gameplay", "settings_audio", "settings_controls",
 ]
 
@@ -53,7 +53,6 @@ var _save_manager: Node = null
 @onready var _section_title: Label3D = $Panel/SectionTitle
 @onready var _main_panel: Node3D = $Panel/MainPanel
 @onready var _settings_panel: Node3D = $Panel/SettingsPanel
-@onready var _water_panel: Node3D = $Panel/WaterPanel
 @onready var _graphics_panel: Node3D = $Panel/GraphicsPanel
 @onready var _gameplay_panel: Node3D = $Panel/GameplayPanel
 @onready var _audio_panel: Node3D = $Panel/AudioPanel
@@ -156,6 +155,86 @@ func _ready() -> void:
 	_show_view("main", false, false)
 
 
+<<<<<<< Updated upstream
+=======
+	if saves_only:
+		_deactivate_all_panels()
+
+
+## Opens the pause menu's Saves page as a main-menu overlay. The tree is not
+## paused; the overlay simply takes input until Back/Load closes it.
+func open_saves_only() -> void:
+	if not saves_only:
+		return
+
+	_paused = true
+	visible = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_show_view("saves", true, false)
+	_apply_saves_only_layout()
+	_refresh_save_list()
+	_set_hover(null)
+
+
+func close_saves_only() -> void:
+	if not saves_only:
+		return
+
+	_paused = false
+	visible = false
+	_reset_sway()
+	_deactivate_all_panels()
+	get_tree().paused = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	saves_closed.emit()
+
+
+func _deactivate_all_panels() -> void:
+	for panel: Node3D in [
+		_main_panel,
+		_settings_panel,
+		_graphics_panel,
+		_gameplay_panel,
+		_audio_panel,
+		_controls_panel,
+		_stats_panel,
+		_saves_panel,
+		_demos_panel,
+	]:
+		if panel != null:
+			_set_panel_buttons_active(panel, false)
+
+
+## Hide the actions that only make sense while a live world is loaded. Rename,
+## Duplicate and Delete operate on save folders and remain available.
+func _apply_saves_only_layout() -> void:
+	if _saves_panel == null:
+		return
+
+	for path: String in [
+		"LeftActions/Save",
+		"LeftActions/SaveAs",
+	]:
+		var node := _saves_panel.get_node_or_null(path)
+
+		if node != null:
+			node.set("visible", false)
+			if node is Area3D:
+				(node as Area3D).collision_layer = 0
+
+	# With Save/Save As hidden, lift Load into the first action row so the
+	# left column does not end up with a lone button at the bottom.
+	var load_button := _saves_panel.get_node_or_null(
+		"LeftActions/Load"
+	) as Node3D
+	if load_button != null:
+		load_button.position = Vector3(0.0, -0.48, 0.0)
+		load_button.set("_rest_position", load_button.position)
+
+	# World Type stays available: New Map needs it in both menus.
+
+
+>>>>>>> Stashed changes
 func _setup_ui_audio() -> void:
 	for index in 8:
 		var player := AudioStreamPlayer.new()
@@ -304,7 +383,6 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 	_view = view
 	_main_panel.visible = view == "main"
 	_settings_panel.visible = view == "settings"
-	_water_panel.visible = view == "water"
 	_graphics_panel.visible = view == "graphics"
 	_gameplay_panel.visible = view == "gameplay"
 	_audio_panel.visible = view == "audio"
@@ -327,8 +405,6 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 			_section_title.text = "AUDIO"
 		"controls":
 			_section_title.text = "CONTROLS"
-		"water":
-			_section_title.text = "WATER"
 		"statistics":
 			_section_title.text = "STATISTICS"
 		"saves":
@@ -336,7 +412,6 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 
 	_set_panel_buttons_active(_main_panel, view == "main")
 	_set_panel_buttons_active(_settings_panel, view == "settings")
-	_set_panel_buttons_active(_water_panel, view == "water")
 	_set_panel_buttons_active(_graphics_panel, view == "graphics")
 	_set_panel_buttons_active(_gameplay_panel, view == "gameplay")
 	_set_panel_buttons_active(_audio_panel, view == "audio")
@@ -353,8 +428,6 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 		elif view == "controls":
 			_refresh_labels()
 			_refresh_keybind_page()
-		elif view == "water":
-			_refresh_labels()
 		elif view == "statistics":
 			_refresh_statistics(false)
 		elif view == "saves":
@@ -421,59 +494,6 @@ func _build_title_letters() -> void:
 		cursor += advance
 
 
-## The Water tab is authored in pause_menu.tscn, but the Godot editor can
-## resave an older copy of the scene over it. Rebuild any missing Water nodes
-## at runtime so the menu never references a null panel.
-func _ensure_water_ui() -> void:
-	var panel := get_node_or_null("Panel") as Node3D
-	if panel == null:
-		return
-
-	var water := panel.get_node_or_null("WaterPanel") as Node3D
-	if water == null:
-		water = Node3D.new()
-		water.name = "WaterPanel"
-		water.visible = false
-		panel.add_child(water)
-	_water_panel = water
-
-	var left := _ensure_water_column(water, "LeftColumn", Vector3(-0.68, 0, 0.035))
-	var right := _ensure_water_column(water, "RightColumn", Vector3(0.68, 0, 0.035))
-
-	_ensure_water_button(left, "FlowStep", "water_flow", "Flow Step", 0.47)
-	_ensure_water_button(left, "Equalize", "water_equalize", "Equalize", 0.265)
-	_ensure_water_button(left, "UpdateBudget", "water_budget", "Update Budget", 0.06)
-	_ensure_water_button(left, "MeshRate", "water_mesh", "Mesh Rate", -0.145)
-	_ensure_water_button(left, "WaveDetail", "water_wave_detail", "Wave Detail", -0.35)
-	_ensure_water_button(left, "WaveCap", "water_wave_cap", "Wave Samples", -0.555)
-
-	_ensure_water_button(right, "Waves", "water_waves", "Waves", 0.47)
-	_ensure_water_button(right, "Splashes", "water_splashes", "Splashes", 0.265)
-	_ensure_water_button(right, "SurfaceDrops", "water_surface_drops", "Surface Drops", 0.06)
-	_ensure_water_button(right, "WakeStyle", "water_wake", "Wake Style", -0.145)
-	_ensure_water_button(right, "ResetWater", "water_reset", "Reset Water", -0.35)
-	_ensure_water_button(
-		water,
-		"WaterBack",
-		"back_settings",
-		"Back",
-		-0.79,
-		Vector3(1.9, 1.2, 1.0)
-	)
-
-	var settings_right := get_node_or_null(
-		"Panel/SettingsPanel/RightColumn"
-	) as Node3D
-	if settings_right != null:
-		_ensure_water_button(
-			settings_right,
-			"WaterTuning",
-			"water_tuning",
-			"Water Tuning",
-			-0.555
-		)
-
-
 ## Reorganizes the authored Settings panel into dedicated pages. Existing
 ## buttons are reparented (with their action bindings intact) so the editor
 ## scene remains the single source for their look and captions.
@@ -486,19 +506,26 @@ func _ensure_settings_ui() -> void:
 	_audio_panel = _ensure_category_panel("AudioPanel")
 	_controls_panel = _ensure_category_panel("ControlsPanel")
 
-	var graphics_left := _ensure_water_column(
+	var graphics_left := _ensure_menu_column(
 		_graphics_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-	var graphics_right := _ensure_water_column(
+	var graphics_right := _ensure_menu_column(
 		_graphics_panel, "RightColumn", Vector3(0.68, 0, 0.035)
 	)
-	var gameplay_left := _ensure_water_column(
+	var gameplay_left := _ensure_menu_column(
 		_gameplay_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
+<<<<<<< Updated upstream
 	var audio_left := _ensure_water_column(
+=======
+	var gameplay_right := _ensure_menu_column(
+		_gameplay_panel, "RightColumn", Vector3(0.68, 0, 0.035)
+	)
+	var audio_left := _ensure_menu_column(
+>>>>>>> Stashed changes
 		_audio_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-	var controls_left := _ensure_water_column(
+	var controls_left := _ensure_menu_column(
 		_controls_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
 
@@ -512,34 +539,39 @@ func _ensure_settings_ui() -> void:
 	_move_settings_button("Reset", graphics_right, -0.36)
 
 	_move_settings_button("AgentLimit", gameplay_left, 0.35)
-	_ensure_water_button(
+	_ensure_menu_button(
 		gameplay_left, "ViewRoll", "view_roll", "View Roll", 0.05
 	)
+<<<<<<< Updated upstream
 
 	_move_settings_button("Volume", audio_left, 0.15)
 	_ensure_water_button(
+=======
+	_ensure_menu_button(
+		gameplay_right,
+		"ExportDefaults",
+		"export_defaults",
+		"Simulation Defaults",
+		0.35
+	)
+
+	_move_settings_button("Volume", audio_left, 0.10)
+	_ensure_menu_button(audio_left, "Music", "music", "Music", 0.40)
+	_ensure_menu_button(
+>>>>>>> Stashed changes
 		controls_left, "Keybinds", "keybinds", "Keybinds", 0.15
 	)
 
-	var water_right := _water_panel.get_node_or_null("RightColumn") as Node3D
-	if water_right != null:
-		_move_settings_button("Water", water_right, -0.555)
-		if water_right.get_node_or_null("Water") == null:
-			_ensure_water_button(
-				water_right, "Water", "water", "Water FX", -0.555
-			)
-
-	var hub_left := _ensure_water_column(
+	var hub_left := _ensure_menu_column(
 		_settings_panel, "HubLeft", Vector3(-0.68, 0, 0.035)
 	)
-	var hub_right := _ensure_water_column(
+	var hub_right := _ensure_menu_column(
 		_settings_panel, "HubRight", Vector3(0.68, 0, 0.035)
 	)
-	_ensure_water_button(hub_left, "Graphics", "settings_graphics", "Graphics", 0.35)
-	_ensure_water_button(hub_left, "Gameplay", "settings_gameplay", "Gameplay", 0.05)
-	_ensure_water_button(hub_left, "Controls", "settings_controls", "Controls", -0.25)
-	_ensure_water_button(hub_right, "Audio", "settings_audio", "Audio", 0.35)
-	_move_settings_button("WaterTuning", hub_right, 0.05)
+	_ensure_menu_button(hub_left, "Graphics", "settings_graphics", "Graphics", 0.35)
+	_ensure_menu_button(hub_left, "Gameplay", "settings_gameplay", "Gameplay", 0.05)
+	_ensure_menu_button(hub_left, "Controls", "settings_controls", "Controls", -0.25)
+	_ensure_menu_button(hub_right, "Audio", "settings_audio", "Audio", 0.35)
 	var settings_back := _settings_panel.get_node_or_null("SettingsBack") as Node3D
 	if settings_back != null:
 		settings_back.position = Vector3(0.0, -0.55, 0.035)
@@ -552,7 +584,7 @@ func _ensure_settings_ui() -> void:
 		[_controls_panel, "ControlsBack", -0.15],
 	]:
 		var panel: Node3D = entry[0]
-		_ensure_water_button(
+		_ensure_menu_button(
 			panel,
 			String(entry[1]),
 			"back_settings",
@@ -852,10 +884,10 @@ func _ensure_keybinds_ui() -> void:
 	if _keybinds_panel != null:
 		return
 	_keybinds_panel = _ensure_category_panel("KeybindsPanel")
-	var left := _ensure_water_column(
+	var left := _ensure_menu_column(
 		_keybinds_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-	var right := _ensure_water_column(
+	var right := _ensure_menu_column(
 		_keybinds_panel, "RightColumn", Vector3(0.68, 0, 0.035)
 	)
 	var rows: Array[float] = [0.45, 0.20, -0.05, -0.30]
@@ -883,19 +915,19 @@ func _ensure_keybinds_ui() -> void:
 	_keybind_page_label.position = Vector3(0.0, -0.42, 0.035)
 	_keybind_panel_add(_keybind_page_label)
 
-	_ensure_water_button(
+	_ensure_menu_button(
 		_keybinds_panel, "KeybindPrev", "keybind_prev", "Prev",
 		-0.58, Vector3(0.75, 0.75, 1.0), 20, -0.65
 	)
-	_ensure_water_button(
+	_ensure_menu_button(
 		_keybinds_panel, "KeybindNext", "keybind_next", "Next",
 		-0.58, Vector3(0.75, 0.75, 1.0), 20, 0.65
 	)
-	_ensure_water_button(
+	_ensure_menu_button(
 		_keybinds_panel, "KeybindReset", "keybind_reset", "Reset",
 		-0.78, Vector3(0.65, 0.65, 1.0), 20, -0.65
 	)
-	_ensure_water_button(
+	_ensure_menu_button(
 		_keybinds_panel, "KeybindsBack", "back_settings", "Back",
 		-0.78, Vector3(0.65, 0.65, 1.0), 20, 0.65
 	)
@@ -1064,6 +1096,7 @@ func _ensure_saves_ui() -> void:
 		_place_saves_button(right, "Duplicate", -0.50)
 		_place_saves_button(right, "Delete", -0.66)
 		_place_saves_button(right, "Back", -0.82)
+<<<<<<< Updated upstream
 
 	_ensure_water_button(
 		saves, "NewMap", "new_map", "New Map...", 0.74,
@@ -1076,6 +1109,47 @@ func _ensure_saves_ui() -> void:
 
 
 func _place_saves_button(parent: Node3D, node_name: String, local_y: float) -> void:
+=======
+		_ensure_menu_button(
+			right, "Rename", "rename", "Rename", 0.66,
+			Vector3(0.7, 0.85, 1.0), 20, 0.0, true
+		)
+
+	_ensure_menu_button(
+		saves, "NewMap", "new_map", "New Map...", 0.80,
+		Vector3(0.7, 0.85, 1.0), 20, -0.62, true
+	)
+	_ensure_menu_button(
+		saves, "WorldType", "world_type", "World: Blank Platform", 0.66,
+		Vector3(0.7, 0.85, 1.0), 18, -0.62, true
+	)
+
+
+func _ensure_save_sort_button(saves: Node3D) -> void:
+	var right := saves.get_node_or_null("RightActions") as Node3D
+	var parent: Node3D = right if right != null else saves
+	var local_x: float = 0.0 if right != null else 0.62
+	_ensure_menu_button(
+		parent,
+		"Sort",
+		"save_sort",
+		"Sort: Last Played",
+		0.80,
+		Vector3(0.7, 0.85, 1.0),
+		18,
+		local_x,
+		true
+	)
+
+
+func _place_saves_button(
+	parent: Node3D,
+	node_name: String,
+	local_y: float,
+	button_scale: Vector3 = Vector3(0.52, 0.85, 1.0),
+	label_size_value: int = 22
+) -> void:
+>>>>>>> Stashed changes
 	var button := parent.get_node_or_null(node_name) as Node3D
 	if button == null:
 		return
@@ -1083,7 +1157,548 @@ func _place_saves_button(parent: Node3D, node_name: String, local_y: float) -> v
 	button.set("_rest_position", button.position)
 
 
+<<<<<<< Updated upstream
 func _ensure_water_column(
+=======
+# ============================================================
+# DEMOS LIBRARY
+# ============================================================
+
+func _ensure_demos_ui() -> void:
+	_demos_panel = get_node_or_null("Panel/DemosPanel") as Node3D
+
+	if _demos_panel == null:
+		return
+
+	if _demo_list != null and is_instance_valid(_demo_list):
+		return
+
+	_demo_list = Node3D.new()
+	_demo_list.name = "DemoList"
+	_demo_list.position = Vector3(-0.55, 0.40, 0.035)
+	_demos_panel.add_child(_demo_list)
+
+	_demo_page_label = Label3D.new()
+	_demo_page_label.name = "PageLabel"
+	_demo_page_label.position = Vector3(-0.55, -0.20, 0.04)
+	_demo_page_label.font = UI_FONT
+	_demo_page_label.font_size = 20
+	_demo_page_label.pixel_size = 0.0018
+	_demo_page_label.modulate = Color(0.85, 0.84, 0.76, 1)
+	_demos_panel.add_child(_demo_page_label)
+
+	_demo_details = Label3D.new()
+	_demo_details.name = "DemoDetails"
+	_demo_details.position = Vector3(0.62, 0.66, 0.04)
+	_demo_details.font = UI_FONT
+	_demo_details.font_size = 16
+	_demo_details.pixel_size = 0.0022
+	_demo_details.line_spacing = 26.0
+	_demo_details.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_demo_details.modulate = Color(0.92, 0.92, 0.86, 1)
+	_demo_details.width = 320.0
+	_demo_details.no_depth_test = true
+	_demo_details.render_priority = 5
+	_demo_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_demos_panel.add_child(_demo_details)
+
+	_demo_status_label = Label3D.new()
+	_demo_status_label.name = "StatusLabel"
+	_demo_status_label.position = Vector3(-0.55, -0.97, 0.04)
+	_demo_status_label.font = UI_FONT
+	_demo_status_label.font_size = 18
+	_demo_status_label.pixel_size = 0.0016
+	_demo_status_label.modulate = Color(1.0, 0.84, 0.34, 1)
+	_demo_status_label.no_depth_test = true
+	_demo_status_label.render_priority = 5
+	_demos_panel.add_child(_demo_status_label)
+
+	var left := Node3D.new()
+	left.name = "LeftActions"
+	left.position = Vector3(-0.68, 0, 0)
+	_demos_panel.add_child(left)
+
+	var right := Node3D.new()
+	right.name = "RightActions"
+	right.position = Vector3(0.68, 0, 0)
+	_demos_panel.add_child(right)
+
+	_ensure_menu_button(left, "Play", "play_demo", "Play", -0.34, Vector3.ONE, 22)
+	_ensure_menu_button(left, "Rename", "rename_demo", "Rename", -0.50, Vector3.ONE, 22)
+	_ensure_menu_button(left, "Description", "describe_demo", "Description", -0.66, Vector3.ONE, 22)
+	_ensure_menu_button(left, "Folder", "folder_demo", "Move to Folder", -0.82, Vector3.ONE, 20)
+	_ensure_menu_button(right, "Compare", "compare_demo", "Compare", -0.34, Vector3.ONE, 22)
+	_ensure_menu_button(right, "Duplicate", "duplicate_demo", "Duplicate", -0.50, Vector3.ONE, 22)
+	_ensure_menu_button(right, "Delete", "delete_demo", "Delete", -0.66, Vector3.ONE, 22)
+	_ensure_menu_button(right, "Back", "back_demos", "Back", -0.82, Vector3.ONE, 22)
+
+	_ensure_menu_button(
+		_demos_panel,
+		"FolderFilter",
+		"demo_folder_filter",
+		"Folder: All",
+		0.62,
+		Vector3.ONE,
+		18,
+		-0.55
+	)
+	_demo_folder_button = _demos_panel.get_node_or_null("FolderFilter")
+	_demo_compare_button = _demos_panel.get_node_or_null("RightActions/Compare")
+	_sync_compare_button()
+
+
+func _filtered_demo_count() -> int:
+	var count: int = 0
+
+	for demo: Dictionary in _demos:
+		if (
+			_demo_folder_filter.is_empty()
+			or String(demo.get("folder", "")) == _demo_folder_filter
+		):
+			count += 1
+
+	return count
+
+
+func _refresh_demo_list() -> void:
+	if _demo_list == null or not is_instance_valid(_demo_list):
+		return
+
+	for child in _demo_list.get_children():
+		child.free()
+
+	if _hovered != null and not is_instance_valid(_hovered):
+		_hovered = null
+
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		_demo_page_label.text = "Demo library unavailable"
+		_demo_details.text = ""
+		return
+
+	if not bool(store.call("has_active_save")):
+		# Direct scene runs have no save; they are grouped under "_unsaved" so
+		# the demos are still inspectable, but they are not attached to a map.
+		pass
+
+	_demos = store.call("list_demos")
+
+	var filtered: Array = []
+
+	for demo: Dictionary in _demos:
+		if _demo_folder_filter.is_empty() or String(demo.get("folder", "")) == _demo_folder_filter:
+			filtered.append(demo)
+
+	if filtered.is_empty():
+		_selected_demo_id = ""
+		_demo_page_label.text = (
+			"No demos in this folder"
+			if _demos.size() > 0
+			else "No demos recorded for this save"
+		)
+		_demo_details.text = ""
+		_update_demo_folder_caption()
+		return
+
+	var found := false
+
+	for demo: Dictionary in filtered:
+		if String(demo.get("id", "")) == _selected_demo_id:
+			found = true
+			break
+
+	if not found:
+		_selected_demo_id = String(filtered[0].get("id", ""))
+
+	_demo_start = clampi(_demo_start, 0, maxi(0, filtered.size() - 1))
+	var last := mini(_demo_start + save_rows_per_page, filtered.size())
+
+	for index in range(_demo_start, last):
+		var demo: Dictionary = filtered[index]
+		var demo_id := String(demo.get("id", ""))
+		var compare_index := _demo_compare_ids.find(demo_id)
+		var button := _button_scene.instantiate()
+		button.action = &"select_demo"
+		button.payload = demo_id
+		var folder := String(demo.get("folder", ""))
+		var caption := (
+			("%s / %s" % [folder, String(demo.get("name", "Demo"))])
+			if not folder.is_empty()
+			else String(demo.get("name", "Demo"))
+		)
+		if _demo_compare_mode and compare_index >= 0:
+			caption = "%s · %s" % [char(65 + compare_index), caption]
+		button.caption = caption
+		button.position = Vector3(0, -save_row_step * (index - _demo_start), 0)
+		button.label_size = 20
+		button.label_pixel = 0.0019
+		_demo_list.add_child(button)
+
+		if _demo_compare_mode:
+			if compare_index >= 0:
+				button.set_selected(true)
+		elif demo_id == _selected_demo_id:
+			button.set_selected(true)
+
+	var page := int(float(_demo_start) / float(save_rows_per_page)) + 1
+	var pages := int(ceil(float(filtered.size()) / float(save_rows_per_page)))
+	_demo_page_label.text = "Page %d/%d  ·  wheel to scroll" % [page, pages]
+	_update_demo_details()
+	_update_demo_folder_caption()
+
+
+func _update_demo_details() -> void:
+	if _demo_details == null:
+		return
+
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		_demo_details.text = ""
+		return
+
+	var created := _format_modified(float(demo.get("created", 0.0)))
+	var duration := _format_duration(float(demo.get("duration", 0.0)))
+	var status := String(demo.get("status", "unknown"))
+	var summary: Dictionary = demo.get("summary", {})
+	var description := String(demo.get("description", ""))
+
+	if description.is_empty():
+		description = "(no description)"
+
+	_demo_details.text = "\n".join(PackedStringArray([
+		String(demo.get("name", "Demo")),
+		"Folder: " + (String(demo.get("folder", "")) if not String(demo.get("folder", "")).is_empty() else "—"),
+		created + "  ·  " + duration + "  ·  " + status,
+		"Agents %d  ·  Seed %d" % [
+			int(demo.get("agents", 0)),
+			int(demo.get("seed", 0)),
+		],
+		"Evacuated %d  ·  Avg %.1fs  ·  Max density %.2f/m²" % [
+			int(summary.get("agents_evacuated", 0)),
+			float(summary.get("average_evacuation_time", 0.0)),
+			float(summary.get("global_max_density", 0.0)),
+		],
+		description,
+	]))
+
+
+func _update_demo_folder_caption() -> void:
+	if _demo_folder_button != null and is_instance_valid(_demo_folder_button):
+		_demo_folder_button.set_caption(
+			"Folder: " + (_demo_folder_filter if not _demo_folder_filter.is_empty() else "All")
+		)
+
+
+func _selected_demo_meta() -> Dictionary:
+	for demo: Dictionary in _demos:
+		if String(demo.get("id", "")) == _selected_demo_id:
+			return demo
+	return {}
+
+
+func _select_demo(demo_id: String) -> void:
+	if _demo_compare_mode:
+		_toggle_demo_compare_id(demo_id)
+		return
+
+	_selected_demo_id = demo_id
+	_refresh_demo_list()
+	_set_demo_status("Selected: " + String(_selected_demo_meta().get("name", demo_id)))
+
+
+func _toggle_demo_compare_id(demo_id: String) -> void:
+	var index := _demo_compare_ids.find(demo_id)
+
+	if index >= 0:
+		_demo_compare_ids.remove_at(index)
+	elif _demo_compare_ids.size() >= 6:
+		_set_demo_status("Compare supports up to 6 demos")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+	else:
+		_demo_compare_ids.append(demo_id)
+
+	_selected_demo_id = demo_id
+	_refresh_demo_list()
+	_sync_compare_button()
+	_set_demo_status("Compare: %d selected (need 2+)" % _demo_compare_ids.size())
+
+
+func _sync_compare_button() -> void:
+	if _demo_compare_button == null or not is_instance_valid(_demo_compare_button):
+		return
+
+	_demo_compare_button.set_caption(
+		("Start (%d)" % _demo_compare_ids.size()) if _demo_compare_mode else "Compare"
+	)
+
+
+func _toggle_demo_compare() -> void:
+	if not _demo_compare_mode:
+		_demo_compare_mode = true
+		_demo_compare_ids.clear()
+		_sync_compare_button()
+		_refresh_demo_list()
+		_set_demo_status("Compare: select 2+ demos, then press Start")
+		return
+
+	if _demo_compare_ids.size() < 2:
+		_set_demo_status("Select at least two demos to compare")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	_start_demo_compare()
+
+
+func _cancel_demo_compare(refresh: bool = true) -> void:
+	_demo_compare_mode = false
+	_demo_compare_ids.clear()
+	_sync_compare_button()
+
+	if refresh:
+		_refresh_demo_list()
+		_set_demo_status("")
+
+
+func _start_demo_compare() -> void:
+	var comparer := get_node_or_null("/root/DemoComparer")
+
+	if comparer == null:
+		_set_demo_status("Demo comparer unavailable")
+		return
+
+	if not bool(comparer.call("play", _demo_compare_ids.duplicate())):
+		_set_demo_status("Could not compare these demos")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	if not comparer.closed.is_connected(_on_demo_comparer_closed):
+		comparer.closed.connect(_on_demo_comparer_closed)
+
+	_play_ui(UI_SOUND_ACCEPT, -8.0)
+	set_process_input(false)
+	set_process(false)
+	visible = false
+
+
+func _on_demo_comparer_closed() -> void:
+	visible = true
+	set_process_input(true)
+	set_process(true)
+	_show_view("demos")
+	_set_demo_status(
+		("Compare: %d selected" % _demo_compare_ids.size())
+		if _demo_compare_mode
+		else ""
+	)
+
+
+func _set_demo_status(text: String) -> void:
+	if _demo_status_label == null:
+		return
+
+	_demo_status_label.text = text
+
+
+func _play_selected_demo() -> void:
+	if _selected_demo_id.is_empty():
+		_set_demo_status("Select a demo first")
+		return
+
+	var player := get_node_or_null("/root/DemoPlayer")
+
+	if player == null:
+		_set_demo_status("Demo player unavailable")
+		return
+
+	if not bool(player.call("play", _selected_demo_id)):
+		_set_demo_status("Could not play this demo")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	if not player.closed.is_connected(_on_demo_player_closed):
+		player.closed.connect(_on_demo_player_closed)
+
+	_play_ui(UI_SOUND_ACCEPT, -8.0)
+	set_process_input(false)
+	set_process(false)
+	visible = false
+
+
+func _on_demo_player_closed() -> void:
+	visible = true
+	set_process_input(true)
+	set_process(true)
+	_show_view("demos")
+
+
+func _prompt_demo_rename() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_name(
+		"Rename Demo",
+		String(demo.get("name", "Demo")),
+		_finish_demo_rename
+	)
+
+
+func _finish_demo_rename(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("rename_demo", _selected_demo_id, value)):
+		_set_demo_status("Renamed")
+		_play_ui(UI_SOUND_SAVE, -7.0)
+		_refresh_demo_list()
+	else:
+		_set_demo_status("Rename failed (empty name?)")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+
+
+func _prompt_demo_description() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_text(
+		"Demo Description",
+		String(demo.get("description", "")),
+		_finish_demo_description
+	)
+
+
+func _finish_demo_description(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("describe_demo", _selected_demo_id, value)):
+		_set_demo_status("Description saved")
+		_play_ui(UI_SOUND_SAVE, -7.0)
+		_refresh_demo_list()
+
+
+func _prompt_demo_folder() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_name(
+		"Demo Folder (empty = none)",
+		String(demo.get("folder", "")),
+		_finish_demo_folder
+	)
+
+
+func _finish_demo_folder(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("move_demo", _selected_demo_id, value)):
+		_set_demo_status("Folder updated")
+		_demo_folder_filter = ""
+		_play_ui(UI_SOUND_SAVE, -7.0)
+		_refresh_demo_list()
+
+
+func _cycle_demo_folder() -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	var folders: Array = store.call("list_folders")
+	var options: Array[String] = [""]
+	options.append_array(folders)
+	var index: int = options.find(_demo_folder_filter)
+	_demo_folder_filter = options[(index + 1) % options.size()]
+	_demo_start = 0
+	_refresh_demo_list()
+
+
+func _prompt_demo_duplicate() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_prompt_name(
+		"Duplicate Demo",
+		String(demo.get("name", "Demo")) + " Copy",
+		_finish_demo_duplicate
+	)
+
+
+func _finish_demo_duplicate(value: String) -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	var new_id: String = String(store.call("duplicate_demo", _selected_demo_id))
+
+	if new_id.is_empty():
+		_set_demo_status("Duplicate failed")
+		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
+		return
+
+	if not value.strip_edges().is_empty():
+		store.call("rename_demo", new_id, value)
+
+	_selected_demo_id = new_id
+	_set_demo_status("Duplicated")
+	_play_ui(UI_SOUND_SAVE, -7.0)
+	_refresh_demo_list()
+
+
+func _confirm_demo_delete() -> void:
+	var demo := _selected_demo_meta()
+
+	if demo.is_empty():
+		return
+
+	_confirm(
+		"Delete Demo",
+		"Delete \"%s\" and its recording files?\nThis cannot be undone."
+		% String(demo.get("name", "Demo")),
+		_finish_demo_delete,
+		"Delete"
+	)
+
+
+func _finish_demo_delete() -> void:
+	var store := get_node_or_null("/root/DemoStore")
+
+	if store == null:
+		return
+
+	if bool(store.call("delete_demo", _selected_demo_id)):
+		_selected_demo_id = ""
+		_set_demo_status("Deleted")
+		_play_ui(UI_SOUND_ACCEPT, -8.0)
+		_refresh_demo_list()
+
+
+func _format_duration(seconds: float) -> String:
+	var total := maxi(0, int(round(seconds)))
+	return "%d:%02d" % [int(float(total) / 60.0), total % 60]
+
+
+
+func _ensure_menu_column(
+>>>>>>> Stashed changes
 	parent: Node3D,
 	column_name: String,
 	local_position: Vector3
@@ -1097,7 +1712,7 @@ func _ensure_water_column(
 	return column
 
 
-func _ensure_water_button(
+func _ensure_menu_button(
 	parent: Node3D,
 	node_name: String,
 	action: String,
@@ -1138,8 +1753,6 @@ func _animate_view(view: String) -> void:
 			_play_buttons_intro(_audio_panel)
 		"controls":
 			_play_buttons_intro(_controls_panel)
-		"water":
-			_play_buttons_intro(_water_panel)
 		"statistics":
 			_play_map_intro()
 			_play_buttons_intro(_stats_panel)
@@ -1343,6 +1956,7 @@ func _dynamic_caption(action: String) -> String:
 			return "AO: " + PerformanceSettings.occlusion_name()
 		"clouds":
 			return "Clouds: " + PerformanceSettings.clouds_name()
+<<<<<<< Updated upstream
 		"water":
 			return "Water FX: " + PerformanceSettings.water_name()
 		"water_flow":
@@ -1365,6 +1979,30 @@ func _dynamic_caption(action: String) -> String:
 			return "Drops: " + PerformanceSettings.water_surface_particles_name()
 		"water_wake":
 			return "Wake: " + PerformanceSettings.water_wake_name()
+=======
+		"sky_time":
+			return "Time: " + PerformanceSettings.sky_time_name()
+		"sky_sun":
+			return "Sun: " + PerformanceSettings.sun_disc_name()
+		"sky_moon":
+			return "Moon: " + PerformanceSettings.moon_disc_name()
+		"sky_rainbow":
+			return "Rainbow: " + PerformanceSettings.rainbows_name()
+		"sky_storm":
+			return "Storms: " + PerformanceSettings.storm_flashes_name()
+		"sky_storm_power":
+			return "Storm Power: " + PerformanceSettings.storm_strength_name()
+		"sky_fog":
+			return "Fog: " + PerformanceSettings.fog_name()
+		"sky_fog_offset":
+			return "Fog Offset: " + PerformanceSettings.fog_offset_name()
+		"sky_speed":
+			return "Cycle Speed: " + PerformanceSettings.sky_speed_name()
+		"cloud_speed":
+			return "Cloud Speed: " + PerformanceSettings.cloud_speed_name()
+		"cloud_coverage":
+			return "Coverage: " + PerformanceSettings.cloud_coverage_name()
+>>>>>>> Stashed changes
 		"world_type":
 			return (
 				"World: Blank Platform"
@@ -1468,8 +2106,6 @@ func _click_at(position: Vector2) -> void:
 			_show_view("main")
 		"back_settings":
 			_show_view("settings")
-		"water_tuning":
-			_show_view("water")
 		"settings_graphics":
 			_show_view("graphics")
 		"settings_gameplay":
@@ -1484,39 +2120,6 @@ func _click_at(position: Vector2) -> void:
 			_show_view("settings")
 		"view_roll":
 			PerformanceSettings.cycle_view_roll()
-			_refresh_labels()
-		"water_flow":
-			PerformanceSettings.cycle_water_flow()
-			_refresh_labels()
-		"water_equalize":
-			PerformanceSettings.cycle_water_equalize()
-			_refresh_labels()
-		"water_budget":
-			PerformanceSettings.cycle_water_budget()
-			_refresh_labels()
-		"water_mesh":
-			PerformanceSettings.cycle_water_mesh()
-			_refresh_labels()
-		"water_wave_detail":
-			PerformanceSettings.cycle_water_wave_detail()
-			_refresh_labels()
-		"water_wave_cap":
-			PerformanceSettings.cycle_water_wave_cap()
-			_refresh_labels()
-		"water_waves":
-			PerformanceSettings.toggle_water_waves()
-			_refresh_labels()
-		"water_splashes":
-			PerformanceSettings.toggle_water_splashes()
-			_refresh_labels()
-		"water_surface_drops":
-			PerformanceSettings.toggle_water_surface_particles()
-			_refresh_labels()
-		"water_wake":
-			PerformanceSettings.cycle_water_wake_style()
-			_refresh_labels()
-		"water_reset":
-			PerformanceSettings.reset_water_settings()
 			_refresh_labels()
 		"mode_heat":
 			_stats_mode = "heat"
@@ -1548,8 +2151,46 @@ func _click_at(position: Vector2) -> void:
 		"clouds":
 			PerformanceSettings.toggle_clouds()
 			_refresh_labels()
+<<<<<<< Updated upstream
 		"water":
 			PerformanceSettings.toggle_water()
+=======
+		"sky_time":
+			PerformanceSettings.cycle_sky_time()
+			_refresh_labels()
+		"sky_sun":
+			PerformanceSettings.toggle_sun_disc()
+			_refresh_labels()
+		"sky_moon":
+			PerformanceSettings.toggle_moon_disc()
+			_refresh_labels()
+		"sky_rainbow":
+			PerformanceSettings.toggle_rainbows()
+			_refresh_labels()
+		"sky_storm":
+			PerformanceSettings.toggle_storm_flashes()
+			_refresh_labels()
+		"sky_storm_power":
+			PerformanceSettings.cycle_storm_strength()
+			_refresh_labels()
+		"sky_fog":
+			PerformanceSettings.toggle_fog()
+			_refresh_labels()
+		"sky_fog_offset":
+			PerformanceSettings.cycle_fog_offset()
+			_refresh_labels()
+		"sky_speed":
+			PerformanceSettings.cycle_sky_speed()
+			_refresh_labels()
+		"cloud_speed":
+			PerformanceSettings.cycle_cloud_speed()
+			_refresh_labels()
+		"cloud_coverage":
+			PerformanceSettings.cycle_cloud_coverage()
+			_refresh_labels()
+		"sky_clouds_reset":
+			PerformanceSettings.reset_sky_clouds()
+>>>>>>> Stashed changes
 			_refresh_labels()
 		"volume":
 			PerformanceSettings.cycle_volume()

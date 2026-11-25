@@ -90,12 +90,35 @@ func _process_command(cmd_line: String) -> void:
 		"/help":
 			if out:
 				out.print_to_console("=== Available Commands ===")
+<<<<<<< Updated upstream
 				out.print_to_console("  /setglobalunitcap <int>   - Sets the global unit cap.")
 				out.print_to_console("  /debug_greedy [on|off]   - Toggles debug greedy-mesh colours.")
 				out.print_to_console("  /ao [on|off]             - Toggles baked voxel-corner ambient occlusion.")
 				out.print_to_console("  /path_mode [astar|flow]  - Switches between A* and baked flow fields.")
 				out.print_to_console("  /show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
 				out.print_to_console("  /clear                    - Clears the console window.")
+=======
+				out.print_to_console("  setglobalunitcap <int>   - Sets the global unit cap.")
+				out.print_to_console("  debug_greedy [on|off]   - Toggles debug greedy-mesh colours.")
+				out.print_to_console("  ao [on|off]             - Toggles baked voxel-corner ambient occlusion.")
+				out.print_to_console("  lod [on|off]            - Toggles distance LOD for the chunk mesher.")
+				out.print_to_console("  slabs                    - Adds half-step bottom slabs to the loaded world's risers.")
+				out.print_to_console("  water_lake [r] [depth] [sim] - Creates a calm (or simulated) lake at the player.")
+				out.print_to_console("  water_fill [r] [amount]  - Adds volume around the player.")
+				out.print_to_console("  water_drain [r] [amount] - Removes volume around the player.")
+				out.print_to_console("  water_info               - Prints water body/cell counts.")
+				out.print_to_console("  water_clear              - Removes every water body.")
+				out.print_to_console("  gas [amount] [radius]    - Adds LPG-like gas at the player.")
+				out.print_to_console("  smoke [amount] [radius]  - Adds smoke at the player.")
+				out.print_to_console("  gas_clear                - Clears the gas and smoke fields.")
+				out.print_to_console("  path_mode [astar|flow]  - Switches between A* and baked flow fields.")
+				out.print_to_console("  show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
+				out.print_to_console("  opt_overlay [on|off]    - Toggles the optimizer assignment overlay.")
+				out.print_to_console("  opt_resolve             - Requests one optimizer solve now.")
+				out.print_to_console("  opt_interval <s>        - Sets the periodic re-solve interval.")
+				out.print_to_console("  clear                   - Clears the console window.")
+
+>>>>>>> Stashed changes
 				out.print_to_console("\n--- GlobalData Script Methods ---")
 				
 				# Check if GlobalData actually has an attached script
@@ -139,7 +162,168 @@ func _process_command(cmd_line: String) -> void:
 		"/path_mode", "/pathfinding", "/flowfields", "/flow_fields":
 			var grid = get_tree().get_first_node_in_group("grid_map")
 			if grid == null:
+<<<<<<< Updated upstream
 				if out: out.print_to_console("Error: no grid map found.")
+=======
+				if out:
+					out.print_to_console("Error: no grid map found.")
+			else:
+				var mesher = grid.get_mesher()
+
+				if mesher == null:
+					if out:
+						out.print_to_console("No chunk mesher is active.")
+				else:
+					var enabled: bool = _resolve_toggle(args, mesher.is_lod_enabled())
+					var streamer = get_tree().get_first_node_in_group("chunk_streamer")
+
+					if streamer != null:
+						streamer.lod_override = 1 if enabled else 0
+
+					mesher.set_lod_enabled(enabled)
+
+					if out:
+						out.print_to_console(
+							"Distance LOD: %s" % ("ON" if enabled else "OFF")
+						)
+
+		"slabs", "step_slabs":
+			var grid = get_tree().get_first_node_in_group("grid_map")
+			if grid == null:
+				if out:
+					out.print_to_console("Error: no grid map found.")
+			else:
+				var placed: int = grid.add_step_slabs(46)
+
+				if out:
+					out.print_to_console(
+						"Step slabs: %d added." % placed
+					)
+
+		"water_lake", "lake":
+			var world = get_tree().get_first_node_in_group("water_world")
+			var player = get_tree().get_first_node_in_group("player")
+			if world == null or player == null:
+				if out:
+					out.print_to_console("Error: need a WaterWorld node and a player.")
+			else:
+				var radius := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 8.0
+				var depth := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 1.0
+				var simulated := args.size() > 2 and args[2] == "1"
+				var body_id: int = world.call(
+					"create_lake_at",
+					player.global_position,
+					radius,
+					depth,
+					simulated,
+					2.0
+				)
+				if out:
+					out.print_to_console(
+						"Water body %d: radius %.1f, depth %.1f, %s."
+						% [body_id, radius, depth, "simulated" if simulated else "calm"]
+					)
+
+		"water_fill", "water_add":
+			var world = get_tree().get_first_node_in_group("water_world")
+			var player = get_tree().get_first_node_in_group("player")
+			if world == null or player == null:
+				if out:
+					out.print_to_console("Error: need a WaterWorld node and a player.")
+			else:
+				var radius := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 3.0
+				var amount := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 0.5
+				var changed: int = world.call(
+					"add_water_area",
+					player.global_position,
+					radius,
+					amount
+				)
+				if out:
+					out.print_to_console("Water added to %d cells." % changed)
+
+		"water_drain", "water_remove":
+			var world = get_tree().get_first_node_in_group("water_world")
+			var player = get_tree().get_first_node_in_group("player")
+			if world == null or player == null:
+				if out:
+					out.print_to_console("Error: need a WaterWorld node and a player.")
+			else:
+				var radius := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 3.0
+				var amount := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 0.5
+				var changed: int = world.call(
+					"remove_water_area",
+					player.global_position,
+					radius,
+					amount
+				)
+				if out:
+					out.print_to_console("Water removed from %d cells." % changed)
+
+		"water_clear":
+			var world = get_tree().get_first_node_in_group("water_world")
+			if world != null:
+				world.call("clear_all")
+			if out:
+				out.print_to_console("Water cleared.")
+
+		"water_info":
+			var world = get_tree().get_first_node_in_group("water_world")
+			if world == null:
+				if out:
+					out.print_to_console("Error: no WaterWorld node.")
+			else:
+				var stats: Dictionary = world.call("get_stats")
+				if out:
+					out.print_to_console(
+						"Water: %d bodies, %d cells, %d wet, %d meshes."
+						% [
+							int(stats.get("bodies", 0)),
+							int(stats.get("cells", 0)),
+							int(stats.get("wet_cells", 0)),
+							int(stats.get("meshes", 0)),
+						]
+					)
+
+		"gas", "gas_add":
+			var hazard = get_tree().get_first_node_in_group("hazard_world")
+			var player = get_tree().get_first_node_in_group("player")
+			if hazard == null or player == null:
+				if out:
+					out.print_to_console("Error: need a HazardWorld node and a player.")
+			else:
+				var amount := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 1.0
+				var radius := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 2.0
+				hazard.call("add_gas", player.global_position, amount, radius)
+				if out:
+					out.print_to_console("Gas added (%.2f, radius %.1f)." % [amount, radius])
+
+		"smoke", "smoke_add":
+			var hazard = get_tree().get_first_node_in_group("hazard_world")
+			var player = get_tree().get_first_node_in_group("player")
+			if hazard == null or player == null:
+				if out:
+					out.print_to_console("Error: need a HazardWorld node and a player.")
+			else:
+				var amount := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 1.0
+				var radius := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 2.0
+				hazard.call("add_smoke", player.global_position + Vector3.UP, amount, radius)
+				if out:
+					out.print_to_console("Smoke added (%.2f, radius %.1f)." % [amount, radius])
+
+		"gas_clear":
+			var hazard = get_tree().get_first_node_in_group("hazard_world")
+			if hazard != null:
+				hazard.call("clear_all")
+			if out:
+				out.print_to_console("Gas and smoke cleared.")
+
+		"path_mode", "pathfinding", "flowfields", "flow_fields":
+			var grid = get_tree().get_first_node_in_group("grid_map")
+			if grid == null:
+				if out:
+					out.print_to_console("Error: no grid map found.")
+>>>>>>> Stashed changes
 			else:
 				var use_flow: bool = grid.enable_flow_fields
 				if not args.is_empty():

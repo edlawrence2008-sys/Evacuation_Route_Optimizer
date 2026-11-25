@@ -354,9 +354,12 @@ func _build_library_index() -> void:
 		return
 
 	for id: int in grid_map.mesh_library.get_item_list():
-		_library_name_to_id[
-			String(grid_map.mesh_library.get_item_name(id))
-		] = id
+		var item_name := String(grid_map.mesh_library.get_item_name(id))
+		# The legacy water addon owns these reserved MeshLibrary slots; they are
+		# not buildable blocks in the core game.
+		if item_name.to_lower().begins_with("legacy_water_"):
+			continue
+		_library_name_to_id[item_name] = id
 
 func _init_ghost_block() -> void:
 	ghost_area = MultiMeshInstance3D.new()
@@ -1161,6 +1164,7 @@ func _finish_area() -> void:
 		if selected == -1:
 			return
 
+<<<<<<< Updated upstream
 		var water_kind := _water_kind_for_item(selected)
 		if not water_kind.is_empty():
 			var water := _get_water_system()
@@ -1173,6 +1177,10 @@ func _finish_area() -> void:
 			return
 
 		grid_map.place_blocks(
+=======
+		# The normal stretch/drag uses the same Tool and Placement as brushes.
+		_apply_tool_to_cells(
+>>>>>>> Stashed changes
 			cells,
 			resolved_item if resolved_item != -1 else selected,
 			resolved_orientation
@@ -1296,6 +1304,878 @@ func _collect_area_cells(
 
 	return cells
 
+<<<<<<< Updated upstream
+=======
+## Applies the left build-tab settings. Called by the panel on every change.
+func set_build_settings(settings: Dictionary) -> void:
+	brush_mode = bool(settings.get("brush_mode", brush_mode))
+	brush_kind = int(settings.get("brush_kind", brush_kind))
+	build_tool = int(settings.get("tool", build_tool))
+	placement_mode = int(settings.get("placement", placement_mode))
+	var raw_params: Variant = settings.get(
+		"brush_params",
+		brush_params
+	)
+	var params: Vector3i = (
+		raw_params if raw_params is Vector3i else brush_params
+	)
+	brush_params = _clamp_brush_params(brush_kind, params)
+	brush_pattern = int(settings.get("pattern", brush_pattern))
+
+	# Switching modes mid-stroke must not leave an old fill/replace preview
+	# running with the new settings.
+	_cancel_build_drag()
+	_preview_orientation = -1
+	_hide_ghost_block()
+
+
+func _clamp_brush_params(kind: int, params: Vector3i) -> Vector3i:
+	match kind:
+		BrushKind.CUBOID:
+			return Vector3i(
+				clampi(params.x, 1, 32),
+				clampi(params.y, 1, 32),
+				clampi(params.z, 1, 32)
+			)
+		BrushKind.SPHERE:
+			return Vector3i(clampi(params.x, 1, 10), 0, 0)
+		BrushKind.CYLINDER:
+			return Vector3i(
+				clampi(params.x, 1, 8),
+				clampi(params.y, 1, 8),
+				0
+			)
+		_:
+			return Vector3i(clampi(params.x, 1, 10), 0, 0)
+
+
+## Local cell offsets for the current brush, centred on the target block.
+func _brush_positions() -> Array[Vector3i]:
+	match brush_kind:
+		BrushKind.CUBOID:
+			return _cuboid_positions()
+		BrushKind.SPHERE:
+			return _sphere_positions()
+		BrushKind.CYLINDER:
+			return _cylinder_positions()
+	return []
+
+
+func _cuboid_positions() -> Array[Vector3i]:
+	var width := clampi(brush_params.x, 1, 32)
+	var height := clampi(brush_params.y, 1, 32)
+	var length := clampi(brush_params.z, 1, 32)
+	var result: Array[Vector3i] = []
+	for x in range(-floori((width - 1) * 0.5), floori(width * 0.5) + 1):
+		for y in range(-floori((height - 1) * 0.5), floori(height * 0.5) + 1):
+			for z in range(-floori((length - 1) * 0.5), floori(length * 0.5) + 1):
+				result.append(Vector3i(x, y, z))
+	return result
+
+
+func _sphere_positions() -> Array[Vector3i]:
+	var radius := clampi(brush_params.x, 1, 10)
+	var result: Array[Vector3i] = []
+	for x in range(-radius - 1, radius + 2):
+		for y in range(-radius - 1, radius + 2):
+			for z in range(-radius - 1, radius + 2):
+				if Vector3(x, y, z).length() < float(radius) + 0.5:
+					result.append(Vector3i(x, y, z))
+	return result
+
+
+func _cylinder_positions() -> Array[Vector3i]:
+	var radius := clampi(brush_params.x, 1, 8)
+	var height := clampi(brush_params.y, 1, 8)
+	var result: Array[Vector3i] = []
+	for layer in height:
+		var y := layer - floori(height * 0.5)
+		for x in range(-radius - 1, radius + 2):
+			for z in range(-radius - 1, radius + 2):
+				if Vector2(x, z).length() < float(radius) + 0.42:
+					result.append(Vector3i(x, y, z))
+	return result
+
+
+func _face_axis(face: Vector3i) -> int:
+	if absi(face.x) > 0:
+		return 0
+	if absi(face.y) > 0:
+		return 1
+	return 2
+
+
+## Worldshaper placement offsets: Merged centres the brush on the target;
+## Attached pushes it out along the hit face; Inserted pushes it through the
+## block and past the opposite face.
+func _placement_offset(face: Vector3i) -> Vector3i:
+	if placement_mode == PlacementMode.MERGED:
+		return Vector3i.ZERO
+	if brush_kind == BrushKind.SURFACE or brush_kind == BrushKind.CLUSTER:
+		return Vector3i.ZERO
+
+	var axis := _face_axis(face)
+	var face_sign := 1 if face[axis] >= 0 else -1
+	var amount := 0
+
+	match brush_kind:
+		BrushKind.CUBOID:
+			var dims := [
+				clampi(brush_params.x, 1, 32),
+				clampi(brush_params.y, 1, 32),
+				clampi(brush_params.z, 1, 32),
+			]
+			var step := 0
+			if placement_mode == PlacementMode.ATTACHED:
+				step = 2 if face_sign < 0 else 1
+			amount = floori((int(dims[axis]) + step) * 0.5)
+		BrushKind.SPHERE:
+			var radius := clampi(brush_params.x, 1, 10)
+			amount = (
+				radius + 1
+				if placement_mode == PlacementMode.ATTACHED
+				else radius
+			)
+		BrushKind.CYLINDER:
+			var radius := clampi(brush_params.x, 1, 8)
+			var height := clampi(brush_params.y, 1, 8)
+			var y_offset := 0
+			if placement_mode == PlacementMode.ATTACHED:
+				y_offset = 1 if face_sign < 0 else 2
+			else:
+				y_offset = 0 if face_sign < 0 else -1
+			var vertical := floori((height + y_offset) * 0.5)
+			amount = (
+				vertical
+				if axis == 1
+				else (radius + 1 if placement_mode == PlacementMode.ATTACHED else radius)
+			)
+
+	# `relative(face, amount)` from the reference: Attached moves along the hit
+	# face, Inserted moves the opposite way. Forgetting the face sign made
+	# negative-facing placements shift into the block instead of out of it.
+	var direction := face_sign if placement_mode == PlacementMode.ATTACHED else -face_sign
+	var result := Vector3i.ZERO
+	result[axis] = amount * direction
+	return result
+
+
+## Flat-drag anchor. A drag has no depth, so the placement modes pick the layer:
+## Merged is the target's own layer, Attached is the face-adjacent layer, and
+## Inserted is one layer behind the target (past its opposite face).
+func _placement_anchor(hit_cell: Vector3i, face: Vector3i) -> Vector3i:
+	match placement_mode:
+		PlacementMode.MERGED:
+			return hit_cell
+		PlacementMode.INSERTED:
+			return hit_cell - face
+		_:
+			return hit_cell + face
+
+
+func _brush_volume(
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	tool_override: int = -1,
+	removing: bool = false
+) -> Array[Vector3i]:
+	if brush_kind == BrushKind.SURFACE:
+		return _surface_cells(
+			target_cell,
+			face,
+			target_item,
+			tool_override
+		)
+	if brush_kind == BrushKind.CLUSTER:
+		return _cluster_cells(target_cell, target_item)
+
+	# Placement sits in the adjacent layer chosen by Placement; removal stays
+	# centred on the aimed block so it carves the same shape the player sees.
+	var offset := Vector3i.ZERO if removing else _placement_offset(face)
+	var result: Array[Vector3i] = []
+	for local: Vector3i in _brush_positions():
+		result.append(target_cell + offset + local)
+	return result
+
+
+func _surface_cells(
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	tool_override: int = -1
+) -> Array[Vector3i]:
+	if target_item == -1:
+		return []
+
+	var tool := build_tool if tool_override == -1 else tool_override
+	var radius := clampi(brush_params.x, 1, 10)
+	var replace_mode := (
+		tool == BuildTool.REPLACE
+		or tool == BuildTool.CLEAR
+		or tool == BuildTool.FLATTEN
+	)
+	var start := target_cell if replace_mode else target_cell + face
+	var axis := _face_axis(face)
+	var offsets: Array[Vector3i] = []
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			for dz in range(-1, 2):
+				var offset := Vector3i(dx, dy, dz)
+				if offset == Vector3i.ZERO:
+					continue
+				if offset[axis] != 0:
+					continue
+				if absi(dx) + absi(dy) + absi(dz) > 1:
+					continue
+				offsets.append(offset)
+
+	var visited: Dictionary = {}
+	var frontier: Array[Vector3i] = [start]
+	var result: Array[Vector3i] = []
+
+	while not frontier.is_empty():
+		var current: Vector3i = frontier.pop_front()
+		if visited.has(current):
+			continue
+		visited[current] = true
+		if (current - start).length_squared() > radius * radius:
+			continue
+
+		if replace_mode:
+			if not grid_map.has_block(current):
+				continue
+			if int(grid_map.get_block_item(current)) != target_item:
+				continue
+			if grid_map.has_block(current + face):
+				continue
+			result.append(current)
+		else:
+			if grid_map.has_block(current):
+				continue
+			var behind := current - face
+			if not grid_map.has_block(behind):
+				continue
+			if int(grid_map.get_block_item(behind)) != target_item:
+				continue
+			result.append(current)
+
+		for offset: Vector3i in offsets:
+			frontier.append(current + offset)
+
+	return result
+
+
+func _cluster_cells(
+	target_cell: Vector3i,
+	target_item: int
+) -> Array[Vector3i]:
+	if target_item == -1:
+		return []
+
+	var radius := clampi(brush_params.x, 1, 10)
+	var visited: Dictionary = {}
+	var frontier: Array[Vector3i] = [target_cell]
+	var result: Array[Vector3i] = []
+	var offsets: Array[Vector3i] = [
+		Vector3i.LEFT, Vector3i.RIGHT,
+		Vector3i.UP, Vector3i.DOWN,
+		Vector3i.FORWARD, Vector3i.BACK,
+	]
+
+	while not frontier.is_empty():
+		var current: Vector3i = frontier.pop_front()
+		if visited.has(current):
+			continue
+		visited[current] = true
+		if (current - target_cell).length_squared() > radius * radius:
+			continue
+		if not grid_map.has_block(current):
+			continue
+		if int(grid_map.get_block_item(current)) != target_item:
+			continue
+		result.append(current)
+		for offset: Vector3i in offsets:
+			frontier.append(current + offset)
+
+	return result
+
+
+func _normal_to_cell(normal: Vector3) -> Vector3i:
+	return Vector3i(
+		roundi(normal.x),
+		roundi(normal.y),
+		roundi(normal.z)
+	)
+
+
+## Cells the current tool would actually change. The ghost uses this only to
+## decide blue/white; it still draws the whole brush volume.
+func _brush_affected(
+	volume: Array[Vector3i],
+	target_cell: Vector3i,
+	face: Vector3i,
+	_target_item: int,
+	tool_override: int = -1
+) -> Array[Vector3i]:
+	if volume.is_empty():
+		return []
+
+	var tool := build_tool if tool_override == -1 else tool_override
+
+	if brush_kind == BrushKind.SURFACE:
+		if tool == BuildTool.FLATTEN:
+			return _flatten_affected(volume, target_cell)
+		return _without_player_cells(volume)
+
+	if brush_kind == BrushKind.CLUSTER:
+		return _without_player_cells(volume)
+
+	return _tool_affected(volume, target_cell, face, tool)
+
+
+## Shared Tool filter for brushes and flat drags.
+func _tool_affected(
+	cells: Array[Vector3i],
+	target_cell: Vector3i,
+	_face: Vector3i,
+	tool_override: int = -1
+) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+	var tool := build_tool if tool_override == -1 else tool_override
+
+	match tool:
+		BuildTool.FILL:
+			for cell: Vector3i in cells:
+				if _cell_overlaps_player(cell):
+					continue
+				if not grid_map.has_block(cell):
+					result.append(cell)
+		BuildTool.PLACE:
+			result = _without_player_cells(cells)
+		BuildTool.REPLACE, BuildTool.CLEAR:
+			for cell: Vector3i in cells:
+				if _cell_overlaps_player(cell):
+					continue
+				if grid_map.has_block(cell):
+					result.append(cell)
+		BuildTool.OVERLAY:
+			for cell: Vector3i in cells:
+				if not grid_map.has_block(cell):
+					continue
+				var above := cell + Vector3i.UP
+				if _cell_overlaps_player(above):
+					continue
+				if not grid_map.has_block(above):
+					result.append(above)
+		BuildTool.FLATTEN:
+			result = _flatten_affected(cells, target_cell)
+
+	return result
+
+
+func _area_will_change(
+	cells: Array[Vector3i],
+	target_cell: Vector3i,
+	face: Vector3i
+) -> bool:
+	if cells.is_empty():
+		return false
+	if _area_destroying:
+		return true
+	var needs_item := (
+		build_tool != BuildTool.CLEAR
+		and build_tool != BuildTool.FLATTEN
+	)
+	if needs_item and _current_build_item() == -1:
+		return false
+	return not _tool_affected(cells, target_cell, face).is_empty()
+
+
+func _without_player_cells(cells: Array[Vector3i]) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+	for cell: Vector3i in cells:
+		if not _cell_overlaps_player(cell):
+			result.append(cell)
+	return result
+
+
+## One click with a brush. Brushes disable stretch/drag entirely. `removing`
+## turns the same brush shape into a Clear action for the break button.
+func _apply_brush(removing: bool = false) -> void:
+	if not grid_map:
+		_get_grid_map()
+		if not grid_map:
+			return
+
+	# Held tools (bulbs, etc.) use primary/secondary use, not brush placement.
+	if not removing and _held_use_component != null:
+		return
+
+	var hit := _get_build_hit()
+	if hit.is_empty():
+		return
+
+	var face := _normal_to_cell(hit.normal)
+	var target_cell := grid_map.get_hit_cell(hit.position, hit.normal)
+
+	# Breaking over a placeable centres the destruction volume on it instead of
+	# carving the block behind it.
+	if removing:
+		var placeable := _find_placeable_ancestor(hit.collider)
+		if placeable is Node3D:
+			target_cell = grid_map.local_to_map(
+				grid_map.to_local((placeable as Node3D).global_position)
+			)
+			face = Vector3.UP
+
+	var target_item := int(grid_map.get_block_item(target_cell))
+	_apply_brush_at(target_cell, face, target_item, removing, hit)
+
+
+## Applies the brush to an explicit target. Split from `_apply_brush()` so
+## headless checks and demo tooling can drive a brush without a camera ray.
+func _apply_brush_at(
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	removing: bool = false,
+	anchor_hit: Dictionary = {}
+) -> void:
+	# Break always removes, whatever Tool is selected. The volume keeps the
+	# brush's shape and is centred on the aimed block instead of the adjacent
+	# placement layer. The Clear tool carves the same way.
+	var tool := BuildTool.CLEAR if removing else build_tool
+	var clearing := tool == BuildTool.CLEAR
+	var volume := _brush_volume(
+		target_cell,
+		face,
+		target_item,
+		tool,
+		clearing
+	)
+
+	if clearing:
+		_apply_brush_clear(volume, target_cell, face, target_item, tool)
+		return
+
+	# Palettes roll a fresh entry for every affected cell, including brushes.
+	var palette_id := _active_palette_id()
+	if not palette_id.is_empty():
+		_place_palette_cells(
+			palette_id,
+			volume,
+			target_cell,
+			face,
+			target_item,
+			tool,
+			anchor_hit,
+			brush_kind == BrushKind.CLUSTER
+		)
+		return
+
+	# A selected placeable uses the brush footprint and spawns one copy per
+	# column on the aimed surface. Flatten still levels terrain with the aimed
+	# material instead of spawning placeables.
+	if (
+		_selected_placeable_scene != null
+		and tool != BuildTool.FLATTEN
+	):
+		_apply_brush_placeable(volume, target_cell, anchor_hit)
+		return
+
+	# Shaped brushes and flat drags share the same Tool implementation.
+	if brush_kind != BrushKind.SURFACE and brush_kind != BrushKind.CLUSTER:
+		_apply_tool_to_cells(
+			volume,
+			target_cell,
+			face,
+			target_item,
+			-1,
+			-1,
+			tool
+		)
+		return
+
+	var affected := _brush_affected(
+		volume,
+		target_cell,
+		face,
+		target_item,
+		tool
+	)
+	if affected.is_empty():
+		return
+
+	var selected := _current_build_item()
+	var needs_item := (
+		tool != BuildTool.CLEAR
+		and tool != BuildTool.FLATTEN
+	)
+	if needs_item and selected == -1:
+		return
+
+	var item := selected if selected != -1 else target_item
+	if item == -1:
+		return
+
+	var anchor_cells: Array[Vector3i] = [target_cell]
+	var resolved := _resolve_placement(item, anchor_cells)
+	var place_item := int(resolved["item"])
+	var orientation := int(resolved["orientation"])
+
+	affected = _pattern_cells(affected)
+	if affected.is_empty():
+		return
+
+	if brush_kind == BrushKind.CLUSTER:
+		# Cluster only replaces or clears the matching material.
+		grid_map.remove_blocks(affected)
+		if tool != BuildTool.CLEAR:
+			grid_map.place_blocks(affected, place_item, orientation)
+	elif tool == BuildTool.FLATTEN:
+		_flatten_apply(volume, target_cell, place_item, orientation)
+	elif tool == BuildTool.CLEAR:
+		grid_map.remove_blocks(affected)
+	else:
+		if tool == BuildTool.PLACE or tool == BuildTool.REPLACE:
+			grid_map.remove_blocks(affected)
+		grid_map.place_blocks(affected, place_item, orientation)
+
+	_play_sfx(_sfx_land, 1.1, 1.3)
+	if _hand != null:
+		_hand.call("play_place_swing")
+	_reroll_palette_preview()
+
+
+## Clears blocks and placeables inside a brush volume. Used by the Clear tool
+## and by brush-mode break.
+func _apply_brush_clear(
+	volume: Array[Vector3i],
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	tool: int
+) -> void:
+	var affected := _brush_affected(
+		volume,
+		target_cell,
+		face,
+		target_item,
+		tool
+	)
+	affected = _pattern_cells(affected)
+	var removed_blocks := 0
+	if not affected.is_empty():
+		removed_blocks = grid_map.remove_blocks(affected)
+	var removed_placeables := _remove_placeables_in_cells(volume)
+
+	if removed_blocks == 0 and removed_placeables == 0:
+		return
+	_play_sfx(_sfx_land, 0.7, 0.9)
+	if _hand != null:
+		_hand.call("play_break_swing")
+
+
+## Places one selected placeable per brush footprint column on the aimed
+## surface. The brush's placement layer is already baked into `volume`.
+func _apply_brush_placeable(
+	volume: Array[Vector3i],
+	target_cell: Vector3i,
+	anchor_hit: Dictionary
+) -> void:
+	var scene := _selected_placeable_scene
+	if scene == null or volume.is_empty():
+		return
+	if (
+		_placeable_scene_requires_support(scene)
+		and not _placeable_has_voxel_support(anchor_hit)
+	):
+		_play_sfx(_sfx_build_cancel, 1.0, 1.0)
+		return
+
+	var cells: Array[Vector3i] = []
+	for column: Vector2i in _volume_columns(volume):
+		cells.append(Vector3i(column.x, target_cell.y, column.y))
+	cells = _pattern_cells(cells)
+	if cells.is_empty():
+		return
+
+	_spawn_placeables_in_cells(scene, cells, anchor_hit)
+	_play_sfx(_sfx_land, 1.1, 1.3)
+	if _hand != null:
+		_hand.call("play_place_swing")
+
+
+## Shared palette placement for brushes and drags. Every affected cell rolls
+## its own palette entry, so a shape is not painted with one random block.
+## `direct_cells` is used by the Cluster brush, which already selected the
+## connected same-material cells.
+func _place_palette_cells(
+	palette_id: String,
+	cells: Array[Vector3i],
+	target_cell: Vector3i,
+	face: Vector3i,
+	_target_item: int,
+	tool: int,
+	anchor_hit: Dictionary,
+	direct_cells: bool = false
+) -> bool:
+	if hud_manager == null or grid_map == null or cells.is_empty():
+		return false
+	var entries := hud_manager.get_palette_entries(palette_id)
+	if entries.is_empty():
+		return false
+
+	if tool == BuildTool.FLATTEN:
+		# Flatten keeps the single preview block; random per-column flattening
+		# would need to rebuild each column's height separately.
+		var preview := _current_build_item()
+		if preview == -1:
+			return false
+		var one_anchor: Array[Vector3i] = [target_cell]
+		var flatten := _resolve_placement(preview, one_anchor)
+		_flatten_apply(
+			cells,
+			target_cell,
+			int(flatten["item"]),
+			int(flatten["orientation"])
+		)
+		return true
+
+	var affected: Array[Vector3i]
+	if tool == BuildTool.CLEAR:
+		if direct_cells:
+			affected = _without_player_cells(cells)
+		else:
+			affected = _tool_affected(cells, target_cell, face, tool)
+		affected = _pattern_cells(affected)
+		if not affected.is_empty():
+			grid_map.remove_blocks(affected)
+		var removed_placeables := _remove_placeables_in_cells(cells)
+		if not affected.is_empty() or removed_placeables > 0:
+			_play_sfx(_sfx_land, 0.7, 0.9)
+			if _hand != null:
+				_hand.call("play_break_swing")
+		return not affected.is_empty() or removed_placeables > 0
+
+	if direct_cells:
+		affected = _without_player_cells(cells)
+	else:
+		affected = _tool_affected(cells, target_cell, face, tool)
+	affected = _pattern_cells(affected)
+	if affected.is_empty():
+		return false
+
+	if tool == BuildTool.PLACE or tool == BuildTool.REPLACE:
+		grid_map.remove_blocks(affected)
+
+	var supported := _placeable_has_voxel_support(anchor_hit)
+	var used_placeable_columns: Dictionary = {}
+	var placed := false
+
+	for cell: Vector3i in affected:
+		var entry: Dictionary = entries[randi() % entries.size()]
+		if String(entry.get("kind", "")) == "block":
+			var item := int(entry.get("item_id", -1))
+			if item == -1:
+				continue
+			var one: Array[Vector3i] = [cell]
+			var resolved := _resolve_placement(item, one)
+			grid_map.place_blocks(
+				one,
+				int(resolved["item"]),
+				int(resolved["orientation"])
+			)
+			placed = true
+		elif String(entry.get("kind", "")) == "placeable":
+			var scene: PackedScene = entry.get("scene")
+			if scene == null:
+				continue
+			if _placeable_scene_requires_support(scene) and not supported:
+				continue
+			var column := Vector2i(cell.x, cell.z)
+			if used_placeable_columns.has(column):
+				continue
+			used_placeable_columns[column] = true
+			var one: Array[Vector3i] = [cell]
+			_spawn_placeables_in_cells(scene, one, anchor_hit)
+			placed = true
+
+	if placed:
+		_play_sfx(_sfx_land, 1.1, 1.3)
+		if _hand != null:
+			_hand.call("play_place_swing")
+		_reroll_palette_preview()
+	return placed
+
+
+## Applies the selected Tool to any cell set. Used by shaped brushes and by the
+## normal stretch/drag plane. `forced_item`/`forced_orientation` keep a drag's
+## press-time variant stable.
+func _apply_tool_to_cells(
+	cells: Array[Vector3i],
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	forced_item: int = -1,
+	forced_orientation: int = -1,
+	tool_override: int = -1
+) -> bool:
+	var tool := build_tool if tool_override == -1 else tool_override
+
+	if tool == BuildTool.CLEAR:
+		# Clear needs no material, so it still works with an empty hand or an
+		# air target cell.
+		var clear_cells := _tool_affected(cells, target_cell, face, tool)
+		clear_cells = _pattern_cells(clear_cells)
+		if clear_cells.is_empty():
+			return false
+		grid_map.remove_blocks(clear_cells)
+		_play_sfx(_sfx_land, 0.7, 0.9)
+		if _hand != null:
+			_hand.call("play_break_swing")
+		return true
+
+	var selected := _current_build_item()
+	var needs_item := tool != BuildTool.FLATTEN
+	if needs_item and selected == -1 and forced_item == -1:
+		return false
+
+	var item := forced_item
+	if item == -1:
+		item = selected if selected != -1 else target_item
+	if item == -1:
+		return false
+
+	var place_item := forced_item
+	var orientation := forced_orientation
+	if place_item == -1:
+		var anchor_cells: Array[Vector3i] = [target_cell]
+		var resolved := _resolve_placement(item, anchor_cells)
+		place_item = int(resolved["item"])
+		orientation = int(resolved["orientation"])
+
+	var affected := _tool_affected(cells, target_cell, face, tool)
+	affected = _pattern_cells(affected)
+	if affected.is_empty():
+		return false
+
+	match tool:
+		BuildTool.CLEAR:
+			grid_map.remove_blocks(affected)
+		BuildTool.FLATTEN:
+			_flatten_apply(cells, target_cell, place_item, orientation)
+		BuildTool.PLACE, BuildTool.REPLACE:
+			grid_map.remove_blocks(affected)
+			grid_map.place_blocks(affected, place_item, orientation)
+		_:
+			grid_map.place_blocks(affected, place_item, orientation)
+
+	_play_sfx(_sfx_land, 1.1, 1.3)
+	if _hand != null:
+		_hand.call("play_place_swing")
+	_reroll_palette_preview()
+	return true
+
+
+## Unique X/Z columns in a brush volume, used by Flatten.
+func _volume_columns(volume: Array[Vector3i]) -> Array[Vector2i]:
+	var seen: Dictionary = {}
+	var result: Array[Vector2i] = []
+	for cell: Vector3i in volume:
+		var column := Vector2i(cell.x, cell.z)
+		if seen.has(column):
+			continue
+		seen[column] = true
+		result.append(column)
+	return result
+
+
+func _column_top(x: int, z: int, center_y: int, radius: int) -> int:
+	for y in range(center_y + radius, center_y - radius - 1, -1):
+		if grid_map.has_block(Vector3i(x, y, z)):
+			return y
+	return center_y - radius - 1
+
+
+func _flatten_affected(
+	volume: Array[Vector3i],
+	target_cell: Vector3i
+) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+	for column: Vector2i in _volume_columns(volume):
+		var top := _column_top(column.x, column.y, target_cell.y, 16)
+		var target_y := target_cell.y
+		if top == target_y:
+			continue
+		var cell := Vector3i(column.x, target_y, column.y)
+		if not _cell_overlaps_player(cell):
+			result.append(cell)
+	return result
+
+
+## Simple flatten: one surface height per column at the target block's Y.
+## (The reference tool smooths the height map; this keeps the result readable
+## and reversible by Undo-style rebuilds.)
+func _flatten_apply(
+	volume: Array[Vector3i],
+	target_cell: Vector3i,
+	item: int,
+	orientation: int
+) -> void:
+	var target_y := target_cell.y
+	var remove: Array[Vector3i] = []
+	var place: Array[Vector3i] = []
+
+	for column: Vector2i in _volume_columns(volume):
+		var top := _column_top(column.x, column.y, target_y, 16)
+
+		if top > target_y:
+			for y in range(target_y + 1, top + 1):
+				var cell := Vector3i(column.x, y, column.y)
+				if not _cell_overlaps_player(cell):
+					remove.append(cell)
+		elif top < target_y:
+			for y in range(top + 1, target_y + 1):
+				var cell := Vector3i(column.x, y, column.y)
+				if not _cell_overlaps_player(cell):
+					place.append(cell)
+
+	if not remove.is_empty():
+		grid_map.remove_blocks(remove)
+	if not place.is_empty():
+		grid_map.place_blocks(place, item, orientation)
+
+
+func _pattern_cells(cells: Array[Vector3i]) -> Array[Vector3i]:
+	if brush_pattern == BrushPattern.SOLID:
+		return cells
+
+	var result: Array[Vector3i] = []
+	for cell: Vector3i in cells:
+		if _pattern_keeps(cell):
+			result.append(cell)
+	return result
+
+
+func _pattern_keeps(cell: Vector3i) -> bool:
+	match brush_pattern:
+		BrushPattern.CHANCE25:
+			return randf() < 0.25
+		BrushPattern.CHANCE50:
+			return randf() < 0.5
+		BrushPattern.CHANCE75:
+			return randf() < 0.75
+		BrushPattern.CHECKER:
+			return posmod(cell.x + cell.y + cell.z, 2) == 0
+		BrushPattern.INVERSE_CHECKER:
+			return posmod(cell.x + cell.y + cell.z, 2) != 0
+		_:
+			return true
+
+
+>>>>>>> Stashed changes
 func _area_cells_size_key(cells: Array[Vector3i]) -> Vector3i:
 	if cells.is_empty():
 		return Vector3i.ZERO
@@ -1728,6 +2608,7 @@ func _refresh_held_use_component() -> void:
 		# Keep the component alive after the inspection instance is freed. It
 		# is a plain Node, so it can live under the controller.
 		component.get_parent().remove_child(component)
+		component.owner = null
 		add_child(component)
 		_held_use_component = component
 
@@ -1925,14 +2806,16 @@ func _pick_aimed() -> void:
 		return
 
 	var cell: Vector3i = grid_map.get_hit_cell(hit.position, hit.normal)
+<<<<<<< Updated upstream
 	var item: int = grid_map.get_cell_item(cell)
 	var water := _get_water_system()
 	var water_item: int = water.get_pick_item(cell) if water != null else -1
+=======
+	var item: int = grid_map.get_block_item(cell)
+>>>>>>> Stashed changes
 	var picked := -1
 
-	if water_item != -1:
-		picked = water_item
-	elif item != -1:
+	if item != -1:
 		picked = _canonical_pick_item(item)
 
 	if picked == -1 or hud_manager == null:
@@ -1974,29 +2857,6 @@ func _canonical_pick_item(item: int) -> int:
 			return stair_item
 
 	return item
-
-
-func _water_kind_for_item(item: int) -> String:
-	if grid_map == null or grid_map.mesh_library == null:
-		return ""
-
-	var item_name := String(grid_map.mesh_library.get_item_name(item))
-	if item_name in [
-		"Water_Surface",
-		"Water_Full",
-		"Water_Slab",
-		"Water_Panel",
-	]:
-		return item_name
-	return ""
-
-
-func _get_water_system() -> WaterSystem:
-	if grid_map == null:
-		_get_grid_map()
-	if grid_map == null:
-		return null
-	return grid_map.get_water_system()
 
 
 func _get_build_hit() -> Dictionary:

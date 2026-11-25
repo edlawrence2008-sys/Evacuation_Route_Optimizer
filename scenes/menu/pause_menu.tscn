@@ -9,7 +9,11 @@
 [ext_resource type="PackedScene" path="res://scenes/menu/settings/gameplay_menu.tscn" id="7_gameplay"]
 [ext_resource type="PackedScene" path="res://scenes/menu/settings/audio_menu.tscn" id="8_audio"]
 [ext_resource type="PackedScene" path="res://scenes/menu/settings/controls_menu.tscn" id="9_controls"]
+<<<<<<< Updated upstream
 [ext_resource type="PackedScene" path="res://scenes/menu/settings/water_menu.tscn" id="10_water"]
+=======
+[ext_resource type="PackedScene" path="res://scenes/menu/settings/sky_clouds_menu.tscn" id="11_sky_clouds"]
+>>>>>>> Stashed changes
 
 [sub_resource type="StandardMaterial3D" id="Mat_dim"]
 render_priority = 3
@@ -158,7 +162,11 @@ selected_color = Color(0.58, 0.13, 0.13, 0.7)
 
 [node name="ControlsPanel" parent="Panel" unique_id=1641530034 instance=ExtResource("9_controls")]
 
+<<<<<<< Updated upstream
 [node name="WaterPanel" parent="Panel" unique_id=1185267418 instance=ExtResource("10_water")]
+=======
+[node name="SkyCloudsPanel" parent="Panel" instance=ExtResource("11_sky_clouds")]
+>>>>>>> Stashed changes
 
 [node name="StatisticsPanel" type="Node3D" parent="Panel" unique_id=1927227174]
 visible = false

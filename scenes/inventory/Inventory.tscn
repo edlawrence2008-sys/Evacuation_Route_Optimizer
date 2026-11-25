@@ -87,6 +87,13 @@ theme_type_variation = &"FlatButton"
 toggle_mode = true
 text = "Placeables"
 
+[node name="Useables" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox"]
+layout_mode = 2
+theme = SubResource("Theme_oqp05")
+theme_type_variation = &"FlatButton"
+toggle_mode = true
+text = "Useables"
+
 [node name="Simulation" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox" unique_id=203285778]
 layout_mode = 2
 theme = SubResource("Theme_oqp05")

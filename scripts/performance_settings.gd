@@ -18,13 +18,6 @@ const FPS_CAPS: Array[int] = [30, 60, 0]
 const VIEW_ROLLS: Array[float] = [0.0, 0.75, 1.5, 2.5]
 const VIEW_ROLL_NAMES: Array[String] = ["Off", "Low", "Medium", "High"]
 
-const WATER_FLOW_STEPS: Array[float] = [0.067, 0.1, 0.15, 0.22, 0.3]
-const WATER_EQUALIZE_STEPS: Array[float] = [0.25, 0.5, 0.75, 1.0, 1.5]
-const WATER_UPDATE_BUDGETS: Array[int] = [96, 192, 384, 512, 768, 1024]
-const WATER_MESH_RATES: Array[float] = [0.033, 0.05, 0.08, 0.12, 0.2]
-const WATER_WAVE_STEPS: Array[float] = [0.0625, 0.125, 0.25, 0.5]
-const WATER_WAVE_SAMPLES: Array[int] = [4096, 8192, 12288, 32768]
-
 signal settings_changed
 
 var quality: int = 1
@@ -37,12 +30,12 @@ var load_radius: int = 20
 var nav_radius: int = 4
 var agent_cap: int = 120
 var clouds: bool = true
-var water_effects: bool = true
 var master_volume: float = 0.8
 var max_fps: int = 60
 ## Camera view-roll strength, stored as an index into VIEW_ROLLS.
 var view_roll_index: int = 1
 
+<<<<<<< Updated upstream
 # Water simulation tuning (also editable from the pause menu's Water tab).
 var water_flow_interval: float = 0.15
 var water_equalize_interval: float = 0.5
@@ -54,6 +47,22 @@ var water_wave_samples: int = 12288
 var water_wake_style: int = 1
 var water_splashes: bool = true
 var water_surface_particles: bool = true
+=======
+# Sky / weather presentation. These are cosmetic and never affect simulation.
+var sky_time_mode: int = 0
+var sky_speed_index: int = 1
+var sun_visible: bool = true
+var moon_visible: bool = true
+var rainbows: bool = true
+var storm_flashes: bool = true
+var storm_strength_index: int = 2
+var fog_enabled: bool = false
+var cloud_speed_index: int = 2
+var cloud_coverage_index: int = 2
+var foliage_scale: float = 1.0
+## How far inside the rendered chunk ring the depth fog ends.
+var fog_distance_offset: float = 16.0
+>>>>>>> Stashed changes
 
 
 func _ready() -> void:
@@ -76,7 +85,12 @@ func apply_preset(index: int, save: bool = true) -> void:
 			nav_radius = 3
 			agent_cap = 40
 			clouds = false
+<<<<<<< Updated upstream
 			water_effects = false
+=======
+			foliage_scale = 0.5
+			shadow_distance = 20.0
+>>>>>>> Stashed changes
 			max_fps = 30
 		1:
 			render_scale = 0.8
@@ -88,7 +102,12 @@ func apply_preset(index: int, save: bool = true) -> void:
 			nav_radius = 4
 			agent_cap = 120
 			clouds = true
+<<<<<<< Updated upstream
 			water_effects = true
+=======
+			foliage_scale = 1.0
+			shadow_distance = 60.0
+>>>>>>> Stashed changes
 			max_fps = 60
 		_:
 			render_scale = 1.0
@@ -100,54 +119,18 @@ func apply_preset(index: int, save: bool = true) -> void:
 			nav_radius = 8
 			agent_cap = 250
 			clouds = true
+<<<<<<< Updated upstream
 			water_effects = true
+=======
+			foliage_scale = 1.0
+			shadow_distance = 120.0
+>>>>>>> Stashed changes
 			max_fps = 0
-
-	_apply_water_preset(quality)
 
 	if save:
 		save_settings()
 
 	apply_all()
-
-
-## Water-specific defaults for a quality preset. These are copied into the
-## editable water settings so the Water tab and the presets stay in sync.
-func _apply_water_preset(index: int) -> void:
-	match clampi(index, 0, QUALITY_NAMES.size() - 1):
-		0:
-			water_flow_interval = 0.3
-			water_equalize_interval = 1.0
-			water_update_budget = 96
-			water_mesh_interval = 0.12
-			water_waves = true
-			water_wave_step = 0.25
-			water_wave_samples = 4096
-			water_wake_style = 0
-			water_splashes = false
-			water_surface_particles = false
-		1:
-			water_flow_interval = 0.15
-			water_equalize_interval = 0.5
-			water_update_budget = 384
-			water_mesh_interval = 0.08
-			water_waves = true
-			water_wave_step = 0.125
-			water_wave_samples = 12288
-			water_wake_style = 1
-			water_splashes = true
-			water_surface_particles = true
-		_:
-			water_flow_interval = 0.1
-			water_equalize_interval = 0.4
-			water_update_budget = 768
-			water_mesh_interval = 0.05
-			water_waves = true
-			water_wave_step = 0.0625
-			water_wave_samples = 32768
-			water_wake_style = 1
-			water_splashes = true
-			water_surface_particles = true
 
 
 func apply_all() -> void:
@@ -179,28 +162,6 @@ func apply_all() -> void:
 			mesher.build_budget_usec = (
 				2000 if quality == 0 else (3000 if quality == 1 else 4000)
 			)
-
-		var water = grid.get_water_system()
-		if water != null:
-			var waves_changed: bool = (
-				not is_equal_approx(water.wave_step, water_wave_step)
-				or water.wave_max_samples != water_wave_samples
-				or water.wake_style != water_wake_style
-			)
-			water.flow_interval = water_flow_interval
-			water.global_equalize_interval = water_equalize_interval
-			water.max_updates_per_tick = water_update_budget
-			water.mesh_rebuild_interval = water_mesh_interval
-			water.wave_step = water_wave_step
-			water.wave_max_samples = water_wave_samples
-			water.wake_style = water_wake_style
-			water.waves_enabled = water_effects and water_waves
-			water.splashes_enabled = water_effects and water_splashes
-			water.surface_particles_enabled = (
-				water_effects and water_surface_particles
-			)
-			if waves_changed and water.has_method("refresh_wave_settings"):
-				water.refresh_wave_settings()
 
 	var streamer := tree.get_first_node_in_group("chunk_streamer")
 	if streamer != null:
@@ -311,6 +272,7 @@ func toggle_clouds() -> void:
 	_commit()
 
 
+<<<<<<< Updated upstream
 func toggle_water() -> void:
 	water_effects = not water_effects
 	_commit()
@@ -371,6 +333,71 @@ func cycle_water_wake_style() -> void:
 
 func reset_water_settings() -> void:
 	_apply_water_preset(quality)
+=======
+func cycle_sky_time() -> void:
+	sky_time_mode = (sky_time_mode + 1) % SKY_TIME_NAMES.size()
+	_commit()
+
+
+func toggle_sun_disc() -> void:
+	sun_visible = not sun_visible
+	_commit()
+
+
+func toggle_moon_disc() -> void:
+	moon_visible = not moon_visible
+	_commit()
+
+
+func toggle_rainbows() -> void:
+	rainbows = not rainbows
+	_commit()
+
+
+func toggle_storm_flashes() -> void:
+	storm_flashes = not storm_flashes
+	_commit()
+
+
+func toggle_fog() -> void:
+	fog_enabled = not fog_enabled
+	_commit()
+
+
+func cycle_storm_strength() -> void:
+	storm_strength_index = (storm_strength_index + 1) % STORM_STRENGTHS.size()
+	_commit()
+
+
+func cycle_sky_speed() -> void:
+	sky_speed_index = (sky_speed_index + 1) % SKY_SPEEDS.size()
+	_commit()
+
+
+func cycle_cloud_speed() -> void:
+	cloud_speed_index = (cloud_speed_index + 1) % CLOUD_SPEEDS.size()
+	_commit()
+
+
+func cycle_cloud_coverage() -> void:
+	cloud_coverage_index = (cloud_coverage_index + 1) % CLOUD_COVERAGES.size()
+	_commit()
+
+
+func reset_sky_clouds() -> void:
+	sky_time_mode = 0
+	sky_speed_index = 1
+	sun_visible = true
+	moon_visible = true
+	rainbows = true
+	storm_flashes = true
+	storm_strength_index = 2
+	fog_enabled = false
+	fog_distance_offset = 16.0
+	cloud_speed_index = 2
+	cloud_coverage_index = 2
+	clouds = true
+>>>>>>> Stashed changes
 	_commit()
 
 
@@ -410,6 +437,7 @@ func clouds_name() -> String:
 	return "On" if clouds else "Off"
 
 
+<<<<<<< Updated upstream
 func water_name() -> String:
 	return "On" if water_effects else "Off"
 
@@ -452,6 +480,56 @@ func water_surface_particles_name() -> String:
 
 func water_wake_name() -> String:
 	return "Vivid" if water_wake_style == 1 else "Soft"
+=======
+func sky_time_name() -> String:
+	return SKY_TIME_NAMES[clampi(sky_time_mode, 0, SKY_TIME_NAMES.size() - 1)]
+
+
+func sun_disc_name() -> String:
+	return "On" if sun_visible else "Off"
+
+
+func moon_disc_name() -> String:
+	return "On" if moon_visible else "Off"
+
+
+func rainbows_name() -> String:
+	return "On" if rainbows else "Off"
+
+
+func storm_flashes_name() -> String:
+	return "On" if storm_flashes else "Off"
+
+
+func fog_name() -> String:
+	return "On" if fog_enabled else "Off"
+
+
+func storm_strength_name() -> String:
+	return STORM_STRENGTH_NAMES[
+		clampi(storm_strength_index, 0, STORM_STRENGTH_NAMES.size() - 1)
+	]
+
+
+func sky_speed_name() -> String:
+	return "%.1fx" % SKY_SPEEDS[
+		clampi(sky_speed_index, 0, SKY_SPEEDS.size() - 1)
+	]
+
+
+func cloud_speed_name() -> String:
+	return "%.2fx" % CLOUD_SPEEDS[
+		clampi(cloud_speed_index, 0, CLOUD_SPEEDS.size() - 1)
+	]
+
+
+func cloud_coverage_name() -> String:
+	return "%d%%" % roundi(
+		100.0 * CLOUD_COVERAGES[
+			clampi(cloud_coverage_index, 0, CLOUD_COVERAGES.size() - 1)
+		]
+	)
+>>>>>>> Stashed changes
 
 
 func save_settings() -> void:
@@ -465,6 +543,7 @@ func save_settings() -> void:
 	config.set_value("graphics", "load_radius", load_radius)
 	config.set_value("graphics", "nav_radius", nav_radius)
 	config.set_value("graphics", "clouds", clouds)
+<<<<<<< Updated upstream
 	config.set_value("graphics", "water_effects", water_effects)
 	config.set_value("water", "flow_interval", water_flow_interval)
 	config.set_value("water", "equalize_interval", water_equalize_interval)
@@ -476,6 +555,19 @@ func save_settings() -> void:
 	config.set_value("water", "wake_style", water_wake_style)
 	config.set_value("water", "splashes", water_splashes)
 	config.set_value("water", "surface_particles", water_surface_particles)
+=======
+	config.set_value("sky", "time_mode", sky_time_mode)
+	config.set_value("sky", "speed_index", sky_speed_index)
+	config.set_value("sky", "sun_visible", sun_visible)
+	config.set_value("sky", "moon_visible", moon_visible)
+	config.set_value("sky", "rainbows", rainbows)
+	config.set_value("sky", "storm_flashes", storm_flashes)
+	config.set_value("sky", "storm_strength_index", storm_strength_index)
+	config.set_value("sky", "fog", fog_enabled)
+	config.set_value("sky", "fog_offset", fog_distance_offset)
+	config.set_value("clouds", "speed_index", cloud_speed_index)
+	config.set_value("clouds", "coverage_index", cloud_coverage_index)
+>>>>>>> Stashed changes
 	config.set_value("audio", "master_volume", master_volume)
 	config.set_value("system", "agent_cap", agent_cap)
 	config.set_value("system", "max_fps", max_fps)
@@ -490,7 +582,6 @@ func load_settings() -> void:
 		return
 
 	quality = int(config.get_value("preset", "quality", 1))
-	var has_water_settings := config.has_section_key("water", "flow_interval")
 	render_scale = float(config.get_value("graphics", "render_scale", 0.8))
 	shadows = bool(config.get_value("graphics", "shadows", true))
 	shadow_distance = float(config.get_value("graphics", "shadow_distance", 60.0))
@@ -499,6 +590,7 @@ func load_settings() -> void:
 	load_radius = int(config.get_value("graphics", "load_radius", 20))
 	nav_radius = int(config.get_value("graphics", "nav_radius", 4))
 	clouds = bool(config.get_value("graphics", "clouds", true))
+<<<<<<< Updated upstream
 	water_effects = bool(config.get_value("graphics", "water_effects", true))
 	water_flow_interval = float(config.get_value("water", "flow_interval", water_flow_interval))
 	water_equalize_interval = float(config.get_value("water", "equalize_interval", water_equalize_interval))
@@ -513,6 +605,41 @@ func load_settings() -> void:
 
 	if not has_water_settings:
 		_apply_water_preset(quality)
+=======
+	sky_time_mode = clampi(
+		int(config.get_value("sky", "time_mode", 0)),
+		0,
+		SKY_TIME_NAMES.size() - 1
+	)
+	sky_speed_index = clampi(
+		int(config.get_value("sky", "speed_index", 1)),
+		0,
+		SKY_SPEEDS.size() - 1
+	)
+	sun_visible = bool(config.get_value("sky", "sun_visible", true))
+	moon_visible = bool(config.get_value("sky", "moon_visible", true))
+	rainbows = bool(config.get_value("sky", "rainbows", true))
+	storm_flashes = bool(config.get_value("sky", "storm_flashes", true))
+	storm_strength_index = clampi(
+		int(config.get_value("sky", "storm_strength_index", 2)),
+		0,
+		STORM_STRENGTHS.size() - 1
+	)
+	fog_enabled = bool(config.get_value("sky", "fog", false))
+	fog_distance_offset = float(
+		config.get_value("sky", "fog_offset", 16.0)
+	)
+	cloud_speed_index = clampi(
+		int(config.get_value("clouds", "speed_index", 2)),
+		0,
+		CLOUD_SPEEDS.size() - 1
+	)
+	cloud_coverage_index = clampi(
+		int(config.get_value("clouds", "coverage_index", 2)),
+		0,
+		CLOUD_COVERAGES.size() - 1
+	)
+>>>>>>> Stashed changes
 	master_volume = float(config.get_value("audio", "master_volume", 0.8))
 	agent_cap = int(config.get_value("system", "agent_cap", 120))
 	max_fps = int(config.get_value("system", "max_fps", 60))

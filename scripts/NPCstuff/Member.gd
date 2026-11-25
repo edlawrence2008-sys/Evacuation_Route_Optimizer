@@ -35,6 +35,21 @@ extends CharacterBody3D
 ## deadlock. Disable to make agents keep their line and rely on collision.
 @export var allow_yielding: bool = true
 
+@export_group("Water & Hazards")
+## Fraction of walking speed lost when fully submerged.
+@export_range(0.0, 0.95, 0.01) var water_speed_loss: float = 0.65
+## How strongly the local water flow drags the agent when submerged.
+@export_range(0.0, 12.0, 0.1) var water_drag: float = 2.5
+## How often depth/flow/hazard are sampled. 5-10 Hz is enough; the values move
+## smoothly compared with the 30 Hz physics tick.
+@export var water_query_interval: float = 0.15
+@export var hazard_query_interval: float = 0.25
+## Damage per second at full LPG concentration and at full fire heat.
+## FireComponent already applies direct radius damage, so heat damage defaults
+## to zero; raise it only if HazardWorld is the sole fire-damage source.
+@export var gas_damage_per_sec: float = 8.0
+@export var heat_damage_per_sec: float = 0.0
+
 @export_group("Collision")
 ## When enabled, a stuck NPC may briefly stop colliding with other NPCs.
 ## When disabled, NPCs always collide with each other.
@@ -163,6 +178,13 @@ var _flow_wait: float = 0.0
 var actual_movement_speed: float = 4.0
 var actual_separation_radius: float = 1.0
 var actual_separation_push: float = 2.0
+
+## Last unified environment sample. `water` is the WaterWorld sample; `gas`
+## and `heat` come from HazardWorld. Empty when neither system is present.
+var _environment_sample: Dictionary = {}
+var _water_sample: Dictionary = {}
+var _environment_accum: float = 0.0
+var _was_in_water: bool = false
 
 var lane_offset: float = 0.0
 var _crowd_push: Vector3 = Vector3.ZERO
@@ -522,6 +544,16 @@ func _physics_process(delta: float) -> void:
 			_on_health_depleted()
 			return
 
+	var env_interval: float = minf(
+		maxf(water_query_interval, 0.02),
+		maxf(hazard_query_interval, 0.02)
+	)
+	_environment_accum += delta
+	if _environment_accum + 0.0001 >= env_interval:
+		var elapsed := _environment_accum
+		_environment_accum = 0.0
+		_refresh_environment_sample(elapsed)
+
 	_movement_accum += delta
 	var interval: float = 1.0 / maxf(movement_rate, 1.0)
 	var update_steering: bool = _movement_accum >= interval
@@ -616,6 +648,7 @@ func _physics_process(delta: float) -> void:
 			_last_move_direction = Vector3.ZERO
 
 		var desired_velocity: Vector3 = (
+<<<<<<< Updated upstream
 			move_direction * actual_movement_speed * speed_scale
 			+ crowd_adjustment
 		)
@@ -661,6 +694,21 @@ func _physics_process(delta: float) -> void:
 				desired_velocity.z,
 				6.0 * step
 			)
+=======
+			_desired_direction
+			* actual_movement_speed
+			* speed_scale
+			* _water_speed_scale()
+		)
+
+		_update_wall_force(step)
+		_steer_with_social_forces(
+			step,
+			desired_velocity,
+			is_grounded
+		)
+		_apply_water_drag(delta)
+>>>>>>> Stashed changes
 
 	# Movement runs every physics tick. Steering may run at movement_rate, but
 	# move_and_slide() always integrates with the physics delta; skipping a tick
@@ -696,6 +744,337 @@ func _physics_process(delta: float) -> void:
 			logic_tick_timer = 0.0
 
 
+<<<<<<< Updated upstream
+=======
+# ---------------------------------------------------------------------------
+# Water and hazards
+# ---------------------------------------------------------------------------
+
+## One query for both systems. HazardWorld folds in the WaterWorld sample; if it
+## is absent, query WaterWorld directly so water still works on its own.
+func _refresh_environment_sample(elapsed: float) -> void:
+	_environment_sample = {}
+	_water_sample = {}
+
+	var hazard_world := get_tree().get_first_node_in_group("hazard_world")
+	var sample: Dictionary = {}
+	if hazard_world != null and hazard_world.has_method("sample_hazard"):
+		var hazard_result: Variant = hazard_world.call(
+			"sample_hazard",
+			global_position + Vector3.UP * 0.9
+		)
+		if hazard_result is Dictionary:
+			sample = hazard_result
+	else:
+		var direct_water := get_tree().get_first_node_in_group("water_world")
+		if direct_water != null and direct_water.has_method("sample_water"):
+			var direct_result: Variant = direct_water.call(
+				"sample_water",
+				global_position + Vector3.UP * 0.9
+			)
+			if direct_result is Dictionary:
+				sample = {"water": direct_result}
+
+	var water_value: Variant = sample.get("water", {})
+	var water: Dictionary = water_value if water_value is Dictionary else {}
+	if water.is_empty():
+		var fallback_water := get_tree().get_first_node_in_group("water_world")
+		if fallback_water != null and fallback_water.has_method("sample_water"):
+			var fallback_result: Variant = fallback_water.call(
+				"sample_water",
+				global_position
+			)
+			if fallback_result is Dictionary:
+				water = fallback_result
+	if not water.is_empty():
+		var surface := float(water.get("surface_y", global_position.y))
+		var submerged := clampf((surface - global_position.y) / 1.8, 0.0, 1.0)
+		water["submerged_fraction"] = submerged
+
+	_environment_sample = sample
+	_water_sample = water
+
+	var in_water := not water.is_empty()
+	if in_water and not _was_in_water:
+		var water_world := get_tree().get_first_node_in_group("water_world")
+		if water_world != null and water_world.has_method("spawn_splash"):
+			water_world.call("spawn_splash", global_position, 1.0)
+	_was_in_water = in_water
+
+	# Fire/LPG damage. This is intentionally separate from the water solver;
+	# it only reads the shared hazard sample.
+	if health_component != null and not sample.is_empty():
+		var gas := maxf(0.0, float(sample.get("gas", 0.0)))
+		var heat := maxf(0.0, float(sample.get("heat", 0.0)))
+		var damage := (
+			gas * gas_damage_per_sec
+			+ heat * heat_damage_per_sec
+		) * elapsed
+		if damage > 0.0:
+			health_component.take_damage(damage)
+
+
+func _water_speed_scale() -> float:
+	var submerged := clampf(
+		float(_water_sample.get("submerged_fraction", 0.0)),
+		0.0,
+		1.0
+	)
+	return clampf(1.0 - water_speed_loss * submerged, 0.25, 1.0)
+
+
+func _apply_water_drag(delta: float) -> void:
+	if _water_sample.is_empty():
+		return
+	var submerged := clampf(
+		float(_water_sample.get("submerged_fraction", 0.0)),
+		0.0,
+		1.0
+	)
+	if submerged <= 0.02:
+		return
+	var flow_value: Variant = _water_sample.get("flow", Vector2.ZERO)
+	var flow: Vector2 = flow_value if flow_value is Vector2 else Vector2.ZERO
+	var blend := 1.0 - exp(-water_drag * submerged * maxf(delta, 0.0001))
+	velocity.x = lerpf(velocity.x, flow.x, blend)
+	velocity.z = lerpf(velocity.z, flow.y, blend)
+
+
+## Social Force Model integration (Helbing & Molnar 1995):
+##
+##   dv/dt = (v_desired - v) / tau + f_social / m + f_wall / m
+##
+## The crowd solver already returns a force/mass acceleration for every other
+## agent (evaluated once per pair, applied symmetrically). This function adds
+## the driving term and the wall term and integrates with a few substeps so a
+## stiff contact force cannot tunnel through a body in one 33 ms tick.
+func _steer_with_social_forces(
+	step: float,
+	desired_velocity: Vector3,
+	is_grounded: bool
+) -> void:
+	if step <= 0.0:
+		return
+
+	var force_accel: Vector3 = (
+		_social_accel * social_force_scale
+		+ _wall_accel * wall_force_scale
+	)
+
+	if not is_grounded:
+		# Airborne agents keep only limited air control: people cannot push a
+		# body that has already left the ground.
+		velocity.x = lerpf(
+			velocity.x,
+			desired_velocity.x,
+			6.0 * step
+		)
+		velocity.z = lerpf(
+			velocity.z,
+			desired_velocity.z,
+			6.0 * step
+		)
+		return
+
+	var substep: float = step / float(SFM_SUBSTEPS)
+
+	for _i in range(SFM_SUBSTEPS):
+		var horizontal: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+		var step_acceleration: Vector3 = (
+			(desired_velocity - horizontal) / relaxation_time
+			+ force_accel
+		)
+
+		horizontal += step_acceleration * substep
+		horizontal = horizontal.limit_length(max_horizontal_speed)
+		velocity.x = horizontal.x
+		velocity.z = horizontal.z
+
+	var travel: Vector3 = Vector3(velocity.x, 0.0, velocity.z)
+
+	if travel.length_squared() > 0.0025:
+		# Kinematic movement already refuses unsupported steps and cancels
+		# horizontal motion at a ledge, so the segment probe is redundant there
+		# and was one of the most expensive per-tick operations.
+		if not _kinematic_active:
+			travel = _guard_ledge(travel, _desired_direction)
+		velocity.x = travel.x
+		velocity.z = travel.z
+
+	if travel.length_squared() > 0.1:
+		look_at(global_position + travel, Vector3.UP)
+
+
+func _update_wall_force(step: float) -> void:
+	if wall_force_scale <= 0.0:
+		_wall_accel = Vector3.ZERO
+		return
+
+	_wall_force_accum += step
+
+	if (
+		not _wall_force_dirty
+		and _wall_force_accum < wall_force_update_interval
+	):
+		return
+
+	_wall_force_accum = 0.0
+	_wall_force_dirty = false
+	_wall_accel = Vector3.ZERO
+
+	var grid: NavGridMap = _get_gridmap()
+
+	if grid == null or not grid.has_method("get_wall_acceleration"):
+		return
+
+	# Sample at the body centre, not the foot origin. The origin sits inside the
+	# floor voxel, so a foot-height ray reports the floor as a wall (large,
+	# symmetric forces that cancel) and misses the first wall block above it.
+	# foot_offset + body_radius is the collision sphere's centre.
+	var body_centre: Vector3 = global_position + Vector3.UP * (_foot_offset + body_radius)
+	_wall_accel = grid.get_wall_acceleration(
+		body_centre,
+		body_radius,
+		body_mass
+	)
+
+
+## Grounded state used by movement and stuck detection. In kinematic mode this
+## comes from the ground probe because the body does not collide with geometry.
+func _is_grounded() -> bool:
+	if _uses_kinematic_movement():
+		return _kinematic_grounded
+
+	return is_on_floor() and _character_floor_body() == null
+
+
+## Downward ray used by kinematic movement. Returns the raw hit dictionary.
+func _probe_ground(at: Vector3) -> Dictionary:
+	if _ground_query == null:
+		return {}
+
+	var world := get_world_3d()
+
+	if world == null:
+		return {}
+
+	# Start above the tallest legal step so a too-high surface is detected as a
+	# wall instead of silently starting the ray inside the block.
+	var lift: float = kinematic_step_height + _foot_offset + 0.1
+	_ground_query.from = at + Vector3(0.0, lift, 0.0)
+	_ground_query.to = at - Vector3(0.0, 4.0, 0.0)
+
+	return world.direct_space_state.intersect_ray(_ground_query)
+
+
+## Cached ground probe for the kinematic path. A walking agent moves a few
+## centimetres per tick, so re-probing the same 0.15 m bucket every tick is
+## wasted work. Airborne agents bypass the cache because they need a fresh hit
+## to detect the landing surface.
+func _probe_ground_cached(at: Vector3) -> Dictionary:
+	if not _kinematic_active or not _kinematic_grounded:
+		return _probe_ground(at)
+
+	var key := Vector3i(
+		roundi(at.x / GROUND_PROBE_CACHE_HORIZONTAL),
+		roundi(at.y / GROUND_PROBE_CACHE_VERTICAL),
+		roundi(at.z / GROUND_PROBE_CACHE_HORIZONTAL)
+	)
+
+	if _ground_probe_cache_valid and key == _ground_probe_cache_key:
+		return _ground_probe_cache_hit
+
+	var hit: Dictionary = _probe_ground(at)
+	_ground_probe_cache_key = key
+	_ground_probe_cache_hit = hit
+	_ground_probe_cache_valid = true
+	return hit
+
+
+## Characters are never walkable ground. The player body lives on the world
+## collision layer (its layer mask includes layer 1), so a bare layer-1 ground
+## ray would let agents snap onto the player. Exclude explicit character RIDs.
+func _refresh_ground_exclusions() -> void:
+	if _ground_query == null:
+		return
+
+	var exclusions: Array[RID] = [get_rid()]
+	var player := get_tree().get_first_node_in_group("Player")
+
+	if player is CollisionObject3D and is_instance_valid(player):
+		exclusions.append((player as CollisionObject3D).get_rid())
+
+	_ground_query.exclude = exclusions
+
+
+## Kinematic step. Replaces move_and_slide() against the voxel world:
+##   1. Probe the ground under the proposed horizontal position.
+##   2. Refuse the step when there is no support (ledge) or the ground rises
+##      more than kinematic_step_height (a two-block wall). One-block steps
+##      match the navigation graph's step-up edges and are climbed.
+##   3. Follow the ground height while standing, snap down small drops, and
+##      integrate gravity while airborne or jumping.
+func _move_kinematic(delta: float) -> void:
+	var start: Vector3 = global_position
+	var target: Vector3 = start + Vector3(
+		velocity.x,
+		0.0,
+		velocity.z
+	) * delta
+
+	var hit: Dictionary = _probe_ground_cached(target)
+	var supported: bool = not hit.is_empty()
+	var stand_y: float = start.y
+
+	if supported:
+		stand_y = float(hit["position"].y) - _foot_offset
+
+		if stand_y > start.y + kinematic_step_height:
+			# Too high to be a one-block step: treat it as a wall. This also
+			# stops a falling or shoved agent from snapping up onto a two-block
+			# stack it is standing beside; landing on something higher is still
+			# possible because the agent descends from above it.
+			supported = false
+
+	if not supported:
+		if not _kinematic_grounded:
+			# Airborne: probe again under the current position to find a
+			# landing surface. A grounded agent already knows its support is
+			# start.y, so it needs no second ray.
+			hit = _probe_ground_cached(start)
+			supported = not hit.is_empty()
+
+			if supported:
+				stand_y = float(hit["position"].y) - _foot_offset
+			else:
+				stand_y = start.y
+
+		# Never walk out over empty space while standing on solid ground.
+		if _kinematic_grounded:
+			target.x = start.x
+			target.z = start.z
+			velocity.x = 0.0
+			velocity.z = 0.0
+
+	_kinematic_stand_y = stand_y
+	global_position.x = target.x
+	global_position.z = target.z
+
+	if (
+		supported
+		and velocity.y <= 0.01
+		and global_position.y - stand_y <= kinematic_snap_down_height
+	):
+		global_position.y = stand_y
+		velocity.y = 0.0
+		_kinematic_grounded = true
+	else:
+		velocity.y -= gravity * delta
+		global_position.y += velocity.y * delta
+		_kinematic_grounded = false
+
+
+>>>>>>> Stashed changes
 func _track_movement_distance() -> void:
 	if _has_last_position:
 		var delta_position: Vector3 = global_position - _last_position

@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://3r8hjf4pivke"
-path="res://.godot/imported/sea_foam_corner.png-5fefa93baa7cf14677a645a9f93b7012.ctex"
+path="res://.godot/imported/sea_foam_corner.png-51b2c4852325a02b1f252193bd46e26c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://textures/particles/sea_foam_corner.png"
-dest_files=["res://.godot/imported/sea_foam_corner.png-5fefa93baa7cf14677a645a9f93b7012.ctex"]
+source_file="res://addons/legacy_water/textures/sea_foam_corner.png"
+dest_files=["res://.godot/imported/sea_foam_corner.png-51b2c4852325a02b1f252193bd46e26c.ctex"]
 
 [params]
 

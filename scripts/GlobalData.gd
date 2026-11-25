@@ -36,6 +36,17 @@ var _section_quotas: Dictionary = {}
 
 signal npc_evacuated(total_count: int)
 signal npc_spawned(total_count: int)
+<<<<<<< Updated upstream
+=======
+## Emitted with the spawned node so measurement/replay tooling can attach to it.
+signal agent_spawned(npc: Node)
+## Any runtime environment edit that can change navigation or the scenario.
+## `change_type` is one of: block_added, block_removed, placeable_added,
+## placeable_removed, exit_added, exit_removed, exit_enabled, exit_disabled.
+## Old demo files may also contain `water_placed` from the archived legacy water
+## system. `detail` carries recorder-specific fields (cells, scene, item).
+signal environment_changed(location: Vector3, change_type: String, detail: Dictionary)
+>>>>>>> Stashed changes
 signal spawning_reset() # Signal to reset local spawner states
 signal spawning_started()
 signal spawning_stopped()

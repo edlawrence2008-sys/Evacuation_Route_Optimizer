@@ -364,10 +364,17 @@ func _blank_platform_item(grid) -> int:
 	for item_id in grid.mesh_library.get_item_list():
 		var name := String(grid.mesh_library.get_item_name(item_id)).to_lower()
 		if (
+<<<<<<< Updated upstream
 			not name.contains("slab")
 			and not name.contains("panel")
 			and not name.contains("stairs")
 			and not name.begins_with("water_")
+=======
+			not item_name.contains("slab")
+			and not item_name.contains("panel")
+			and not item_name.contains("stairs")
+			and not item_name.begins_with("legacy_water_")
+>>>>>>> Stashed changes
 		):
 			return item_id
 	return grid.mesh_library.get_item_list()[0]
@@ -404,6 +411,7 @@ func _build_manifest(display: String, world: Dictionary = {}) -> Dictionary:
 		"player": player_data,
 		"cycle_time": cycle_time,
 		"placeables": _collect_placeables(),
+		"water": _collect_water(),
 		"world": _normalise_world_metadata(world),
 	}
 
@@ -446,6 +454,21 @@ func _write_thumbnail(folder: String) -> void:
 	if grid == null:
 		return
 	MAP_RENDERER.save_thumbnail(grid, folder.path_join(THUMBNAIL))
+
+
+func _collect_water() -> Dictionary:
+	var water := get_tree().get_first_node_in_group("water_world")
+	if water == null or not water.has_method("serialize"):
+		return {}
+	var data: Variant = water.call("serialize")
+	return data if data is Dictionary else {}
+
+
+func _apply_water(data: Dictionary) -> void:
+	var water := get_tree().get_first_node_in_group("water_world")
+	if water == null or not water.has_method("deserialize"):
+		return
+	water.call("deserialize", data)
 
 
 func _collect_placeables() -> Array:
@@ -541,6 +564,32 @@ func _apply_manifest(manifest: Dictionary) -> void:
 		if camera != null:
 			camera.rotation.x = pitch
 
+<<<<<<< Updated upstream
+=======
+	# Apply the world recipe after the player is in its saved position so the
+	# streamer refreshes around the right chunk. Procgen saves keep generating
+	# outside their saved chunk area; blank/existing saves do not.
+	var world_value: Variant = manifest.get("world", {})
+	var world: Dictionary = (
+		_normalise_world_metadata(world_value)
+		if world_value is Dictionary
+		else _default_world_metadata()
+	)
+	_apply_world_to_streamer(
+		tree.get_first_node_in_group("chunk_streamer"),
+		world
+	)
+	var water_value: Variant = manifest.get("water", {})
+	_apply_water(water_value if water_value is Dictionary else {})
+
+	if player != null:
+		await _wait_for_spawn_collision(player)
+		if is_instance_valid(player):
+			player.set_physics_process(player_physics_was_enabled)
+			if player is CharacterBody3D:
+				(player as CharacterBody3D).velocity = Vector3.ZERO
+
+>>>>>>> Stashed changes
 	var cycle := scene_root.get_node_or_null("CycleController") if scene_root != null else null
 	if cycle != null and manifest.has("cycle_time"):
 		cycle.set("_current_time", float(manifest.get("cycle_time", 0.0)))

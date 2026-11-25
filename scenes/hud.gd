@@ -11,6 +11,7 @@ extends Control
 
 @onready var blocks_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Blocks
 @onready var placeables_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Placeables
+@onready var useables_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Useables
 @onready var simulation_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Simulation
 @onready var agents_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Agents
 @onready var category_arrow: Sprite2D = $Inventory/CategoryArrow
@@ -38,6 +39,16 @@ const PLACEABLE_FOLDERS := [
 	"res://scenes/placeables/sim/",
 	"res://scenes/placeables/device/",
 	"res://scenes/placeables/foilage/",
+]
+
+## Non-block tools live in the Useables tab. Add future held/used scenes here;
+## each scene owns a UseComponent and is selected through a normal item card.
+## Non-block held/used tools. Each scene owns a UseComponent; clicking its card
+## puts the scene in the selected hotbar slot and the Property tab edits its
+## exported brush values.
+const USEABLE_SCENE_PATHS := [
+	"res://scenes/useables/water_tool.tscn",
+	"res://scenes/useables/gas_tool.tscn",
 ]
 
 ## Property-tab row labels -> canonical BlockMaterials keys.
@@ -110,7 +121,7 @@ var _property_spin_t: float = 0.0
 ## label text (used as the data key), value Label, and scene-authored default.
 var _property_block_rows: Array[Dictionary] = []
 
-enum Category { BLOCKS, PLACEABLES, SIMULATION, AGENTS }
+enum Category { BLOCKS, PLACEABLES, USEABLES, SIMULATION, AGENTS }
 var _current_category: Category = Category.BLOCKS
 
 # Active filter tracking
@@ -181,6 +192,8 @@ func _ready() -> void:
 		blocks_button.pressed.connect(func(): _on_category_pressed(Category.BLOCKS))
 	if placeables_button:
 		placeables_button.pressed.connect(func(): _on_category_pressed(Category.PLACEABLES))
+	if useables_button:
+		useables_button.pressed.connect(func(): _on_category_pressed(Category.USEABLES))
 	if simulation_button:
 		simulation_button.pressed.connect(func(): _on_category_pressed(Category.SIMULATION))
 	if agents_button:
@@ -538,7 +551,8 @@ func _refresh_filters() -> void:
 		child.queue_free()
 
 	if (
-		_current_category == Category.SIMULATION
+		_current_category == Category.USEABLES
+		or _current_category == Category.SIMULATION
 		or _current_category == Category.AGENTS
 	):
 		_active_filters.clear()
@@ -551,6 +565,8 @@ func _refresh_filters() -> void:
 			if _cached_mesh_library:
 				for id in _cached_build_items:
 					var item_name = _cached_mesh_library.get_item_name(id)
+					if _is_hidden_block_variant(item_name):
+						continue
 					var tags = _get_item_tags(item_name)
 					for t in tags:
 						if not available_tags.has(t):
@@ -647,6 +663,9 @@ func _get_item_tags(item_name: String) -> Array[String]:
 ## as separate items.
 func _is_hidden_block_variant(item_name: String) -> bool:
 	var lower := item_name.to_lower()
+	# Reserved MeshLibrary slots owned by the archived legacy water addon.
+	if lower.begins_with("legacy_water_"):
+		return true
 	if lower.begins_with("auto_connect_"):
 		for code in ["_tl", "_t", "_tr", "_l", "_c", "_r", "_bl", "_b", "_br"]:
 			if lower.ends_with(code):
@@ -705,6 +724,8 @@ func _refresh_inventory_display() -> void:
 			_add_block_groups()
 		Category.PLACEABLES:
 			_add_placeable_group()
+		Category.USEABLES:
+			_add_useables_group()
 		Category.SIMULATION, Category.AGENTS:
 			pass
 
@@ -1698,6 +1719,44 @@ func _set_palette_badge_open(palette_id: String) -> void:
 		)
 
 
+## Non-block tools. These reuse the normal 60x60 item card so they fit the
+## inventory grid; future tools are added to `USEABLE_SCENE_PATHS`.
+func _add_useables_group() -> void:
+	var loaded: Array[PackedScene] = []
+	for path: String in USEABLE_SCENE_PATHS:
+		if not ResourceLoader.exists(path):
+			continue
+		var scene := load(path) as PackedScene
+		if scene != null:
+			loaded.append(scene)
+	if loaded.is_empty():
+		return
+	var grid := _add_group("Useables", loaded.size())
+	for scene: PackedScene in loaded:
+		var button = item_button_scene.instantiate()
+		grid.add_child(button)
+		button.set_useable(scene, _useable_display_name(scene))
+		button.useable_selected.connect(_on_useable_selected)
+
+
+func _useable_display_name(scene: PackedScene) -> String:
+	var base := scene.resource_path.get_file().get_basename()
+	return base.capitalize()
+
+
+func _on_useable_selected(scene: PackedScene) -> void:
+	if scene == null:
+		return
+	_property_hover_item.clear()
+	if _selected_placeable_scene != scene:
+		_selected_placeable_overrides.clear()
+	_selected_placeable_scene = scene
+	_property_pinned_item = _placeable_item_data(scene)
+	assign_hotbar_placeable(get_hotbar_selected_slot(), scene)
+	_refresh_property_tab()
+	placeable_selected.emit(scene)
+
+
 func _add_placeable_group() -> void:
 	var groups: Dictionary = {}
 
@@ -1988,6 +2047,8 @@ func _on_category_pressed(category: Category) -> void:
 		blocks_button.button_pressed = (_current_category == Category.BLOCKS)
 	if placeables_button:
 		placeables_button.button_pressed = (_current_category == Category.PLACEABLES)
+	if useables_button:
+		useables_button.button_pressed = (_current_category == Category.USEABLES)
 	if simulation_button:
 		simulation_button.button_pressed = (_current_category == Category.SIMULATION)
 	if agents_button:
@@ -2010,6 +2071,8 @@ func _update_category_arrow() -> void:
 			target_button = blocks_button
 		Category.PLACEABLES:
 			target_button = placeables_button
+		Category.USEABLES:
+			target_button = useables_button
 		Category.SIMULATION:
 			target_button = simulation_button
 		Category.AGENTS:
@@ -2049,7 +2112,8 @@ func _update_category_panel() -> void:
 	var filters := get_node_or_null("Inventory/ItemFilters")
 	if filters:
 		filters.visible = (
-			not simulation_selected
+			_current_category != Category.USEABLES
+			and not simulation_selected
 			and not agents_selected
 			and not searching
 		)
@@ -2326,8 +2390,6 @@ func _format_item_title(item_name: String) -> String:
 	var material := clean
 	var shape := ""
 
-	if lower.begins_with("water_"):
-		return "Water " + clean.substr(6).capitalize()
 	if lower.begins_with("connect_"):
 		material = clean.substr(8)
 	elif lower.begins_with("slab_top_"):
@@ -2382,12 +2444,6 @@ func _format_block_stat(value: Variant) -> String:
 
 ## Short category description for auto blocks. Hand-authored blocks return "".
 func _describe_block(item_name: String) -> String:
-	if item_name == "Water_Slab":
-		return "Half a block of water (8 units). It falls, spreads, and levels out."
-	if item_name == "Water_Panel":
-		return "A single unit of water. It spreads into the thinnest possible film."
-	if item_name.begins_with("Water_"):
-		return "A full block of water (16 units). It falls, spreads to the lowest level, and waterlogs non-full blocks."
 	if not item_name.begins_with("Auto_"):
 		return ""
 
@@ -2452,6 +2508,7 @@ func _get_placeable_properties(scene: PackedScene) -> Array:
 		return _placeable_property_cache[key]
 
 	var props: Array = []
+	var seen: Dictionary = {}
 	var temp: Node = scene.instantiate()
 	var script: Script = temp.get_script()
 
@@ -2461,11 +2518,35 @@ func _get_placeable_properties(scene: PackedScene) -> Array:
 				continue
 			if not _is_editable_property_type(prop.type):
 				continue
+			var prop_name := String(prop.name)
+			seen[prop_name] = true
 			props.append({
-				"name": String(prop.name),
+				"name": prop_name,
 				"type": int(prop.type),
 				"default": temp.get(prop.name),
 			})
+
+	# Held tools keep their exports on the UseComponent child rather than the
+	# root scene. Merge those rows so the Water Tool brush is editable in the
+	# same Property tab as placeables.
+	var use_component := ComponentLookup.find_use(temp)
+	if use_component != null:
+		var use_script: Script = use_component.get_script()
+		if use_script:
+			for prop in use_script.get_script_property_list():
+				if prop.usage & PROPERTY_USAGE_EDITOR == 0:
+					continue
+				if not _is_editable_property_type(prop.type):
+					continue
+				var prop_name := String(prop.name)
+				if prop_name == "component_id" or seen.has(prop_name):
+					continue
+				seen[prop_name] = true
+				props.append({
+					"name": prop_name,
+					"type": int(prop.type),
+					"default": use_component.get(prop.name),
+				})
 
 	temp.free()
 	_placeable_property_cache[key] = props
