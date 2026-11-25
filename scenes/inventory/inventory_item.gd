@@ -9,8 +9,6 @@ signal variants_requested(item_id: int, group_id: String, anchor_rect: Rect2)
 ## Emitted by the same plus badge on palette cells. The HUD opens the palette's
 ## 3x3 container instead of the block-variant chooser.
 signal palette_requested(palette_id: String, anchor_rect: Rect2)
-## Emitted by Useables-tab tool cards. The scene owns a held UseComponent.
-signal useable_selected(scene: PackedScene)
 
 const GROUP_PLUS := preload("res://textures/inventory/group_plus.png")
 const GROUP_MINUS := preload("res://textures/inventory/group_minus.png")
@@ -31,8 +29,6 @@ var hotbar_draggable: bool = true
 var block_group_id: String = ""
 ## Palette cells share the block-group plus badge, but open a 3x3 palette.
 var palette_id: String = ""
-## Set for a Useables-tab tool card. Clicking selects the held tool.
-var useable_scene: PackedScene = null
 
 
 func _ready() -> void:
@@ -67,54 +63,58 @@ func setup(
 	if label:
 		var clean_name: String = item_name.trim_prefix("Auto_")
 		var lower_name: String = clean_name.to_lower()
+		if lower_name.begins_with("connect_"):
+			clean_name = clean_name.substr(8)
+			lower_name = clean_name.to_lower()
 
 		# Present shape variants as one human-readable "<material>_<shape>".
 		# All slab variants share the same "Slab" label; the placement zone
 		# chooses top/bottom/vertical at build time.
-		var material: String = clean_name
+		var material_name: String = clean_name
 		var shape_suffix: String = ""
 
 		if lower_name.begins_with("slab_top_"):
-			material = clean_name.substr(9)
+			material_name = clean_name.substr(9)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("slab_bottom_"):
-			material = clean_name.substr(12)
+			material_name = clean_name.substr(12)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("slab_side_"):
-			material = clean_name.substr(10)
+			material_name = clean_name.substr(10)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("slab_"):
-			material = clean_name.substr(5)
+			material_name = clean_name.substr(5)
 			shape_suffix = "_Slab"
 		elif lower_name.begins_with("panel_top_"):
-			material = clean_name.substr(10)
+			material_name = clean_name.substr(10)
 			shape_suffix = "_Panel"
 		elif lower_name.begins_with("panel_bottom_"):
-			material = clean_name.substr(13)
+			material_name = clean_name.substr(13)
 			shape_suffix = "_Panel"
 		elif lower_name.begins_with("panel_side_"):
-			material = clean_name.substr(11)
+			material_name = clean_name.substr(11)
 			shape_suffix = "_Panel"
 		if lower_name.begins_with("panel_"):
-			material = clean_name.substr(6)
+			material_name = clean_name.substr(6)
 			shape_suffix = "_Panel"
-<<<<<<< Updated upstream
 		elif lower_name.begins_with("water_"):
-			material = "Water"
+			material_name = "Water"
 			shape_suffix = " " + clean_name.substr(6).capitalize()
-=======
->>>>>>> Stashed changes
 		elif lower_name.begins_with("stairs_upsidedown_"):
-			material = clean_name.substr(18)
+			material_name = clean_name.substr(18)
 			shape_suffix = "_Stairs_UpsideDown"
 		elif lower_name.begins_with("stairs_"):
-			material = clean_name.substr(7)
+			material_name = clean_name.substr(7)
 			shape_suffix = "_Stairs"
 		elif lower_name.begins_with("stair_"):
-			material = clean_name.substr(6)
+			material_name = clean_name.substr(6)
 			shape_suffix = "_Stairs"
 
-		label.text = material + shape_suffix
+		# Colored variants share one group label; the swatch, not the name,
+		# communicates the chosen palette color.
+		if item_name.to_lower().contains("_colorbase"):
+			material_name = BlockMaterials.block_group_label(item_name)
+		label.text = material_name + shape_suffix
 		tooltip_text = label.text
 
 	# Slabs are unified into one entry, so the old top/bottom badge is no longer
@@ -171,20 +171,6 @@ func set_variants(group_id: String, has_variants: bool) -> void:
 	)
 
 
-## Turns this card into a Useables-tab tool entry. It reuses the normal item
-## card so it sits in the same 60x60 inventory grid as blocks and placeables.
-func set_useable(scene: PackedScene, display_name: String) -> void:
-	useable_scene = scene
-	setup(-1, display_name, null, true, scene)
-	if label:
-		label.text = display_name
-		label.visible = true
-	if texture_rect:
-		texture_rect.visible = false
-	if sprite_2d:
-		sprite_2d.visible = true
-
-
 ## Turns this cell into a palette entry. The plus badge is always visible and
 ## opens the palette container.
 func set_palette(id: String) -> void:
@@ -235,9 +221,6 @@ func _gui_input(event: InputEvent) -> void:
 		and not event.pressed
 		and event.button_index == MOUSE_BUTTON_LEFT
 	):
-		if useable_scene != null:
-			useable_selected.emit(useable_scene)
-			return
 		item_selected.emit(item_id)
 
 ## Enables dragging inventory blocks and placeables onto hotbar slots. The
@@ -245,7 +228,7 @@ func _gui_input(event: InputEvent) -> void:
 ## `_can_drop_data` / `_drop_data`.
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	var is_palette := not palette_id.is_empty()
-	if item_id == -1 and not is_palette and placeable_scene == null:
+	if item_id == -1 and not is_palette:
 		return null
 
 	if not is_palette and placeable_scene == null and not hotbar_draggable:

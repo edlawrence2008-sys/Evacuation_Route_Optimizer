@@ -3,8 +3,13 @@ extends RefCounted
 
 ## Builds an OptiFine-style connected texture atlas from a single 16x16 source
 ## image authored in the four-quadrant format:
-##   top-left = corner, bottom-left = edge, top-right = overflow,
-##   bottom-right = fully surrounded.
+##   top-left = corner (q1), bottom-left = edge (q2),
+##   top-right = overflow (q3), bottom-right = fully surrounded (q4).
+##
+## A 32x16 source keeps q1-q4 in its left 16x16 block and adds q5, a full
+## background layer, in its right block. q5 is composited *behind* the four
+## state pieces, exactly as the reference Python generator does; it is not a
+## fifth connection state.
 ##
 ## The atlas is indexed by an 8-neighbour mask:
 ##   N=1 E=2 S=4 W=8 NE=16 SE=32 SW=64 NW=128
@@ -23,6 +28,11 @@ const BIT_NE := 16
 const BIT_SE := 32
 const BIT_SW := 64
 const BIT_NW := 128
+
+## Atlas alpha categories used by build_material().
+const ALPHA_OPAQUE := 0
+const ALPHA_CUTOUT := 1
+const ALPHA_BLEND := 2
 
 
 static func build_material(source_path: String) -> StandardMaterial3D:
@@ -46,20 +56,43 @@ static func build_material(source_path: String) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_texture = ImageTexture.create_from_image(atlas)
 	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	material.vertex_color_use_as_albedo = true
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# CTM quads are outward-facing box faces with the same winding as the cube
+	# path. Culling backfaces keeps the inside of the far side from drawing over
+	# the outside of the near side (the material used to be CULL_DISABLED).
+	material.cull_mode = BaseMaterial3D.CULL_BACK
+	match _atlas_alpha_mode(atlas):
+		ALPHA_CUTOUT:
+			material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			material.alpha_scissor_threshold = 0.5
+		ALPHA_BLEND:
+			material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_:
+			material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	material.roughness = 0.15
 	material.metallic = 0.0
 	return material
+
+
+## Classifies the generated atlas so an opaque CTM block does not pay for the
+## transparent pass (and does not lose depth writes). 0 = opaque, 1 = cutout
+## (only 0/255), 2 = partial alpha that needs blending.
+static func _atlas_alpha_mode(atlas: Image) -> int:
+	match atlas.detect_alpha():
+		Image.ALPHA_BLEND:
+			return ALPHA_BLEND
+		Image.ALPHA_BIT:
+			return ALPHA_CUTOUT
+		_:
+			return ALPHA_OPAQUE
 
 
 static func build_atlas_image(source: Image) -> Image:
 	var height := source.get_height()
 	if height <= 0 or height % 2 != 0:
 		return null
-	var half := height / 2
+	var half: int = height >> 1
 	var states := _build_states(source, half)
 	var atlas_size := ATLAS_GRID * height
 	var atlas := Image.create(
@@ -71,24 +104,26 @@ static func build_atlas_image(source: Image) -> Image:
 
 	for mask in range(256):
 		var tile_x := mask % ATLAS_GRID
-		var tile_y := int(mask / ATLAS_GRID)
+		var tile_y := int(mask / float(ATLAS_GRID))
 		var origin := Vector2i(tile_x * height, tile_y * height)
+		var tile := Image.create(height, height, false, Image.FORMAT_RGBA8)
 
-		_copy_quadrant(atlas, origin, 0, 0, states, half, _state(mask, 0), 0)
-		_copy_quadrant(atlas, origin, 1, 0, states, half, _state(mask, 1), 1)
-		_copy_quadrant(atlas, origin, 0, 1, states, half, _state(mask, 2), 2)
-		_copy_quadrant(atlas, origin, 1, 1, states, half, _state(mask, 3), 3)
+		_copy_quadrant(tile, Vector2i.ZERO, 0, 0, states, half, _state(mask, 0), 0)
+		_copy_quadrant(tile, Vector2i.ZERO, 1, 0, states, half, _state(mask, 1), 1)
+		_copy_quadrant(tile, Vector2i.ZERO, 0, 1, states, half, _state(mask, 2), 2)
+		_copy_quadrant(tile, Vector2i.ZERO, 1, 1, states, half, _state(mask, 3), 3)
 
-		# 32x16 sources have a second half used for transparent pixels.
+		# A 32x16 source is q1-q4 in the left 16x16 block plus a full q5
+		# background in the right block. q5 sits *behind* the four state
+		# pieces, so blend the composed tile over it rather than replacing
+		# only fully transparent pixels. That also gives the correct result
+		# for anti-aliased or partly transparent state pixels.
 		if source.get_width() == height * 2:
-			for y in range(height):
-				for x in range(height):
-					if atlas.get_pixel(origin.x + x, origin.y + y).a == 0:
-						atlas.set_pixel(
-							origin.x + x,
-							origin.y + y,
-							source.get_pixel(height + x, y)
-						)
+			var background := _crop(source, Vector2i(height, 0), height)
+			background.blend_rect(tile, Rect2i(0, 0, height, height), Vector2i.ZERO)
+			tile = background
+
+		atlas.blit_rect(tile, Rect2i(0, 0, height, height), origin)
 
 	return atlas
 
@@ -120,8 +155,8 @@ static func _build_states(source: Image, half: int) -> Dictionary:
 		ed.set_pixel(x, half - 1, ed.get_pixel(x, half - 2))
 
 	var interior_origin := Vector2i(
-		(source.get_width() - half) / 2,
-		(source.get_height() - half) / 2
+		(source.get_width() - half) >> 1,
+		(source.get_height() - half) >> 1
 	)
 	var nu := _crop(source, interior_origin, half)
 	# The inner-corner quadrant must still contain glass; only its corner pixel

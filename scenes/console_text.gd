@@ -71,46 +71,32 @@ func _gui_input(event: InputEvent) -> void:
 			if c_col <= prompt_prefix.length():
 				accept_event()
 
+
 func _process_command(cmd_line: String) -> void:
 	if cmd_line.is_empty():
 		return
-		
+
 	var tokens = cmd_line.split(" ", false)
 	var command = tokens[0].to_lower()
 	var args = tokens.slice(1)
-	
+
 	var g_data = get_node_or_null(global_data_node_path)
 	var out = get_node_or_null(console_output_path)
-	
+
 	if not g_data:
-		if out: out.print_to_console("Error: GlobalData node not found at path: %s" % global_data_node_path)
+		if out:
+			out.print_to_console("Error: GlobalData node not found at path: %s" % global_data_node_path)
 		return
 
 	match command:
-		"/help":
+		"help":
 			if out:
 				out.print_to_console("=== Available Commands ===")
-<<<<<<< Updated upstream
-				out.print_to_console("  /setglobalunitcap <int>   - Sets the global unit cap.")
-				out.print_to_console("  /debug_greedy [on|off]   - Toggles debug greedy-mesh colours.")
-				out.print_to_console("  /ao [on|off]             - Toggles baked voxel-corner ambient occlusion.")
-				out.print_to_console("  /path_mode [astar|flow]  - Switches between A* and baked flow fields.")
-				out.print_to_console("  /show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
-				out.print_to_console("  /clear                    - Clears the console window.")
-=======
 				out.print_to_console("  setglobalunitcap <int>   - Sets the global unit cap.")
 				out.print_to_console("  debug_greedy [on|off]   - Toggles debug greedy-mesh colours.")
 				out.print_to_console("  ao [on|off]             - Toggles baked voxel-corner ambient occlusion.")
 				out.print_to_console("  lod [on|off]            - Toggles distance LOD for the chunk mesher.")
 				out.print_to_console("  slabs                    - Adds half-step bottom slabs to the loaded world's risers.")
-				out.print_to_console("  water_lake [r] [depth] [sim] - Creates a calm (or simulated) lake at the player.")
-				out.print_to_console("  water_fill [r] [amount]  - Adds volume around the player.")
-				out.print_to_console("  water_drain [r] [amount] - Removes volume around the player.")
-				out.print_to_console("  water_info               - Prints water body/cell counts.")
-				out.print_to_console("  water_clear              - Removes every water body.")
-				out.print_to_console("  gas [amount] [radius]    - Adds LPG-like gas at the player.")
-				out.print_to_console("  smoke [amount] [radius]  - Adds smoke at the player.")
-				out.print_to_console("  gas_clear                - Clears the gas and smoke fields.")
 				out.print_to_console("  path_mode [astar|flow]  - Switches between A* and baked flow fields.")
 				out.print_to_console("  show_paths [on|off]     - Toggles A* paths and flow-field arrows.")
 				out.print_to_console("  opt_overlay [on|off]    - Toggles the optimizer assignment overlay.")
@@ -118,38 +104,40 @@ func _process_command(cmd_line: String) -> void:
 				out.print_to_console("  opt_interval <s>        - Sets the periodic re-solve interval.")
 				out.print_to_console("  clear                   - Clears the console window.")
 
->>>>>>> Stashed changes
 				out.print_to_console("\n--- GlobalData Script Methods ---")
-				
-				# Check if GlobalData actually has an attached script
+
 				var script = g_data.get_script()
 				if script:
 					for method in script.get_script_method_list():
 						var m_name = method["name"]
 						if not m_name.begins_with("_"):
-							out.print_to_console("  /%s" % m_name)
-			
-		"/setglobalunitcap":
+							out.print_to_console("  %s" % m_name)
+
+		"setglobalunitcap":
 			if args.size() > 0 and args[0].is_valid_int():
 				g_data.global_unit_cap = args[0].to_int()
-				if out: out.print_to_console("Global unit cap set to: %d" % g_data.global_unit_cap)
+				if out:
+					out.print_to_console("Global unit cap set to: %d" % g_data.global_unit_cap)
 			else:
-				if out: out.print_to_console("Usage: /setglobalunitcap <integer_value>")
-				
-		"/debug_greedy", "/greedy", "/greedy_colors", "/debug_greedy_meshing":
+				if out:
+					out.print_to_console("Usage: setglobalunitcap <integer_value>")
+
+		"debug_greedy", "greedy", "greedy_colors", "debug_greedy_meshing":
 			var grid = get_tree().get_first_node_in_group("grid_map")
 			if grid == null:
-				if out: out.print_to_console("Error: no grid map found.")
+				if out:
+					out.print_to_console("Error: no grid map found.")
 			else:
 				var enabled: bool = _resolve_toggle(args, grid.debug_greedy_colors)
 				grid.debug_greedy_colors = enabled
 				if out:
 					out.print_to_console("Debug greedy colours: %s" % ("ON" if enabled else "OFF"))
 
-		"/ao", "/baked_ao", "/ambient_occlusion":
+		"ao", "baked_ao", "ambient_occlusion":
 			var grid = get_tree().get_first_node_in_group("grid_map")
 			if grid == null:
-				if out: out.print_to_console("Error: no grid map found.")
+				if out:
+					out.print_to_console("Error: no grid map found.")
 			else:
 				var enabled: bool = _resolve_toggle(args, grid.baked_ao_enabled)
 				grid.baked_ao_enabled = enabled
@@ -159,12 +147,9 @@ func _process_command(cmd_line: String) -> void:
 						% ("ON (greedy merging deferred)" if enabled else "OFF")
 					)
 
-		"/path_mode", "/pathfinding", "/flowfields", "/flow_fields":
+		"lod", "lod_enabled":
 			var grid = get_tree().get_first_node_in_group("grid_map")
 			if grid == null:
-<<<<<<< Updated upstream
-				if out: out.print_to_console("Error: no grid map found.")
-=======
 				if out:
 					out.print_to_console("Error: no grid map found.")
 			else:
@@ -200,132 +185,14 @@ func _process_command(cmd_line: String) -> void:
 						"Step slabs: %d added." % placed
 					)
 
-		"water_lake", "lake":
-			var world = get_tree().get_first_node_in_group("water_world")
-			var player = get_tree().get_first_node_in_group("player")
-			if world == null or player == null:
-				if out:
-					out.print_to_console("Error: need a WaterWorld node and a player.")
-			else:
-				var radius := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 8.0
-				var depth := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 1.0
-				var simulated := args.size() > 2 and args[2] == "1"
-				var body_id: int = world.call(
-					"create_lake_at",
-					player.global_position,
-					radius,
-					depth,
-					simulated,
-					2.0
-				)
-				if out:
-					out.print_to_console(
-						"Water body %d: radius %.1f, depth %.1f, %s."
-						% [body_id, radius, depth, "simulated" if simulated else "calm"]
-					)
-
-		"water_fill", "water_add":
-			var world = get_tree().get_first_node_in_group("water_world")
-			var player = get_tree().get_first_node_in_group("player")
-			if world == null or player == null:
-				if out:
-					out.print_to_console("Error: need a WaterWorld node and a player.")
-			else:
-				var radius := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 3.0
-				var amount := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 0.5
-				var changed: int = world.call(
-					"add_water_area",
-					player.global_position,
-					radius,
-					amount
-				)
-				if out:
-					out.print_to_console("Water added to %d cells." % changed)
-
-		"water_drain", "water_remove":
-			var world = get_tree().get_first_node_in_group("water_world")
-			var player = get_tree().get_first_node_in_group("player")
-			if world == null or player == null:
-				if out:
-					out.print_to_console("Error: need a WaterWorld node and a player.")
-			else:
-				var radius := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 3.0
-				var amount := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 0.5
-				var changed: int = world.call(
-					"remove_water_area",
-					player.global_position,
-					radius,
-					amount
-				)
-				if out:
-					out.print_to_console("Water removed from %d cells." % changed)
-
-		"water_clear":
-			var world = get_tree().get_first_node_in_group("water_world")
-			if world != null:
-				world.call("clear_all")
-			if out:
-				out.print_to_console("Water cleared.")
-
-		"water_info":
-			var world = get_tree().get_first_node_in_group("water_world")
-			if world == null:
-				if out:
-					out.print_to_console("Error: no WaterWorld node.")
-			else:
-				var stats: Dictionary = world.call("get_stats")
-				if out:
-					out.print_to_console(
-						"Water: %d bodies, %d cells, %d wet, %d meshes."
-						% [
-							int(stats.get("bodies", 0)),
-							int(stats.get("cells", 0)),
-							int(stats.get("wet_cells", 0)),
-							int(stats.get("meshes", 0)),
-						]
-					)
-
-		"gas", "gas_add":
-			var hazard = get_tree().get_first_node_in_group("hazard_world")
-			var player = get_tree().get_first_node_in_group("player")
-			if hazard == null or player == null:
-				if out:
-					out.print_to_console("Error: need a HazardWorld node and a player.")
-			else:
-				var amount := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 1.0
-				var radius := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 2.0
-				hazard.call("add_gas", player.global_position, amount, radius)
-				if out:
-					out.print_to_console("Gas added (%.2f, radius %.1f)." % [amount, radius])
-
-		"smoke", "smoke_add":
-			var hazard = get_tree().get_first_node_in_group("hazard_world")
-			var player = get_tree().get_first_node_in_group("player")
-			if hazard == null or player == null:
-				if out:
-					out.print_to_console("Error: need a HazardWorld node and a player.")
-			else:
-				var amount := float(args[0]) if args.size() > 0 and args[0].is_valid_float() else 1.0
-				var radius := float(args[1]) if args.size() > 1 and args[1].is_valid_float() else 2.0
-				hazard.call("add_smoke", player.global_position + Vector3.UP, amount, radius)
-				if out:
-					out.print_to_console("Smoke added (%.2f, radius %.1f)." % [amount, radius])
-
-		"gas_clear":
-			var hazard = get_tree().get_first_node_in_group("hazard_world")
-			if hazard != null:
-				hazard.call("clear_all")
-			if out:
-				out.print_to_console("Gas and smoke cleared.")
-
 		"path_mode", "pathfinding", "flowfields", "flow_fields":
 			var grid = get_tree().get_first_node_in_group("grid_map")
 			if grid == null:
 				if out:
 					out.print_to_console("Error: no grid map found.")
->>>>>>> Stashed changes
 			else:
 				var use_flow: bool = grid.enable_flow_fields
+
 				if not args.is_empty():
 					var mode := str(args[0]).to_lower()
 					match mode:
@@ -345,27 +212,78 @@ func _process_command(cmd_line: String) -> void:
 						% ("baked flow fields" if use_flow else "A*")
 					)
 
-		"/show_paths", "/paths", "/debug_paths":
+		"show_paths", "paths", "debug_paths":
 			var grid = get_tree().get_first_node_in_group("grid_map")
 			if grid == null:
-				if out: out.print_to_console("Error: no grid map found.")
+				if out:
+					out.print_to_console("Error: no grid map found.")
 			else:
 				var enabled: bool = _resolve_toggle(args, grid.debug_show_paths)
 				grid.debug_show_paths = enabled
 				if out:
 					out.print_to_console("Path debug drawing: %s" % ("ON" if enabled else "OFF"))
 
-		"/clear":
+		"opt_overlay", "optimizer_overlay":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			else:
+				var enabled: bool = _resolve_toggle(
+					args, bool(bridge.get("overlay_enabled"))
+				)
+				bridge.call("set_overlay_enabled", enabled)
+
+				if out:
+					out.print_to_console(
+						"Optimizer overlay: %s" % ("ON" if enabled else "OFF")
+					)
+
+		"opt_resolve", "optimizer_solve":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			else:
+				bridge.call("request_solve")
+
+				if out:
+					out.print_to_console("Optimizer solve requested.")
+
+		"opt_interval", "optimizer_interval":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			elif args.is_empty():
+				if out:
+					out.print_to_console(
+						"Re-solve interval: %.1f s."
+						% float(bridge.get("re_solve_interval"))
+					)
+			elif str(args[0]).is_valid_float():
+				bridge.call("set_re_solve_interval", float(args[0]))
+
+				if out:
+					out.print_to_console(
+						"Re-solve interval: %.1f s."
+						% float(bridge.get("re_solve_interval"))
+					)
+			else:
+				if out:
+					out.print_to_console("Usage: opt_interval <seconds>")
+
+		"clear":
 			if out and out.has_method("clear_console"):
 				out.clear_console()
-			
+
 		_:
-			var clean_cmd = command
-			if clean_cmd.begins_with("/"):
-				clean_cmd = clean_cmd.substr(1)
-			
-			if g_data.has_method(clean_cmd):
+			if g_data.has_method(command):
 				var converted_args = []
+
 				for arg in args:
 					if arg.is_valid_int():
 						converted_args.append(arg.to_int())
@@ -373,15 +291,17 @@ func _process_command(cmd_line: String) -> void:
 						converted_args.append(arg.to_float())
 					else:
 						converted_args.append(arg)
-				
-				var result = g_data.callv(clean_cmd, converted_args)
+
+				var result = g_data.callv(command, converted_args)
+
 				if out:
 					if result != null:
 						out.print_to_console("Result: %s" % str(result))
 					else:
-						out.print_to_console("Executed /%s successfully." % clean_cmd)
+						out.print_to_console("Executed %s successfully." % command)
 			else:
-				if out: out.print_to_console("Unknown command: '%s'. Type /help for options." % command)
+				if out:
+					out.print_to_console("Unknown command: '%s'. Type help for options." % command)
 
 
 func _resolve_toggle(args: Array, current_value: bool) -> bool:
@@ -396,3 +316,7 @@ func _resolve_toggle(args: Array, current_value: bool) -> bool:
 			return false
 		_:
 			return not current_value
+
+
+func _optimizer_bridge() -> Node:
+	return get_tree().get_first_node_in_group("optimizer_bridge")

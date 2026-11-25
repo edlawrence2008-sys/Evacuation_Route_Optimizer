@@ -16,6 +16,7 @@ const BLOCK_MESH_LIBRARY_SYNC := preload(
 	"res://scripts/block_mesh_library_sync.gd"
 )
 const BLOCK_UV_MAPPER := preload("res://scripts/block_uv_mapper.gd")
+const COLOR_PALETTE := preload("res://scripts/color_palette_db.gd")
 
 const GENERATED_PREFIX := "Auto_"
 
@@ -48,24 +49,28 @@ const PANEL_THICKNESS := BLOCK_SIZE.y * (3.0 / 16.0)
 # GENERATION
 # ============================================================
 
-## Scans the block textures.
-## Generates blocks/slabs/stairs in blocks.tscn, then mirrors the nodes into
-## the MeshLibrary used by the GridMap so item meshes and collisions stay in sync.
+## Editor entry point (File > Run on this script).
 func _run() -> void:
+	generate_all()
+
+
+## Static entry point so the Content Generators plugin does not need to
+## instantiate this EditorScript. Returns counts or `{"error": ...}`.
+static func generate_all() -> Dictionary:
 	var packed_scene: PackedScene = load(BLOCKS_SCENE_PATH)
 
 	if packed_scene == null:
 		push_error("Could not load Blocks scene: " + BLOCKS_SCENE_PATH)
-		return
+		return {"error": "Could not load " + BLOCKS_SCENE_PATH}
 
 	var blocks_root: Node3D = packed_scene.instantiate() as Node3D
 
 	if blocks_root == null:
 		push_error("Blocks scene root must be a Node3D.")
-		return
+		return {"error": "Blocks scene root must be a Node3D"}
 
-	var created_count := 0
-	var updated_count := 0
+	var texture_count := 0
+	var variant_count := 0
 
 	for file_name: String in DirAccess.get_files_at(TEXTURES_FOLDER):
 		if not file_name.ends_with(".png"):
@@ -81,7 +86,7 @@ func _run() -> void:
 		var base_name: String = file_name.get_basename()
 
 		# Full block, centered in its GridMap cell.
-		created_count += _generate_or_update_block(
+		texture_count += _generate_or_update_block(
 			blocks_root,
 			GENERATED_PREFIX + base_name,
 			texture,
@@ -90,7 +95,7 @@ func _run() -> void:
 		)
 
 		if GENERATE_SLABS:
-			updated_count += _generate_or_update_block(
+			variant_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Slab_Top_" + base_name,
 				texture,
@@ -98,7 +103,7 @@ func _run() -> void:
 				Vector3(0.0, SLAB_HEIGHT * 0.5, 0.0)
 			)
 
-			updated_count += _generate_or_update_block(
+			variant_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Slab_Bottom_" + base_name,
 				texture,
@@ -108,7 +113,7 @@ func _run() -> void:
 
 			# Vertical half-slab occupying the +X half of the cell. GridMap
 			# orientation rotates it to whichever side the player clicked.
-			updated_count += _generate_or_update_block(
+			variant_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Slab_Side_" + base_name,
 				texture,
@@ -117,7 +122,7 @@ func _run() -> void:
 			)
 
 		if GENERATE_STAIRS:
-			updated_count += _generate_or_update_stairs(
+			variant_count += _generate_or_update_stairs(
 				blocks_root,
 				GENERATED_PREFIX + "Stairs_" + base_name,
 				texture
@@ -125,7 +130,7 @@ func _run() -> void:
 
 			# Same two-step shape, mirrored vertically: the full-height half
 			# stays at -Z and the half-step moves to the top at +Z.
-			updated_count += _generate_or_update_stairs(
+			variant_count += _generate_or_update_stairs(
 				blocks_root,
 				GENERATED_PREFIX + "Stairs_UpsideDown_" + base_name,
 				texture,
@@ -133,34 +138,41 @@ func _run() -> void:
 			)
 
 		if GENERATE_PANELS and PANEL_TEXTURES.has(base_name):
-			var panel_offset := (BLOCK_SIZE.y - PANEL_THICKNESS) * 0.5
+			var panel_y_offset := (BLOCK_SIZE.y - PANEL_THICKNESS) * 0.5
 
-			updated_count += _generate_or_update_block(
+			variant_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Panel_Top_" + base_name,
 				texture,
 				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
-				Vector3(0.0, panel_offset, 0.0)
+				Vector3(0.0, panel_y_offset, 0.0)
 			)
 
-			updated_count += _generate_or_update_block(
+			variant_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Panel_Bottom_" + base_name,
 				texture,
 				Vector3(BLOCK_SIZE.x, PANEL_THICKNESS, BLOCK_SIZE.z),
-				Vector3(0.0, -panel_offset, 0.0)
+				Vector3(0.0, -panel_y_offset, 0.0)
 			)
 
 			# Vertical panel occupying the +X edge, rotated by orientation.
-			updated_count += _generate_or_update_block(
+			variant_count += _generate_or_update_block(
 				blocks_root,
 				GENERATED_PREFIX + "Panel_Side_" + base_name,
 				texture,
 				Vector3(PANEL_THICKNESS, BLOCK_SIZE.y, BLOCK_SIZE.z),
-				Vector3(panel_offset, 0.0, 0.0)
+				Vector3(panel_y_offset, 0.0, 0.0)
 			)
 
-	if created_count == 0 and updated_count == 0:
+		if base_name.ends_with("_colorbase"):
+			variant_count += _generate_color_variants(
+				blocks_root,
+				base_name,
+				texture
+			)
+
+	if texture_count == 0 and variant_count == 0:
 		var synced_items: int = _sync_mesh_library(blocks_root)
 		print(
 			"No blocks, slabs, or stairs changed; synced %d MeshLibrary item(s)."
@@ -168,7 +180,7 @@ func _run() -> void:
 		)
 
 		blocks_root.queue_free()
-		return
+		return {"textures": 0, "variants": 0, "synced": synced_items}
 
 	var updated_scene := PackedScene.new()
 	var pack_error := updated_scene.pack(blocks_root)
@@ -180,7 +192,7 @@ func _run() -> void:
 		)
 
 		blocks_root.queue_free()
-		return
+		return {"error": "Failed to pack blocks scene (%d)" % pack_error}
 
 	var save_error := ResourceSaver.save(
 		updated_scene,
@@ -192,14 +204,21 @@ func _run() -> void:
 			"Failed to save Blocks scene. Error code: %d"
 			% save_error
 		)
-	else:
-		var synced_items: int = _sync_mesh_library(blocks_root)
-		print(
-			"Created %d item(s), updated %d item(s), and synced %d MeshLibrary item(s)."
-			% [created_count, updated_count, synced_items]
-		)
+		blocks_root.queue_free()
+		return {"error": "Failed to save blocks scene (%d)" % save_error}
+
+	var synced_items: int = _sync_mesh_library(blocks_root)
+	print(
+		"Processed %d texture group(s), %d variant slot(s), and synced %d MeshLibrary item(s)."
+		% [texture_count, variant_count, synced_items]
+	)
 
 	blocks_root.queue_free()
+	return {
+		"textures": texture_count,
+		"variants": variant_count,
+		"synced": synced_items,
+	}
 
 
 ## Runtime/headless entry point for the panel whitelist only. The editor
@@ -281,7 +300,7 @@ static func generate_panels_runtime() -> Dictionary:
 	return {"added": added, "synced": synced}
 
 
-func _sync_mesh_library(blocks_root: Node3D) -> int:
+static func _sync_mesh_library(blocks_root: Node3D) -> int:
 	var previews := _make_scene_previews(blocks_root)
 	return BLOCK_MESH_LIBRARY_SYNC.sync_from_blocks(
 		blocks_root,
@@ -293,7 +312,7 @@ func _sync_mesh_library(blocks_root: Node3D) -> int:
 ## Renders the block meshes into preview textures through the editor. This
 ## keeps the inventory icons as shaded scene previews instead of flat texture
 ## thumbnails.
-func _make_scene_previews(blocks_root: Node3D) -> Dictionary:
+static func _make_scene_previews(blocks_root: Node3D) -> Dictionary:
 	# Headless generation has no rendering context for `make_mesh_previews`.
 	# The library sync then falls back to the flat texture previews for new
 	# items instead of spamming dummy-renderer errors.
@@ -328,12 +347,13 @@ func _make_scene_previews(blocks_root: Node3D) -> Dictionary:
 	return result
 
 
-func _generate_or_update_block(
+static func _generate_or_update_block(
 	blocks_root: Node3D,
 	item_name: String,
 	texture: Texture2D,
 	size: Vector3,
-	local_offset: Vector3
+	local_offset: Vector3,
+	tint: Color = Color.WHITE
 ) -> int:
 	var existing_block := blocks_root.get_node_or_null(
 		NodePath(item_name)
@@ -343,7 +363,7 @@ func _generate_or_update_block(
 		if not UPDATE_EXISTING_BLOCKS:
 			return 0
 
-		_update_block(existing_block, texture, size, local_offset)
+		_update_block(existing_block, texture, size, local_offset, tint)
 		_set_scene_owner(existing_block, blocks_root)
 
 		return 1
@@ -352,7 +372,8 @@ func _generate_or_update_block(
 		item_name,
 		texture,
 		size,
-		local_offset
+		local_offset,
+		tint
 	)
 
 	blocks_root.add_child(block)
@@ -361,11 +382,12 @@ func _generate_or_update_block(
 	return 1
 
 
-func _generate_or_update_stairs(
+static func _generate_or_update_stairs(
 	blocks_root: Node3D,
 	item_name: String,
 	texture: Texture2D,
-	upside_down: bool = false
+	upside_down: bool = false,
+	tint: Color = Color.WHITE
 ) -> int:
 	var existing_stairs := blocks_root.get_node_or_null(
 		NodePath(item_name)
@@ -375,17 +397,82 @@ func _generate_or_update_stairs(
 		if not UPDATE_EXISTING_BLOCKS:
 			return 0
 
-		_update_stairs(existing_stairs, texture, upside_down)
+		_update_stairs(existing_stairs, texture, upside_down, tint)
 		_set_scene_owner(existing_stairs, blocks_root)
 
 		return 1
 
-	var stairs := _create_stairs(item_name, texture, upside_down)
+	var stairs := _create_stairs(item_name, texture, upside_down, tint)
 
 	blocks_root.add_child(stairs)
 	_set_scene_owner(stairs, blocks_root)
 
 	return 1
+
+
+## Generates a full block plus slab/stair variants for every palette color when
+## the texture name ends in `_colorbase`. Names carry `_cNN`, which
+## BlockMaterials strips from the group id so all colors stay in one group.
+static func _generate_color_variants(
+	blocks_root: Node3D,
+	base_name: String,
+	texture: Texture2D
+) -> int:
+	var count := 0
+	var colors := COLOR_PALETTE.colors()
+	for index in colors.size():
+		var tint := colors[index]
+		var suffix := "_c%02d" % index
+
+		# The base texture stays shared; albedo_color tints it on the material.
+		# This avoids baking and storing 32 copies of every block texture.
+		count += _generate_or_update_block(
+			blocks_root,
+			GENERATED_PREFIX + base_name + suffix,
+			texture,
+			BLOCK_SIZE,
+			Vector3.ZERO,
+			tint
+		)
+		count += _generate_or_update_block(
+			blocks_root,
+			GENERATED_PREFIX + "Slab_Top_" + base_name + suffix,
+			texture,
+			Vector3(BLOCK_SIZE.x, SLAB_HEIGHT, BLOCK_SIZE.z),
+			Vector3(0.0, SLAB_HEIGHT * 0.5, 0.0),
+			tint
+		)
+		count += _generate_or_update_block(
+			blocks_root,
+			GENERATED_PREFIX + "Slab_Bottom_" + base_name + suffix,
+			texture,
+			Vector3(BLOCK_SIZE.x, SLAB_HEIGHT, BLOCK_SIZE.z),
+			Vector3(0.0, -SLAB_HEIGHT * 0.5, 0.0),
+			tint
+		)
+		count += _generate_or_update_block(
+			blocks_root,
+			GENERATED_PREFIX + "Slab_Side_" + base_name + suffix,
+			texture,
+			Vector3(BLOCK_SIZE.x * 0.5, BLOCK_SIZE.y, BLOCK_SIZE.z),
+			Vector3(BLOCK_SIZE.x * 0.25, 0.0, 0.0),
+			tint
+		)
+		count += _generate_or_update_stairs(
+			blocks_root,
+			GENERATED_PREFIX + "Stairs_" + base_name + suffix,
+			texture,
+			false,
+			tint
+		)
+		count += _generate_or_update_stairs(
+			blocks_root,
+			GENERATED_PREFIX + "Stairs_UpsideDown_" + base_name + suffix,
+			texture,
+			true,
+			tint
+		)
+	return count
 
 
 # ============================================================
@@ -396,26 +483,28 @@ static func _create_block(
 	item_name: String,
 	texture: Texture2D,
 	size: Vector3,
-	local_offset: Vector3
+	local_offset: Vector3,
+	tint: Color = Color.WHITE
 ) -> MeshInstance3D:
 	var block := MeshInstance3D.new()
 	block.name = item_name
 	block.position = Vector3.ZERO
 
-	block.mesh = _create_block_mesh(texture, size, local_offset)
+	block.mesh = _create_block_mesh(texture, size, local_offset, tint)
 	block.add_child(_create_block_collision(size, local_offset))
 
 	return block
 
 
-func _update_block(
+static func _update_block(
 	block: MeshInstance3D,
 	texture: Texture2D,
 	size: Vector3,
-	local_offset: Vector3
+	local_offset: Vector3,
+	tint: Color = Color.WHITE
 ) -> void:
 	block.position = Vector3.ZERO
-	block.mesh = _create_block_mesh(texture, size, local_offset)
+	block.mesh = _create_block_mesh(texture, size, local_offset, tint)
 
 	var existing_body := block.get_node_or_null(
 		NodePath("StaticBody3D")
@@ -447,7 +536,8 @@ func _update_block(
 static func _create_block_mesh(
 	texture: Texture2D,
 	size: Vector3,
-	local_offset: Vector3
+	local_offset: Vector3,
+	tint: Color = Color.WHITE
 ) -> ArrayMesh:
 	var box := BoxMesh.new()
 	box.size = size
@@ -467,15 +557,19 @@ static func _create_block_mesh(
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
-	var material := _create_block_material(texture)
+	var material := _create_block_material(texture, tint)
 	mesh.surface_set_material(0, material)
 
 	return mesh
 
 
-static func _create_block_material(texture: Texture2D) -> StandardMaterial3D:
+static func _create_block_material(
+	texture: Texture2D,
+	tint: Color = Color.WHITE
+) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_texture = texture
+	material.albedo_color = tint
 
 	# Keeps 16x16 pixel-art textures sharp.
 	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
@@ -510,28 +604,30 @@ static func _create_block_collision(
 # STAIR CREATION
 # ============================================================
 
-func _create_stairs(
+static func _create_stairs(
 	item_name: String,
 	texture: Texture2D,
-	upside_down: bool = false
+	upside_down: bool = false,
+	tint: Color = Color.WHITE
 ) -> MeshInstance3D:
 	var stairs := MeshInstance3D.new()
 	stairs.name = item_name
 	stairs.position = Vector3.ZERO
 
-	stairs.mesh = _create_stairs_mesh(texture, upside_down)
+	stairs.mesh = _create_stairs_mesh(texture, upside_down, tint)
 	stairs.add_child(_create_stairs_collision(upside_down))
 
 	return stairs
 
 
-func _update_stairs(
+static func _update_stairs(
 	stairs: MeshInstance3D,
 	texture: Texture2D,
-	upside_down: bool = false
+	upside_down: bool = false,
+	tint: Color = Color.WHITE
 ) -> void:
 	stairs.position = Vector3.ZERO
-	stairs.mesh = _create_stairs_mesh(texture, upside_down)
+	stairs.mesh = _create_stairs_mesh(texture, upside_down, tint)
 
 	var existing_body := stairs.get_node_or_null(
 		NodePath("StaticBody3D")
@@ -547,13 +643,14 @@ func _update_stairs(
 	stairs.add_child(_create_stairs_collision(upside_down))
 
 
-func _create_stairs_mesh(
+static func _create_stairs_mesh(
 	texture: Texture2D,
-	upside_down: bool = false
+	upside_down: bool = false,
+	tint: Color = Color.WHITE
 ) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 
-	var material := _create_block_material(texture)
+	var material := _create_block_material(texture, tint)
 
 	# Back half: full-height section.
 	var back_arrays := _create_offset_box_arrays(
@@ -602,7 +699,7 @@ func _create_stairs_mesh(
 	return mesh
 
 
-func _create_stairs_collision(upside_down: bool = false) -> StaticBody3D:
+static func _create_stairs_collision(upside_down: bool = false) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = "StaticBody3D"
 	body.position = Vector3.ZERO
@@ -653,7 +750,7 @@ func _create_stairs_collision(upside_down: bool = false) -> StaticBody3D:
 	return body
 
 
-func _create_offset_box_arrays(
+static func _create_offset_box_arrays(
 	size: Vector3,
 	offset: Vector3
 ) -> Array:

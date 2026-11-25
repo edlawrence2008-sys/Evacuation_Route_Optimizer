@@ -9,15 +9,32 @@ signal chunk_loaded(chunk: Vector2i)
 signal chunk_unloaded(chunk: Vector2i)
 signal flow_field_baked(target_cell: Vector3i)
 signal congestion_changed(affected_cells: Array[Vector3i])
+## Emitted after every incremental navigation rebuild. `duration_usec` covers
+## the A* cell refresh + connection rebuild, not the caller's mesh work.
+signal nav_refresh_measured(duration_usec: int, changed_cells: int)
 
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
+const COLOR_PALETTE := preload("res://scripts/color_palette_db.gd")
+const VoxelSectionStoreScript := preload("res://scripts/world/VoxelSectionStore.gd")
 
-@export var agent_radius: float = 1.0
+## Body radius used for navigation clearance checks. The spawned NPC body is a
+## 0.25 m sphere; matching it here keeps path validation honest.
+@export var agent_radius: float = 0.25
 ## Side clearance used by smoothed-path ground checks. Keep this near the NPC
 ## body radius so a shortcut cannot put half the body over a ledge.
 @export var path_ground_radius: float = 0.3
 @export var wall_penalty_max: float = 2.0
 @export var gap_penalty_max: float = 3.0
+
+@export_group("Social Force Walls")
+## Wall repulsion strength A_w, newtons (Helbing & Molnar 1995 use ~2000).
+@export var wall_repulsion_a: float = 2000.0
+## Wall repulsion range B_w, metres.
+@export var wall_repulsion_b: float = 0.08
+## How far from the body centre walls are sampled, metres. Wall force is
+## negligible beyond ~0.6 m with B_w = 0.08 m.
+@export var wall_query_radius: float = 0.8
+@export var wall_force_enabled: bool = true
 
 @export_group("Navigation Costs")
 ## Multiplier for cells whose top block is a stair. Values below 1 make
@@ -124,8 +141,13 @@ enum DirectionalKind {
 }
 
 var _directional_kinds: Dictionary = {} # item id -> DirectionalKind
-## Connected-texture base item id -> runtime atlas material.
+## Connected-texture item id -> runtime atlas material. Shared by the full
+## block and its slab/stair variants so they sample one atlas.
 var _ctm_materials: Dictionary = {}
+## Connected-texture item id -> source base name (e.g. "concrete_polished").
+## Shape variants map back to the same base, which is what the mesher compares
+## when building per-face neighbour masks.
+var _ctm_bases: Dictionary = {}
 
 const WALL_CHECK_DIRS: Array[Vector3i] = [
 	Vector3i.RIGHT,
@@ -140,9 +162,20 @@ const NO_CELL: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 ## Vertical offsets probed when looking for ground under a point.
 const GROUND_PROBE_DY: Array[int] = [1, 0, -1, -2]
 
-## Chunks are CHUNK_SIZE x CHUNK_SIZE columns in X/Z and span every Y level.
+## Vertical tolerance, in cell heights, for "there is ground here". It must
+## cover one full step: an agent origin sits 0.25 m below the floor surface and
+## a one-block step raises the navigation point by 1 m, so the difference from
+## the origin is 1.25 m. 1.35 leaves a small margin while still rejecting a
+## two-block face. The smaller side tolerance used for ledge checks is separate.
+const GROUND_HEIGHT_TOLERANCE: float = 1.35
+
+## Chunks are CHUNK_SIZE x CHUNK_SIZE columns in X/Z. Storage is split into
+## 16 x 16 x 16 sections inside each column, so a one-storey floor costs one
+## section and a ten-storey building costs ten. See VoxelSectionStore.
 const CHUNK_SIZE: int = 16
-const CHUNK_DATA_VERSION: int = 1
+## v1 = flat 5-int cells, v2 = compressed 3D sections. v1 is still loadable.
+const CHUNK_DATA_VERSION: int = 2
+const LEGACY_CHUNK_DATA_VERSION: int = 1
 const INTS_PER_BLOCK: int = 5
 const NO_CHUNK_FLOOR: int = -2147483647
 
@@ -152,8 +185,23 @@ var _id_to_cell: Dictionary = {} # astar point id -> cell
 var free_ids: Array[int] = []
 var next_id: int = 1
 
-## chunk -> { cell: true }
-var _chunk_cells: Dictionary = {}
+# --- Measurement counters -------------------------------------------------
+## Duration of the most recent incremental navigation refresh.
+var last_nav_refresh_usec: int = 0
+var last_nav_refresh_cells: int = 0
+var nav_refresh_total_usec: int = 0
+var nav_refresh_count: int = 0
+## Duration of queued A* path requests (sum and last).
+var last_path_request_usec: int = 0
+var path_request_total_usec: int = 0
+var path_request_count: int = 0
+
+## Packed sparse 3D section storage. Replaces the old per-cell
+## Dictionary[chunk][Vector3i] index: cost follows content, not build height.
+var _sections = VoxelSectionStoreScript.new()
+## True when GridMap keeps its own cells for collision (chunk meshing off).
+## When the mesher owns collision, the runtime mirror is dropped entirely.
+var _grid_mirror_enabled: bool = true
 ## chunk -> lowest occupied Y. Maintained incrementally so the NPC fall check
 ## does not scan a whole chunk every frame.
 var _chunk_min_y: Dictionary = {}
@@ -165,6 +213,7 @@ var _nav_chunks: Dictionary = {}
 var _dirty_chunks: Dictionary = {}
 
 var _mesher: ChunkMesher = null
+var _water_system: WaterSystem = null
 var request_queue: Array[Dictionary] = []
 
 ## Debug path drawing state.
@@ -182,6 +231,19 @@ const DEBUG_MAX_FLOW_SEGMENTS: int = 6000
 ## target_cell -> { cell: next_cell }
 var _flow_fields: Dictionary = {}
 
+## target_cell -> { cell: cost } from the same bake. Used for exit-choice
+## route lengths (metres, including congestion weights at bake time).
+var _flow_costs: Dictionary = {}
+
+## Quantised world position -> wall repulsion force (newtons). Cached between
+## navigation changes because 600 agents share far fewer cells than positions.
+var _wall_force_cache: Dictionary = {}
+## 0.2 m buckets: fine enough to follow the exponential force profile.
+const WALL_CACHE_QUANTISATION: float = 5.0
+## Sized above the walkable area of a typical map at 0.2 m buckets so the cache
+## does not churn through a full clear every few seconds at 600 agents.
+const WALL_FORCE_CACHE_LIMIT: int = 65536
+
 ## target_cell -> FlowBakeJob (fields still being baked across frames)
 var _bake_jobs: Dictionary = {}
 
@@ -190,6 +252,11 @@ var _step_lengths: Array[float] = []
 ## Item-id caches for navigation surface height and traversal cost.
 var _surface_low_by_item: Dictionary = {}
 var _surface_cost_kind_by_item: Dictionary = {}
+## Lazily filled block-item cache for one chunk navigation build. Wall/gap
+## penalties query ~24 neighbours per cell; without this each query goes through
+## the packed section store.
+var _nav_snapshot_active: bool = false
+var _nav_snapshot_items: Dictionary = {}
 
 ## Recent deadlock heat per nav cell (0..1). Hot cells cost more to enter, so
 ## later A* requests and flow bakes route around a jam instead of feeding it.
@@ -197,6 +264,13 @@ var _congestion_heat: Dictionary = {}
 ## Cells whose congestion weight changed since the last signal emission.
 var _congestion_dirty: Dictionary = {}
 var _congestion_accum: float = 0.0
+## Cells whose A* weight still needs updating. A synchronized jam can heat
+## hundreds of cells in one frame; applying every weight immediately caused
+## 4-6 ms spikes. They are flushed in small batches instead.
+var _congestion_weight_pending: Dictionary = {}
+var _congestion_weight_accum: float = 0.0
+const CONGESTION_WEIGHT_FLUSH_INTERVAL: float = 0.1
+const CONGESTION_WEIGHT_FLUSH_BUDGET: int = 64
 
 ## Moves: 4 straight, 4 flat diagonals, and 8 one-block stair steps.
 ## Flat diagonals are only allowed when both cells beside them are walkable
@@ -236,11 +310,22 @@ func _ready() -> void:
 
 	add_to_group("grid_map")
 
+	# Any navigation change can move or remove a wall, so the cached wall force
+	# is only valid until the next change.
+	if not navigation_changed.is_connected(_on_navigation_changed_clear_wall_cache):
+		navigation_changed.connect(_on_navigation_changed_clear_wall_cache)
+
 	if auto_generate_stairs:
 		_generate_auto_stairs()
 
+	# The mesher provides per-chunk trimesh collision, so GridMap's duplicate
+	# cell grid can be dropped. Without the mesher (disabled, or no MeshLibrary
+	# to build from), GridMap stays authoritative for collision.
+	_grid_mirror_enabled = not enable_greedy_meshing or mesh_library == null
+
 	initialize_navigation()
 	_build_ctm_items()
+	_ensure_water_system()
 
 	if enable_greedy_meshing:
 		_mesher = ChunkMesher.new(self)
@@ -259,6 +344,12 @@ func _exit_tree() -> void:
 	if is_instance_valid(_debug_mesh_instance):
 		_debug_mesh_instance.queue_free()
 		_debug_mesh_instance = null
+
+
+func _on_navigation_changed_clear_wall_cache(
+	_affected: Array[Vector3i]
+) -> void:
+	_wall_force_cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -416,20 +507,42 @@ func initialize_navigation() -> void:
 	_id_to_cell.clear()
 	free_ids.clear()
 	next_id = 1
-	_chunk_cells.clear()
+	_sections.clear()
 	_chunk_min_y.clear()
 	_nav_chunks.clear()
 	_dirty_chunks.clear()
 	_flow_fields.clear()
+	_flow_costs.clear()
 	_bake_jobs.clear()
+	_wall_force_cache.clear()
+	_congestion_weight_pending.clear()
+	_congestion_weight_accum = 0.0
 	_rebuild_surface_profiles()
 	_build_step_lengths()
 
-	var used_cells: Array[Vector3i] = get_used_cells()
+	# The packed store is the runtime source of truth. On the first run the
+	# scene's GridMap cells are copied into it; after that the grid is only a
+	# coordinate/mesh-library host and is cleared so collision can be owned by
+	# the chunk meshes instead of a duplicate cell grid.
+	var used_cells: Array[Vector3i]
+
+	if _sections.cell_count() == 0:
+		used_cells = _seed_sections_from_gridmap()
+	else:
+		used_cells = get_used_block_cells()
+
+	if not _grid_mirror_enabled:
+		clear()
+
+	for chunk: Vector2i in _sections.get_column_chunks():
+		var lowest: int = _sections.get_column_min_y(chunk)
+		_chunk_min_y[chunk] = (
+			lowest
+			if lowest != VoxelSectionStoreScript.NO_HEIGHT
+			else NO_CHUNK_FLOOR
+		)
 
 	for cell in used_cells:
-		_track_cell(cell)
-
 		if not _is_walkable(cell):
 			continue
 
@@ -445,8 +558,44 @@ func initialize_navigation() -> void:
 	for cell: Vector3i in cell_to_id_map:
 		_connect_cell_neighbors(cell)
 
-	for chunk: Vector2i in _chunk_cells:
+	for chunk: Vector2i in _sections.get_column_chunks():
 		_nav_chunks[chunk] = true
+
+
+## Copies the scene's authored GridMap cells into the packed store. Only the
+## first initialize_navigation() call needs this; afterwards the store is the
+## source of truth and the grid is empty at runtime.
+func _seed_sections_from_gridmap() -> Array[Vector3i]:
+	var cells: Array[Vector3i] = get_used_cells()
+
+	for cell in cells:
+		var item: int = get_cell_item(cell)
+
+		if item < 0:
+			continue
+
+		_sections.set_cell(cell, item, get_cell_item_orientation(cell))
+
+	return cells
+
+
+## Drops every stored cell and rebuilds an empty navigation graph. Used when a
+## save is replaced by a generated world, so the scene's starter cells do not
+## survive into the new world.
+func reset_world() -> void:
+	_sections.clear()
+	_chunk_min_y.clear()
+	_dirty_chunks.clear()
+	_nav_chunks.clear()
+
+	if _grid_mirror_enabled:
+		clear()
+
+	initialize_navigation()
+
+	if _mesher != null:
+		_mesher.stop()
+		_mesher.start()
 
 
 func _build_step_lengths() -> void:
@@ -514,7 +663,7 @@ func _wall_penalty_scale(cell: Vector3i) -> float:
 	var open_count: int = 0
 
 	for dir in WALL_CHECK_DIRS:
-		if not has_block(cell + Vector3i.UP + dir):
+		if not _nav_has_block(cell + Vector3i.UP + dir):
 			open_count += 1
 
 	var openness: float = float(open_count) / float(WALL_CHECK_DIRS.size())
@@ -564,13 +713,43 @@ func _rebuild_surface_profiles() -> void:
 		_surface_cost_kind_by_item[id] = cost_kind
 
 
+## Item read used by navigation hot paths. During a chunk build, neighbours are
+## memoized so the 24 wall/gap probes per cell become dictionary reads.
+func _nav_block_item(cell: Vector3i) -> int:
+	if _nav_snapshot_active:
+		var cached: Variant = _nav_snapshot_items.get(cell)
+
+		if cached != null:
+			return int(cached)
+
+		var item: int = _sections.get_cell_item(cell)
+		_nav_snapshot_items[cell] = item
+		return item
+
+	return _sections.get_cell_item(cell)
+
+
+func _nav_has_block(cell: Vector3i) -> bool:
+	return _nav_block_item(cell) != GridMap.INVALID_CELL_ITEM
+
+
+func _nav_snapshot_begin() -> void:
+	_nav_snapshot_items.clear()
+	_nav_snapshot_active = true
+
+
+func _nav_snapshot_end() -> void:
+	_nav_snapshot_active = false
+	_nav_snapshot_items.clear()
+
+
 func _surface_is_low(cell: Vector3i) -> bool:
-	return bool(_surface_low_by_item.get(get_cell_item(cell), false))
+	return bool(_surface_low_by_item.get(_nav_block_item(cell), false))
 
 
 func _surface_weight_scale(cell: Vector3i) -> float:
 	var kind: int = int(
-		_surface_cost_kind_by_item.get(get_cell_item(cell), 0)
+		_surface_cost_kind_by_item.get(_nav_block_item(cell), 0)
 	)
 
 	match kind:
@@ -632,12 +811,12 @@ func _heat_cell(cell: Vector3i, amount: float) -> void:
 		if not keys.is_empty():
 			var oldest: Vector3i = keys[0]
 			_congestion_heat.erase(oldest)
-			_apply_nav_point_weight(oldest, 0.0)
+			_congestion_weight_pending[oldest] = true
 			_congestion_dirty[oldest] = true
 
 	var next_heat: float = minf(1.0, current + amount)
 	_congestion_heat[cell] = next_heat
-	_apply_nav_point_weight(cell, next_heat)
+	_congestion_weight_pending[cell] = true
 	_congestion_dirty[cell] = true
 
 
@@ -689,6 +868,30 @@ func clear_congestion() -> void:
 		_congestion_dirty[cell] = true
 
 	_congestion_heat.clear()
+	_congestion_weight_pending.clear()
+	_congestion_weight_accum = 0.0
+
+
+## Applies queued congestion weights in bounded batches. Keeping this separate
+## from heat updates means a crowd-wide jam cannot monopolise one frame while
+## still letting A* see the heat almost immediately (64 cells per 0.1 s).
+func _flush_congestion_weights(delta: float) -> void:
+	if _congestion_weight_pending.is_empty():
+		return
+
+	_congestion_weight_accum += delta
+
+	if _congestion_weight_accum < CONGESTION_WEIGHT_FLUSH_INTERVAL:
+		return
+
+	_congestion_weight_accum = 0.0
+	var keys: Array = _congestion_weight_pending.keys()
+	var budget: int = mini(keys.size(), CONGESTION_WEIGHT_FLUSH_BUDGET)
+
+	for index: int in range(budget):
+		var cell: Vector3i = keys[index]
+		_congestion_weight_pending.erase(cell)
+		_apply_nav_point_weight(cell)
 
 
 func _advance_congestion(delta: float) -> void:
@@ -718,12 +921,12 @@ func _advance_congestion(delta: float) -> void:
 
 		if absf(heat - float(_congestion_heat[cell])) > 0.005:
 			_congestion_heat[cell] = heat
-			_apply_nav_point_weight(cell, heat)
+			_congestion_weight_pending[cell] = true
 			_congestion_dirty[cell] = true
 
 	for cell: Vector3i in expired:
 		_congestion_heat.erase(cell)
-		_apply_nav_point_weight(cell, 0.0)
+		_congestion_weight_pending[cell] = true
 		_congestion_dirty[cell] = true
 
 	if _congestion_dirty.is_empty():
@@ -741,8 +944,8 @@ func _gap_exposure(cell: Vector3i) -> float:
 	var exposed_count: int = 0
 
 	for dir in WALL_CHECK_DIRS:
-		var has_wall: bool = has_block(cell + Vector3i.UP + dir)
-		var has_floor: bool = has_block(cell + dir)
+		var has_wall: bool = _nav_has_block(cell + Vector3i.UP + dir)
+		var has_floor: bool = _nav_has_block(cell + dir)
 
 		if not has_wall and not has_floor:
 			exposed_count += 1
@@ -861,6 +1064,117 @@ func has_flow_field(target_world: Vector3) -> bool:
 	var target_cell: Vector3i = _resolve_nav_cell(target_world)
 
 	return target_cell != NO_CELL and _flow_fields.has(target_cell)
+
+
+## Route length in metres from a world position to a destination, taken from
+## the baked flow-field costs. Returns -1 when no field exists yet, so callers
+## can fall back without paying for an A* query per exit per agent.
+func get_path_distance(from_world: Vector3, to_world: Vector3) -> float:
+	var target_cell: Vector3i = _resolve_nav_cell(to_world)
+
+	if target_cell == NO_CELL:
+		return -1.0
+
+	var costs: Variant = _flow_costs.get(target_cell)
+
+	if costs == null:
+		return -1.0
+
+	var from_cell: Vector3i = _resolve_nav_cell(from_world)
+
+	if from_cell == NO_CELL:
+		return -1.0
+
+	if not costs.has(from_cell):
+		return -1.0
+
+	return float(costs[from_cell])
+
+
+## Repulsive force from nearby walls, newtons. Sampled in eight directions out
+## to wall_query_radius against the voxel grid, then converted to acceleration
+## by the caller's mass. A single block with nothing above it is a climbable
+## step (the nav grid links it and the kinematic probe climbs it), so it does
+## not contribute force; stacked blocks do. The result is cached per quantised
+## position so the per-tick cost for a crowd is a Dictionary lookup.
+func get_wall_acceleration(
+	world_pos: Vector3,
+	agent_radius_value: float,
+	mass: float
+) -> Vector3:
+	if not wall_force_enabled or mass <= 0.0:
+		return Vector3.ZERO
+
+	# Body radius is part of the key: the sampled force depends on it, so two
+	# agents with different radii must not share an entry.
+	var key := Vector4i(
+		roundi(world_pos.x * WALL_CACHE_QUANTISATION),
+		roundi(world_pos.y * WALL_CACHE_QUANTISATION),
+		roundi(world_pos.z * WALL_CACHE_QUANTISATION),
+		roundi(agent_radius_value * 1000.0)
+	)
+
+	var force: Variant = _wall_force_cache.get(key)
+
+	if force == null:
+		force = _compute_wall_force(world_pos, agent_radius_value)
+
+		# Positions keep changing as agents walk, so an unbounded cache would
+		# grow for the whole run. Dropping it only costs the next recompute.
+		if _wall_force_cache.size() >= WALL_FORCE_CACHE_LIMIT:
+			_wall_force_cache.clear()
+
+		_wall_force_cache[key] = force
+
+	return (force as Vector3) / mass
+
+
+func _compute_wall_force(
+	world_pos: Vector3,
+	agent_radius_value: float
+) -> Vector3:
+	var force: Vector3 = Vector3.ZERO
+	var reach: float = maxf(wall_query_radius, agent_radius_value + 0.15)
+	var step: float = 0.2
+	var exponent_cap: float = 8.0
+
+	for index in range(8):
+		var angle: float = TAU * float(index) / 8.0
+		var direction := Vector3(cos(angle), 0.0, sin(angle))
+		var distance: float = maxf(0.05, agent_radius_value * 0.5)
+
+		while distance <= reach:
+			var sample: Vector3 = world_pos + direction * distance
+			var cell: Vector3i = world_to_cell(sample)
+
+			# A single block with nothing above it is a one-block step, which
+			# the navigation graph treats as walkable and the kinematic probe
+			# climbs. Repelling it would stop agents ~0.4 m short of a step they
+			# are supposed to take, so keep scanning past it. Two or more blocks
+			# stacked (or a block directly above the sample height) is a wall.
+			var solid_at_sample: bool = has_block(cell)
+			var solid_above: bool = has_block(cell + Vector3i.UP)
+
+			if solid_above:
+				# Psychological wall repulsion: A_w exp((r - d_w) / B_w).
+				var exponent: float = (
+					(agent_radius_value - distance)
+					/ maxf(wall_repulsion_b, 1e-4)
+				)
+				var magnitude: float = (
+					wall_repulsion_a
+					* exp(clampf(exponent, -20.0, exponent_cap))
+				)
+				force -= direction * magnitude
+				break
+
+			if solid_at_sample:
+				distance += step
+				continue
+
+			distance += step
+
+	return force
 
 
 ## Resolves a world position to its navigation cell (NO_CELL when outside).
@@ -1053,6 +1367,7 @@ func _finish_bake_job(job: FlowBakeJob) -> void:
 		return
 
 	_flow_fields[job.target] = job.next_cell
+	_flow_costs[job.target] = job.costs
 	_enforce_flow_field_cache_limit()
 	flow_field_baked.emit(job.target)
 
@@ -1124,9 +1439,14 @@ func _enforce_flow_field_cache_limit() -> void:
 			return
 
 		_flow_fields.erase(oldest_key)
+		_flow_costs.erase(oldest_key)
 
 
 func _invalidate_flow_fields(affected_cells: Array[Vector3i]) -> void:
+	# Wall force depends on block layout, so drop it even when no flow fields
+	# exist yet.
+	_wall_force_cache.clear()
+
 	if not enable_flow_fields:
 		return
 
@@ -1145,6 +1465,7 @@ func _invalidate_flow_fields(affected_cells: Array[Vector3i]) -> void:
 
 	for target_cell in stale:
 		_flow_fields.erase(target_cell)
+		_flow_costs.erase(target_cell)
 
 	# A half-baked field can be stale too. Drop it; the next request restarts the bake.
 	var stale_jobs: Array[Vector3i] = []
@@ -1234,6 +1555,7 @@ func _process(_delta: float) -> void:
 
 	_update_debug_paths(_delta)
 	_advance_bake_jobs()
+	_flush_congestion_weights(_delta)
 	_advance_congestion(_delta)
 
 	if request_queue.is_empty():
@@ -1264,6 +1586,7 @@ func _process(_delta: float) -> void:
 		if not requester_valid or not callback_valid:
 			continue
 
+		var path_start_usec: int = Time.get_ticks_usec()
 		var path: PackedVector3Array
 
 		if request.get("flow", false):
@@ -1282,6 +1605,9 @@ func _process(_delta: float) -> void:
 		if not fast_paths:
 			path = _apply_requester_lane(requester, path)
 
+		last_path_request_usec = Time.get_ticks_usec() - path_start_usec
+		path_request_total_usec += last_path_request_usec
+		path_request_count += 1
 		callback.call(path)
 
 		if Time.get_ticks_usec() - start_usec >= path_budget_usec:
@@ -1314,6 +1640,104 @@ func estimate_path_distance(start_world: Vector3, end_world: Vector3) -> float:
 		total += p1.distance_to(p2)
 
 	return total
+
+
+## Read-only, synchronous cost field to a destination, for the evacuation
+## optimizer (docs/OPTIMIZER.md). One bake gives every cohort its distance to
+## this exit, instead of one A* query per cohort per exit.
+##
+## Step cost is real distance times the weight of the cell being entered, which
+## is what AStar3D and the flow-field bake use, so the optimizer and the agents
+## agree about walls, gaps and surface classes. This does NOT touch the flow
+## field cache, returns even when `enable_flow_fields` is false, and is not
+## capped by `flow_field_max_cells` unless a positive `cell_limit` is passed.
+##
+## Returns { Vector3i: float } in weighted metres, or {} when the target is not
+## a navigation cell. The caller owns the dictionary and should cache it for the
+## duration of one optimization. Keep it off the physics tick: a full-map bake
+## costs one pass over the nav graph.
+func build_cost_field_to(target_world: Vector3, cell_limit: int = 0) -> Dictionary:
+	var target_cell: Vector3i = _resolve_nav_cell(target_world)
+
+	if target_cell == NO_CELL:
+		return {}
+
+	if _step_lengths.size() != NEIGHBOR_OFFSETS.size():
+		_build_step_lengths()
+
+	var costs: Dictionary = {target_cell: 0.0}
+	var queue: Array[Vector3i] = [target_cell]
+	var head: int = 0
+
+	# Label-correcting flood, the same scheme as _step_bake_job but without a
+	# frame budget. Re-expansion is allowed when a cheaper route is found.
+	while head < queue.size():
+		var current: Vector3i = queue[head]
+		head += 1
+
+		var current_id: int = cell_to_id_map.get(current, -1)
+
+		if current_id == -1:
+			continue
+
+		var current_cost: float = float(costs[current])
+		var enter_weight: float = astar.get_point_weight_scale(current_id)
+
+		for index: int in range(NEIGHBOR_OFFSETS.size()):
+			var step: Vector3i = NEIGHBOR_OFFSETS[index]
+			var neighbor: Vector3i = current + step
+
+			if not cell_to_id_map.has(neighbor):
+				continue
+
+			if not _can_move_between(current, step):
+				continue
+
+			var neighbor_cost: float = current_cost + _step_lengths[index] * enter_weight
+			var known: bool = costs.has(neighbor)
+
+			if known and neighbor_cost >= float(costs[neighbor]):
+				continue
+
+			if not known and cell_limit > 0 and costs.size() >= cell_limit:
+				continue
+
+			costs[neighbor] = neighbor_cost
+			queue.append(neighbor)
+
+	return costs
+
+
+## Cell-by-cell route through the navigation graph, for congestion prediction.
+## Returns the nav cells the cheapest path occupies, start first. Unlike
+## `_calculate_path`, it does not smooth or shift the route, because the
+## optimizer needs the cells the agents will actually occupy.
+func get_path_cells(from_world: Vector3, to_world: Vector3) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+
+	if astar.get_point_count() == 0:
+		return result
+
+	var start_id: int = _find_nav_id(to_local(from_world))
+	var end_id: int = _find_nav_id(to_local(to_world))
+
+	if start_id == -1 or end_id == -1:
+		return result
+
+	var ids: PackedInt64Array = astar.get_id_path(start_id, end_id)
+
+	for point_id: int in ids:
+		var cell: Vector3i = _id_to_cell.get(point_id, NO_CELL)
+
+		if cell != NO_CELL:
+			result.append(cell)
+
+	return result
+
+
+## Number of registered navigation points. Diagnostics only.
+func get_nav_point_count() -> int:
+	return astar.get_point_count()
 
 
 func request_path_immediate(start: Vector3, end: Vector3) -> PackedVector3Array:
@@ -1522,7 +1946,7 @@ func _segment_has_ground(from_world: Vector3, to_world: Vector3) -> bool:
 
 func is_ground_supported(
 	world_pos: Vector3,
-	height_tolerance: float = 1.1
+	height_tolerance: float = GROUND_HEIGHT_TOLERANCE
 ) -> bool:
 	return _has_ground_near(to_local(world_pos), height_tolerance)
 
@@ -1532,7 +1956,7 @@ func is_ground_supported(
 func is_ground_path_supported(
 	from_world: Vector3,
 	to_world: Vector3,
-	height_tolerance: float = 1.1
+	height_tolerance: float = GROUND_HEIGHT_TOLERANCE
 ) -> bool:
 	var from_local: Vector3 = to_local(from_world)
 	var to_local_pos: Vector3 = to_local(to_world)
@@ -1559,7 +1983,7 @@ func is_ground_path_supported(
 ## pass a smaller value so a shortcut cannot step off a ledge.
 func _has_ground_near(
 	local_pos: Vector3,
-	height_tolerance: float = 1.1
+	height_tolerance: float = GROUND_HEIGHT_TOLERANCE
 ) -> bool:
 	var base_cell: Vector3i = local_to_map(local_pos)
 
@@ -1793,7 +2217,7 @@ func _segment_clear_light(
 # ---------------------------------------------------------------------------
 
 func _is_walkable(cell: Vector3i) -> bool:
-	return has_block(cell) and not has_block(cell + Vector3i.UP)
+	return _nav_has_block(cell) and not _nav_has_block(cell + Vector3i.UP)
 
 
 func _nav_point_position(cell: Vector3i) -> Vector3:
@@ -1818,28 +2242,90 @@ func get_directional_kind(item: int) -> int:
 	return int(_directional_kinds.get(item, -1))
 
 
-## Scans the MeshLibrary for connected-texture base items and builds their
-## runtime atlas material from the matching source texture.
+## Scans the MeshLibrary for connected-texture items and builds their runtime
+## atlas material from the matching source texture. Full blocks and their
+## slab/stair variants share one material per source: the mesher picks the
+## per-face atlas tile for all of them.
 func _build_ctm_items() -> void:
 	_ctm_materials.clear()
+	_ctm_bases.clear()
 	if mesh_library == null:
 		return
 
+	var base_materials: Dictionary = {}
+	var tinted_materials: Dictionary = {}
 	for id: int in mesh_library.get_item_list():
 		var item_name := String(mesh_library.get_item_name(id))
-		if not item_name.begins_with("Auto_Connect_"):
+		var base_name := ctm_base_name(item_name)
+		if base_name.is_empty():
 			continue
-		var base_name := item_name.trim_prefix("Auto_Connect_")
-		var source_path := (
-			"res://textures/auto_connecting_blocks/"
-			+ base_name
-			+ ".png"
-		)
-		if not FileAccess.file_exists(source_path):
-			continue
-		var material := CTM_BUILDER.build_material(source_path)
-		if material != null:
-			_ctm_materials[id] = material
+		var material: Material = base_materials.get(base_name)
+		if material == null:
+			var source_path := (
+				"res://textures/auto_connecting_blocks/"
+				+ base_name
+				+ ".png"
+			)
+			if not FileAccess.file_exists(source_path):
+				continue
+			material = CTM_BUILDER.build_material(source_path)
+			if material == null:
+				continue
+			base_materials[base_name] = material
+
+		var color_index := ctm_color_index(item_name)
+		var group_name := base_name
+		var item_material := material
+		if color_index >= 0:
+			var tint_key := "%s|c%02d" % [base_name, color_index]
+			item_material = tinted_materials.get(tint_key)
+			if item_material == null:
+				var tinted := material.duplicate() as StandardMaterial3D
+				if tinted != null:
+					tinted.albedo_color = COLOR_PALETTE.color_at(color_index)
+					item_material = tinted
+				else:
+					item_material = material
+				tinted_materials[tint_key] = item_material
+			group_name = tint_key
+		_ctm_materials[id] = item_material
+		_ctm_bases[id] = group_name
+
+
+## Maps an `Auto_Connect_*` item name to its CTM source base name, stripping
+## the shape prefix and any trailing color index. Returns "" for non-CTM items.
+func ctm_base_name(item_name: String) -> String:
+	if not item_name.begins_with("Auto_Connect_"):
+		return ""
+	var base_name := item_name.trim_prefix("Auto_Connect_")
+	for prefix: String in [
+		"Slab_Top_",
+		"Slab_Bottom_",
+		"Slab_Side_",
+		"Slab_",
+		"Stairs_UpsideDown_",
+		"Stairs_",
+		"Stair_",
+		"Panel_Top_",
+		"Panel_Bottom_",
+		"Panel_Side_",
+		"Panel_",
+	]:
+		if base_name.begins_with(prefix):
+			base_name = base_name.substr(prefix.length())
+			break
+
+	var color_pos := base_name.rfind("_c")
+	if color_pos != -1 and base_name.length() - color_pos == 4:
+		var color_tail := base_name.substr(color_pos + 2)
+		if color_tail.is_valid_int():
+			base_name = base_name.substr(0, color_pos)
+	return base_name
+
+
+## Trailing `_cNN` palette index on a CTM item, or -1 when uncolored.
+func ctm_color_index(item_name: String) -> int:
+	return COLOR_PALETTE.color_index(item_name)
 
 
 func is_ctm_item(item: int) -> bool:
@@ -1848,6 +2334,12 @@ func is_ctm_item(item: int) -> bool:
 
 func get_ctm_material(item: int) -> Material:
 	return _ctm_materials.get(item) as Material
+
+
+## CTM source group for an item. Adjacent shapes with the same base connect in
+## the mesher's per-face border mask.
+func get_ctm_base(item: int) -> String:
+	return String(_ctm_bases.get(item, ""))
 
 
 func get_orientation_basis(orientation: int) -> Basis:
@@ -1879,7 +2371,7 @@ func get_block_direction(cell: Vector3i, kind: DirectionalKind) -> Vector3i:
 
 	return get_direction_for_orientation(
 		kind,
-		get_cell_item_orientation(cell)
+		get_block_orientation(cell)
 	)
 
 
@@ -2038,6 +2530,7 @@ func _generate_auto_stairs() -> void:
 			"Slab" in source_name
 			or "Stair" in source_name
 			or "Panel" in source_name
+			or "Water" in source_name
 			or "Connect" in source_name
 		):
 			continue
@@ -2177,13 +2670,12 @@ func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 		return false
 
 	if (
-		get_cell_item(cell) == item
-		and get_cell_item_orientation(cell) == orientation
+		get_block_item(cell) == item
+		and get_block_orientation(cell) == orientation
 	):
 		return false
 
-	set_cell_item(cell, item, orientation)
-	_track_cell(cell)
+	_track_cell_values(cell, item, orientation)
 	mark_chunk_dirty(cell_to_chunk(cell))
 	_refresh_nav_around(cell)
 	block_placed.emit(cell, item)
@@ -2192,10 +2684,9 @@ func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 
 
 func remove_block(cell: Vector3i) -> bool:
-	if get_cell_item(cell) == GridMap.INVALID_CELL_ITEM:
+	if get_block_item(cell) == GridMap.INVALID_CELL_ITEM:
 		return false
 
-	set_cell_item(cell, GridMap.INVALID_CELL_ITEM)
 	_untrack_cell(cell)
 	mark_chunk_dirty(cell_to_chunk(cell))
 	_refresh_nav_around(cell)
@@ -2227,8 +2718,7 @@ func place_blocks(
 		if has_block(cell):
 			continue
 
-		set_cell_item(cell, item, orientation)
-		_track_cell(cell)
+		_track_cell_values(cell, item, orientation)
 		placed_cells.append(cell)
 
 	if placed_cells.is_empty():
@@ -2244,6 +2734,54 @@ func place_blocks(
 	return placed_cells.size()
 
 
+## Adds a bottom slab above every column that is one block lower than an
+## orthogonal neighbour. This retrofits the half-step risers onto an existing
+## saved world; new terrain gets them from `HeightmapTerrainGenerator`.
+## Idempotent: a cell is only added when `top + 1` is empty.
+func add_step_slabs(item: int = 46) -> int:
+	if mesh_library == null or not mesh_library.get_item_list().has(item):
+		return 0
+
+	var tops: Dictionary = {}
+	var missing_top: int = -2147483648
+
+	for cell: Vector3i in get_used_block_cells():
+		# Existing step slabs must not become the terrain top, otherwise a
+		# second call would stack another slab on top of them.
+		if get_block_item(cell) == item:
+			continue
+
+		var column := Vector2i(cell.x, cell.z)
+		var previous: int = int(tops.get(column, missing_top))
+
+		if cell.y > previous:
+			tops[column] = cell.y
+
+	var additions: Array[Vector3i] = []
+
+	for column: Vector2i in tops:
+		var top: int = int(tops[column])
+		var higher: bool = (
+			int(tops.get(column + Vector2i(1, 0), missing_top)) > top
+			or int(tops.get(column + Vector2i(-1, 0), missing_top)) > top
+			or int(tops.get(column + Vector2i(0, 1), missing_top)) > top
+			or int(tops.get(column + Vector2i(0, -1), missing_top)) > top
+		)
+
+		if not higher:
+			continue
+
+		var slab := Vector3i(column.x, top + 1, column.y)
+
+		if not has_block(slab):
+			additions.append(slab)
+
+	if additions.is_empty():
+		return 0
+
+	return place_blocks(additions, item, 0)
+
+
 ## Removes every existing cell in `cells` with a single navigation refresh.
 func remove_blocks(cells: Array[Vector3i]) -> int:
 	var removed: Array[Vector3i] = []
@@ -2252,7 +2790,6 @@ func remove_blocks(cells: Array[Vector3i]) -> int:
 		if not has_block(cell):
 			continue
 
-		set_cell_item(cell, GridMap.INVALID_CELL_ITEM)
 		_untrack_cell(cell)
 		removed.append(cell)
 
@@ -2283,7 +2820,7 @@ func _mark_chunks_dirty(cells: Array[Vector3i]) -> void:
 
 
 func has_block(cell: Vector3i) -> bool:
-	return get_cell_item(cell) != GridMap.INVALID_CELL_ITEM
+	return get_block_item(cell) != GridMap.INVALID_CELL_ITEM
 
 
 func _refresh_point_weights_around(changed_cell: Vector3i) -> void:
@@ -2481,12 +3018,31 @@ func position_to_chunk(world_pos: Vector3) -> Vector2i:
 
 
 func _track_cell(cell: Vector3i) -> void:
+	_track_cell_values(
+		cell,
+		get_block_item(cell),
+		get_block_orientation(cell)
+	)
+
+
+## Indexes a cell whose item and orientation are already known. Bulk placement
+## and chunk loading pass them so they do not re-query GridMap for every cell.
+func _track_cell_values(
+	cell: Vector3i,
+	item: int,
+	orientation: int
+) -> void:
 	var chunk: Vector2i = cell_to_chunk(cell)
 
-	if not _chunk_cells.has(chunk):
-		_chunk_cells[chunk] = {}
+	if item < 0:
+		_sections.remove_cell(cell)
+		_untrack_min_y(chunk, cell.y)
+		return
 
-	_chunk_cells[chunk][cell] = true
+	_sections.set_cell(cell, item, orientation)
+
+	if _grid_mirror_enabled:
+		set_cell_item(cell, item, orientation)
 
 	var lowest: int = int(_chunk_min_y.get(chunk, NO_CHUNK_FLOOR))
 	if lowest == NO_CHUNK_FLOOR or cell.y < lowest:
@@ -2496,24 +3052,28 @@ func _track_cell(cell: Vector3i) -> void:
 func _untrack_cell(cell: Vector3i) -> void:
 	var chunk: Vector2i = cell_to_chunk(cell)
 
-	if not _chunk_cells.has(chunk):
-		return
+	_sections.remove_cell(cell)
 
-	_chunk_cells[chunk].erase(cell)
+	if _grid_mirror_enabled:
+		set_cell_item(cell, GridMap.INVALID_CELL_ITEM)
 
-	if _chunk_cells[chunk].is_empty():
-		_chunk_cells.erase(chunk)
+	_untrack_min_y(chunk, cell.y)
+
+
+func _untrack_min_y(chunk: Vector2i, removed_y: int) -> void:
+	if not _sections.has_column(chunk):
 		_chunk_min_y.erase(chunk)
 		return
 
-	if int(_chunk_min_y.get(chunk, NO_CHUNK_FLOOR)) != cell.y:
+	if int(_chunk_min_y.get(chunk, NO_CHUNK_FLOOR)) != removed_y:
 		return
 
-	var lowest: int = 2147483647
-	for remaining: Vector3i in _chunk_cells[chunk]:
-		lowest = mini(lowest, remaining.y)
-
-	_chunk_min_y[chunk] = lowest
+	var lowest: int = _sections.get_column_min_y(chunk)
+	_chunk_min_y[chunk] = (
+		lowest
+		if lowest != VoxelSectionStoreScript.NO_HEIGHT
+		else NO_CHUNK_FLOOR
+	)
 
 
 func get_chunk_lowest_block_y(chunk: Vector2i) -> int:
@@ -2545,25 +3105,6 @@ func get_mesher() -> ChunkMesher:
 	return _mesher
 
 
-<<<<<<< Updated upstream
-func _ensure_water_system() -> WaterSystem:
-	if _water_system == null or not is_instance_valid(_water_system):
-		_water_system = WaterSystem.new()
-		_water_system.name = "WaterSystem"
-		# Sibling, not a child: ChunkMesher hides the GridMap node, which would
-		# hide a child renderer too. Copy the grid transform so the water's
-		# grid-local MultiMesh transforms line up. The parent is still busy in
-		# _ready, so defer only the tree insertion; item registration happens
-		# synchronously in setup() so the HUD and mesher see the water items.
-		_water_system.transform = transform
-		_water_system.setup(self)
-		get_parent().add_child.call_deferred(_water_system)
-	return _water_system
-
-
-func get_water_system() -> WaterSystem:
-	return _ensure_water_system()
-=======
 ## Number of per-chunk collision bodies currently built by the mesher.
 func get_chunk_collision_body_count() -> int:
 	if _mesher == null:
@@ -2594,56 +3135,126 @@ func get_chunk_lod_stats() -> Dictionary:
 		return {"lod0": 0, "lod1": 0, "lod2": 0, "meshed": 0, "collision": 0}
 
 	return _mesher.get_lod_stats()
->>>>>>> Stashed changes
+
+
+func _ensure_water_system() -> WaterSystem:
+	if _water_system == null or not is_instance_valid(_water_system):
+		_water_system = WaterSystem.new()
+		_water_system.name = "WaterSystem"
+		# Sibling, not a child: ChunkMesher hides the GridMap node, which would
+		# hide a child renderer too. Copy the grid transform so the water's
+		# grid-local MultiMesh transforms line up. The parent is still busy in
+		# _ready, so defer only the tree insertion; item registration happens
+		# synchronously in setup() so the HUD and mesher see the water items.
+		_water_system.transform = transform
+		_water_system.setup(self)
+		get_parent().add_child.call_deferred(_water_system)
+	return _water_system
+
+
+func get_water_system() -> WaterSystem:
+	return _ensure_water_system()
 
 
 func get_populated_chunks() -> Array[Vector2i]:
+	return _sections.get_column_chunks()
+
+
+## Chunks that currently have built navigation. This is the active/loaded set
+## the false-boid leaders are allowed to explore.
+func get_active_chunks() -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 
-	for chunk: Vector2i in _chunk_cells:
+	for chunk: Vector2i in _nav_chunks:
 		result.append(chunk)
 
 	return result
 
 
+func get_chunk_highest_block_y(chunk: Vector2i) -> int:
+	if not _sections.has_column(chunk):
+		return 0
+
+	return _sections.get_column_max_y(chunk)
+
+
 func get_chunk_cell_count(chunk: Vector2i) -> int:
-	return _chunk_cells.get(chunk, {}).size()
+	return _sections.get_column_cell_count(chunk)
 
 
 ## The set of cells in a chunk (cell -> true). Treat it as read-only.
+## Prefer `get_chunk_cell_list()` on hot paths: it does not allocate entries.
 func get_chunk_cells(chunk: Vector2i) -> Dictionary:
-	return _chunk_cells.get(chunk, {})
+	var result: Dictionary = {}
+
+	for cell: Vector3i in _sections.get_column_cell_list(chunk):
+		result[cell] = true
+
+	return result
+
+
+## The cells in a chunk as a flat list. Used by the mesher and map renderer.
+func get_chunk_cell_list(chunk: Vector2i) -> Array[Vector3i]:
+	return _sections.get_column_cell_list(chunk)
+
+
+## Cells plus parallel item ids in one pass. Hot mesher path: avoids one
+## section lookup per cell.
+func get_chunk_cells_and_items(
+	chunk: Vector2i,
+	out_cells: Array,
+	out_items: Array
+) -> void:
+	_sections.get_column_cells_and_items(chunk, out_cells, out_items)
+
+
+## Cell entries with item and orientation, for serialization and tooling.
+func get_chunk_entries(chunk: Vector2i) -> Array[Dictionary]:
+	return _sections.get_column_entries(chunk)
+
+
+## Source-of-truth cell reads. GridMap's native `get_cell_item()` is emptied at
+## runtime once the mirror is cleared, so game code must use these.
+func get_block_item(cell: Vector3i) -> int:
+	return _sections.get_cell_item(cell)
+
+
+func get_block_orientation(cell: Vector3i) -> int:
+	return _sections.get_cell_orientation(cell)
+
+
+## Every stored cell. Use this instead of `GridMap.get_used_cells()`.
+func get_used_block_cells() -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+
+	for chunk: Vector2i in _sections.get_column_chunks():
+		result.append_array(_sections.get_column_cell_list(chunk))
+
+	return result
+
+
+## In-memory estimate for the packed section index (excludes GridMap's own copy).
+func get_section_index_memory_bytes() -> int:
+	return _sections.memory_bytes()
+
+
+func get_section_count() -> int:
+	return _sections.section_count()
 
 
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
 
-## Packs one chunk into a plain Dictionary. "cells" is a flat PackedInt32Array, 5 ints
-## per block: [local_x, y, local_z, item, orientation, ...]. X and Z are relative to the
-## chunk origin so the data doesn't depend on where the chunk sits in the world.
+## Packs one chunk into a plain Dictionary. Version 2 stores a compressed blob
+## of 3D sections (see VoxelSectionStore); version 1's flat 5-int cell array is
+## still accepted by `load_chunk` for old saves.
 func serialize_chunk(chunk: Vector2i) -> Dictionary:
-	var cells: Dictionary = _chunk_cells.get(chunk, {})
-	var origin: Vector2i = chunk_origin(chunk)
-
-	var packed: PackedInt32Array = PackedInt32Array()
-	packed.resize(cells.size() * INTS_PER_BLOCK)
-
-	var index: int = 0
-
-	for key: Vector3i in cells:
-		packed[index] = key.x - origin.x
-		packed[index + 1] = key.y
-		packed[index + 2] = key.z - origin.y
-		packed[index + 3] = get_cell_item(key)
-		packed[index + 4] = get_cell_item_orientation(key)
-		index += INTS_PER_BLOCK
-
 	return {
 		"version": CHUNK_DATA_VERSION,
 		"chunk_x": chunk.x,
 		"chunk_z": chunk.y,
-		"cells": packed,
+		"sections": _sections.serialize_column_compressed(chunk),
 	}
 
 
@@ -2660,27 +3271,18 @@ func load_chunk(
 		push_error("NavGridMap.load_chunk: no MeshLibrary assigned.")
 		return
 
-	if int(data.get("version", 0)) != CHUNK_DATA_VERSION:
-		push_error("NavGridMap.load_chunk: unsupported chunk data version.")
+	var version: int = int(data.get("version", 0))
+
+	if version != CHUNK_DATA_VERSION and version != LEGACY_CHUNK_DATA_VERSION:
+		push_error(
+			"NavGridMap.load_chunk: unsupported chunk data version %d." % version
+		)
 		return
 
 	var chunk := Vector2i(
 		int(data.get("chunk_x", 0)),
 		int(data.get("chunk_z", 0))
 	)
-	var origin: Vector2i = chunk_origin(chunk)
-
-	var packed_value: Variant = data.get("cells", PackedInt32Array())
-
-	if packed_value is not PackedInt32Array:
-		push_error("NavGridMap.load_chunk: cells must be PackedInt32Array.")
-		return
-
-	var packed: PackedInt32Array = packed_value
-
-	if packed.size() % INTS_PER_BLOCK != 0:
-		push_error("NavGridMap.load_chunk: malformed cell data size.")
-		return
 
 	var valid_items: PackedInt32Array = mesh_library.get_item_list()
 	var had_navigation: bool = _nav_chunks.has(chunk)
@@ -2692,6 +3294,81 @@ func load_chunk(
 		# non-navigable streaming version.
 		_refresh_nav_region(touched)
 		_nav_chunks.erase(chunk)
+
+	if version == LEGACY_CHUNK_DATA_VERSION:
+		skipped = _load_legacy_cells(chunk, data, valid_items, touched)
+	else:
+		# Fast path: generated/saved v2 blobs can be imported section-by-section
+		# instead of decoding every cell and re-inserting it. Only used when no
+		# navigation rebuild needs the touched-cell list.
+		var blob_value: Variant = data.get("sections", PackedByteArray())
+		var imported: bool = false
+
+		if (
+			not build_navigation
+			and blob_value is PackedByteArray
+			and _sections.import_column_compressed(
+				chunk,
+				blob_value,
+				valid_items,
+				min_block_y,
+				max_block_y
+			)
+		):
+			var lowest: int = _sections.get_column_min_y(chunk)
+
+			if lowest != VoxelSectionStoreScript.NO_HEIGHT:
+				_chunk_min_y[chunk] = lowest
+
+			imported = true
+
+		if not imported:
+			skipped = _load_section_cells(chunk, data, valid_items, touched)
+
+	if skipped > 0:
+		push_warning(
+			"NavGridMap.load_chunk: skipped %d invalid cell(s) in chunk %s."
+			% [skipped, chunk]
+		)
+
+	var affected: Array[Vector3i] = []
+
+	if build_navigation:
+		affected = _refresh_nav_region(touched)
+		_nav_chunks[chunk] = true
+	else:
+		_nav_chunks.erase(chunk)
+
+	_dirty_chunks.erase(chunk)
+
+	if emit_nav_signal and not affected.is_empty():
+		navigation_changed.emit(affected)
+
+	chunk_loaded.emit(chunk)
+
+
+## Version-1 loader: flat 5-int cells. Kept so old saves and the current
+## ChunkStreamer flat-floor path keep working through the same entry point.
+func _load_legacy_cells(
+	chunk: Vector2i,
+	data: Dictionary,
+	valid_items: PackedInt32Array,
+	touched: Array[Vector3i]
+) -> int:
+	var packed_value: Variant = data.get("cells", PackedInt32Array())
+
+	if packed_value is not PackedInt32Array:
+		push_error("NavGridMap.load_chunk: cells must be PackedInt32Array.")
+		return 0
+
+	var packed: PackedInt32Array = packed_value
+
+	if packed.size() % INTS_PER_BLOCK != 0:
+		push_error("NavGridMap.load_chunk: malformed cell data size.")
+		return 0
+
+	var origin: Vector2i = chunk_origin(chunk)
+	var skipped: int = 0
 
 	for index in range(0, packed.size(), INTS_PER_BLOCK):
 		var local_x: int = packed[index]
@@ -2719,30 +3396,48 @@ func load_chunk(
 			origin.y + local_z
 		)
 
-		set_cell_item(cell, item, orientation)
-		_track_cell(cell)
+		_track_cell_values(cell, item, orientation)
 		touched.append(cell)
 
-	if skipped > 0:
-		push_warning(
-			"NavGridMap.load_chunk: skipped %d invalid cell(s) in chunk %s."
-			% [skipped, chunk]
-		)
+	return skipped
 
-	var affected: Array[Vector3i] = []
 
-	if build_navigation:
-		affected = _refresh_nav_region(touched)
-		_nav_chunks[chunk] = true
-	else:
-		_nav_chunks.erase(chunk)
+## Version-2 loader: compressed 3D section blob.
+func _load_section_cells(
+	chunk: Vector2i,
+	data: Dictionary,
+	valid_items: PackedInt32Array,
+	touched: Array[Vector3i]
+) -> int:
+	var blob_value: Variant = data.get("sections", PackedByteArray())
 
-	_dirty_chunks.erase(chunk)
+	if blob_value is not PackedByteArray:
+		push_error("NavGridMap.load_chunk: sections must be PackedByteArray.")
+		return 0
 
-	if emit_nav_signal and not affected.is_empty():
-		navigation_changed.emit(affected)
+	var entries: Array[Dictionary] = VoxelSectionStoreScript.decode_column_compressed(
+		chunk,
+		blob_value
+	)
+	var skipped: int = 0
 
-	chunk_loaded.emit(chunk)
+	for entry: Dictionary in entries:
+		var cell: Vector3i = entry.get("position", Vector3i.ZERO)
+		var item: int = int(entry.get("item", -1))
+		var orientation: int = int(entry.get("orientation", 0))
+
+		if cell.y < min_block_y or cell.y > max_block_y:
+			skipped += 1
+			continue
+
+		if not valid_items.has(item):
+			skipped += 1
+			continue
+
+		_track_cell_values(cell, item, orientation)
+		touched.append(cell)
+
+	return skipped
 
 
 ## Adds a loaded chunk's cells to the AStar graph. Use this when a chunk first
@@ -2754,20 +3449,73 @@ func build_chunk_navigation(
 	if _nav_chunks.has(chunk):
 		return
 
-	var cells: Array[Vector3i] = []
-	var source: Dictionary = _chunk_cells.get(chunk, {})
-
-	for cell: Vector3i in source:
-		cells.append(cell)
+	var cells: Array[Vector3i] = _sections.get_column_cell_list(chunk)
 
 	if cells.is_empty():
 		return
 
-	var affected: Array[Vector3i] = _refresh_nav_region(cells)
+	# This is an initial build, not an edit: add the chunk's walkable cells and
+	# connect them to existing neighbours. Refreshing the full expanded region
+	# here was ~134 ms per chunk because every cell recomputed 24 wall/gap
+	# lookups. Only the chunk border needs a weight refresh for old neighbours.
+	var origin: Vector2i = NavGridMap.chunk_origin(chunk)
+	var border: Array[Vector3i] = []
+	_nav_snapshot_begin()
+
+	for cell: Vector3i in cells:
+		var walkable: bool = _is_walkable(cell)
+		var registered: bool = cell_to_id_map.has(cell)
+
+		if walkable and not registered:
+			_add_nav_cell(cell)
+		elif not walkable and registered:
+			_remove_nav_cell(cell)
+		elif walkable and registered:
+			_refresh_nav_cell(cell)
+
+		var local_x: int = cell.x - origin.x
+		var local_z: int = cell.z - origin.y
+
+		if (
+			local_x == 0
+			or local_x == NavGridMap.CHUNK_SIZE - 1
+			or local_z == 0
+			or local_z == NavGridMap.CHUNK_SIZE - 1
+		):
+			border.append(cell)
+
+	for cell: Vector3i in border:
+		_refresh_point_weights_around(cell)
+
+	# Re-check connections for the first ring outside the new chunk: a new block
+	# at the border can invalidate a diagonal between two older nav points.
+	var outer: Dictionary = {}
+
+	for cell: Vector3i in border:
+		for offset: Vector3i in [
+			Vector3i.LEFT,
+			Vector3i.RIGHT,
+			Vector3i.FORWARD,
+			Vector3i.BACK,
+		]:
+			var neighbor: Vector3i = cell + offset
+
+			if cell_to_id_map.has(neighbor):
+				outer[neighbor] = true
+
+	if not outer.is_empty():
+		var outer_cells: Array[Vector3i] = []
+		for cell: Vector3i in outer:
+			outer_cells.append(cell)
+		_rebuild_nav_connections(outer_cells)
+
+	_invalidate_flow_fields(cells)
+	_nav_snapshot_end()
+
 	_nav_chunks[chunk] = true
 
-	if emit_nav_signal and not affected.is_empty():
-		navigation_changed.emit(affected)
+	if emit_nav_signal and not cells.is_empty():
+		navigation_changed.emit(cells)
 
 
 func is_chunk_navigation_loaded(chunk: Vector2i) -> bool:
@@ -2821,7 +3569,7 @@ func save_dirty_chunks(writer: Callable) -> int:
 func save_all_chunks(writer: Callable) -> int:
 	var chunks_to_save: Dictionary = {}
 
-	for chunk: Vector2i in _chunk_cells:
+	for chunk: Vector2i in _sections.get_column_chunks():
 		chunks_to_save[chunk] = true
 
 	for chunk: Vector2i in _dirty_chunks:
@@ -2837,17 +3585,16 @@ func save_all_chunks(writer: Callable) -> int:
 	return saved
 
 
-## Clears every block in a chunk from the GridMap and the index. Returns the cells
-## that were removed so the caller can refresh navigation for them.
+## Clears every block in a chunk from the packed index. Returns the cells that
+## were removed so the caller can refresh navigation for them.
 func _wipe_chunk(chunk: Vector2i) -> Array[Vector3i]:
-	var removed: Array[Vector3i] = []
-	var cells: Dictionary = _chunk_cells.get(chunk, {})
+	var removed: Array[Vector3i] = _sections.get_column_cell_list(chunk)
 
-	for key: Vector3i in cells:
-		removed.append(key)
-		set_cell_item(key, GridMap.INVALID_CELL_ITEM)
+	if _grid_mirror_enabled:
+		for key: Vector3i in removed:
+			set_cell_item(key, GridMap.INVALID_CELL_ITEM)
 
-	_chunk_cells.erase(chunk)
+	_sections.clear_column(chunk)
 	_chunk_min_y.erase(chunk)
 
 	return removed
@@ -2855,7 +3602,149 @@ func _wipe_chunk(chunk: Vector2i) -> Array[Vector3i]:
 
 ## Batch version of _refresh_nav_around. Call it AFTER all the blocks are already set,
 ## so walkability and connection checks see the final state.
+## Full navigation parameter set for experiment metadata.
+func get_navigation_parameters() -> Dictionary:
+	return {
+		"cell_size": [cell_size.x, cell_size.y, cell_size.z],
+		"wall_penalty_max": wall_penalty_max,
+		"gap_penalty_max": gap_penalty_max,
+		"stair_path_cost": stair_path_cost,
+		"slab_path_cost": slab_path_cost,
+		"full_block_path_cost": full_block_path_cost,
+		"path_ground_radius": path_ground_radius,
+		"smoothing_max_lookahead": smoothing_max_lookahead,
+		"path_budget_usec": path_budget_usec,
+		"wall_repulsion_a": wall_repulsion_a,
+		"wall_repulsion_b": wall_repulsion_b,
+		"wall_query_radius": wall_query_radius,
+		"wall_force_enabled": wall_force_enabled,
+		"enable_flow_fields": enable_flow_fields,
+		"flow_field_max_cache": flow_field_max_cache,
+		"flow_field_max_cells": flow_field_max_cells,
+		"flow_bake_budget_usec": flow_bake_budget_usec,
+		"lane_taper_distance": lane_taper_distance,
+		"lane_sample_spacing": lane_sample_spacing,
+		"lane_wall_margin": lane_wall_margin,
+		"lane_max_gap_exposure": lane_max_gap_exposure,
+		"enable_congestion_routing": enable_congestion_routing,
+		"congestion_penalty_max": congestion_penalty_max,
+		"congestion_heat_per_report": congestion_heat_per_report,
+		"congestion_decay_per_sec": congestion_decay_per_sec,
+		"congestion_spread_radius": congestion_spread_radius,
+		"congestion_tick_interval": congestion_tick_interval,
+		"congestion_max_cells": congestion_max_cells,
+	}
+
+
+## Compact navigation-graph state for the recorder/comparer: node count, edge
+## count, connected components and largest component. Full connectivity is
+## skipped above MAX_CONNECTIVITY_NODES so a huge map cannot stall a run.
+const MAX_CONNECTIVITY_NODES: int = 50000
+
+
+func get_connectivity_snapshot() -> Dictionary:
+	var ids: PackedInt64Array = astar.get_point_ids()
+	var node_count: int = ids.size()
+	var edge_count: int = 0
+
+	for id: int in ids:
+		edge_count += astar.get_point_connections(id).size()
+
+	edge_count >>= 1
+
+	if node_count == 0:
+		return {
+			"nodes": 0,
+			"edges": 0,
+			"components": 0,
+			"largest_component": 0,
+			"computed": true,
+		}
+
+	if node_count > MAX_CONNECTIVITY_NODES:
+		return {
+			"nodes": node_count,
+			"edges": edge_count,
+			"components": -1,
+			"largest_component": -1,
+			"computed": false,
+		}
+
+	var seen: Dictionary = {}
+	var components: int = 0
+	var largest: int = 0
+
+	for id: int in ids:
+		if seen.has(id):
+			continue
+
+		components += 1
+		var stack: Array[int] = [id]
+		var size: int = 0
+		seen[id] = true
+
+		while not stack.is_empty():
+			var current: int = stack.pop_back()
+			size += 1
+
+			for neighbour: int in astar.get_point_connections(current):
+				if seen.has(neighbour):
+					continue
+				seen[neighbour] = true
+				stack.append(neighbour)
+
+		largest = maxi(largest, size)
+
+	return {
+		"nodes": node_count,
+		"edges": edge_count,
+		"components": components,
+		"largest_component": largest,
+		"computed": true,
+	}
+
+
+## Full graph dump for the future comparer. Nodes are [id, cell.x, cell.y,
+## cell.z]; edges are unique [id_a, id_b] pairs. Truncated past `max_edges`.
+func get_nav_graph_snapshot(max_edges: int = 20000) -> Dictionary:
+	var ids: PackedInt64Array = astar.get_point_ids()
+	var nodes: Array = []
+	var edges: Array = []
+	var truncated: bool = false
+
+	for id: int in ids:
+		var cell: Vector3i = _id_to_cell.get(id, NO_CELL)
+
+		if cell == NO_CELL:
+			continue
+
+		nodes.append([id, cell.x, cell.y, cell.z])
+
+	for id: int in ids:
+		for neighbour: int in astar.get_point_connections(id):
+			if neighbour <= id:
+				continue
+
+			if edges.size() >= max_edges:
+				truncated = true
+				break
+
+			edges.append([id, neighbour])
+
+		if truncated:
+			break
+
+	return {
+		"nodes": nodes,
+		"edges": edges,
+		"node_count": nodes.size(),
+		"edge_count": edges.size(),
+		"truncated": truncated,
+	}
+
+
 func _refresh_nav_region(cells: Array[Vector3i]) -> Array[Vector3i]:
+	var start_usec: int = Time.get_ticks_usec()
 	var result: Array[Vector3i] = _expand_nav_affected(cells)
 
 	for cell: Vector3i in result:
@@ -2867,4 +3756,9 @@ func _refresh_nav_region(cells: Array[Vector3i]) -> Array[Vector3i]:
 		_refresh_point_weights_around(cell)
 
 	_invalidate_flow_fields(result)
+	last_nav_refresh_usec = Time.get_ticks_usec() - start_usec
+	last_nav_refresh_cells = result.size()
+	nav_refresh_total_usec += last_nav_refresh_usec
+	nav_refresh_count += 1
+	nav_refresh_measured.emit(last_nav_refresh_usec, last_nav_refresh_cells)
 	return result

@@ -11,7 +11,6 @@ extends Control
 
 @onready var blocks_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Blocks
 @onready var placeables_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Placeables
-@onready var useables_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Useables
 @onready var simulation_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Simulation
 @onready var agents_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Agents
 @onready var category_arrow: Sprite2D = $Inventory/CategoryArrow
@@ -28,6 +27,7 @@ extends Control
 ## registry before Godot rebuilds its global class cache.
 const BlockMaterialsDB := preload("res://scripts/block_materials.gd")
 const BlockVariantSlot := preload("res://scenes/inventory/block_variant_slot.gd")
+const ColorPaletteDBScript := preload("res://scripts/color_palette_db.gd")
 const PaletteSlotScript := preload("res://scenes/inventory/palette_slot.gd")
 const PaletteStoreScript := preload("res://scripts/palette_store.gd")
 const PixelPanelScript := preload("res://scenes/ui/pixel_panel.gd")
@@ -39,16 +39,7 @@ const PLACEABLE_FOLDERS := [
 	"res://scenes/placeables/sim/",
 	"res://scenes/placeables/device/",
 	"res://scenes/placeables/foilage/",
-]
-
-## Non-block tools live in the Useables tab. Add future held/used scenes here;
-## each scene owns a UseComponent and is selected through a normal item card.
-## Non-block held/used tools. Each scene owns a UseComponent; clicking its card
-## puts the scene in the selected hotbar slot and the Property tab edits its
-## exported brush values.
-const USEABLE_SCENE_PATHS := [
-	"res://scenes/useables/water_tool.tscn",
-	"res://scenes/useables/gas_tool.tscn",
+	"res://scenes/placeables/env/",
 ]
 
 ## Property-tab row labels -> canonical BlockMaterials keys.
@@ -121,7 +112,7 @@ var _property_spin_t: float = 0.0
 ## label text (used as the data key), value Label, and scene-authored default.
 var _property_block_rows: Array[Dictionary] = []
 
-enum Category { BLOCKS, PLACEABLES, USEABLES, SIMULATION, AGENTS }
+enum Category { BLOCKS, PLACEABLES, SIMULATION, AGENTS }
 var _current_category: Category = Category.BLOCKS
 
 # Active filter tracking
@@ -132,9 +123,13 @@ var _search_query: String = ""
 ## value is the item id currently shown for that group. Slab/stairs/panel
 ## choices persist for the session and survive inventory rebuilds.
 var _block_group_display: Dictionary = {}
+## Selected palette color per colorbase group.
+var _block_color_choice: Dictionary = {}
 var _variants_panel: Control = null
 var _variants_content: MarginContainer = null
 var _variants_grid: GridContainer = null
+var _variants_color_box: GridContainer = null
+var _variants_color_label: Label = null
 var _variants_title: Label = null
 var _variants_group_id: String = ""
 
@@ -192,8 +187,6 @@ func _ready() -> void:
 		blocks_button.pressed.connect(func(): _on_category_pressed(Category.BLOCKS))
 	if placeables_button:
 		placeables_button.pressed.connect(func(): _on_category_pressed(Category.PLACEABLES))
-	if useables_button:
-		useables_button.pressed.connect(func(): _on_category_pressed(Category.USEABLES))
 	if simulation_button:
 		simulation_button.pressed.connect(func(): _on_category_pressed(Category.SIMULATION))
 	if agents_button:
@@ -220,8 +213,8 @@ func _ready() -> void:
 	_update_category_panel.call_deferred()
 
 
-## Adds every placeable scene from the class folders (sim, device, foilage) to
-## the inventory. Device lights and future class scenes appear automatically.
+## Adds every placeable scene from the class folders (sim, device, foilage, env)
+## to the catalog. Device lights and future class scenes appear automatically.
 func _append_placeables_from_folders() -> void:
 	for folder: String in PLACEABLE_FOLDERS:
 		if not DirAccess.dir_exists_absolute(folder):
@@ -232,6 +225,11 @@ func _append_placeables_from_folders() -> void:
 
 		for file_name: String in files:
 			if not file_name.ends_with(".tscn"):
+				continue
+
+			# The old bird scenes stay on disk so existing saves keep loading,
+			# but the catalog uses the env_ duplicates instead.
+			if file_name.begins_with("sim_false_boid_"):
 				continue
 
 			var scene := load(folder.path_join(file_name)) as PackedScene
@@ -551,8 +549,7 @@ func _refresh_filters() -> void:
 		child.queue_free()
 
 	if (
-		_current_category == Category.USEABLES
-		or _current_category == Category.SIMULATION
+		_current_category == Category.SIMULATION
 		or _current_category == Category.AGENTS
 	):
 		_active_filters.clear()
@@ -565,8 +562,6 @@ func _refresh_filters() -> void:
 			if _cached_mesh_library:
 				for id in _cached_build_items:
 					var item_name = _cached_mesh_library.get_item_name(id)
-					if _is_hidden_block_variant(item_name):
-						continue
 					var tags = _get_item_tags(item_name)
 					for t in tags:
 						if not available_tags.has(t):
@@ -609,7 +604,8 @@ func _get_item_tags(item_name: String) -> Array[String]:
 	# Strip the shape prefix and keep the material as the second tag.
 	if lower.begins_with("connect_"):
 		clean = clean.substr(8)
-	elif lower.begins_with("slab_top_"):
+		lower = clean.to_lower()
+	if lower.begins_with("slab_top_"):
 		tags.append("Slab")
 		clean = clean.substr(9)
 	elif lower.begins_with("slab_bottom_"):
@@ -663,13 +659,16 @@ func _get_item_tags(item_name: String) -> Array[String]:
 ## as separate items.
 func _is_hidden_block_variant(item_name: String) -> bool:
 	var lower := item_name.to_lower()
-	# Reserved MeshLibrary slots owned by the archived legacy water addon.
-	if lower.begins_with("legacy_water_"):
-		return true
 	if lower.begins_with("auto_connect_"):
 		for code in ["_tl", "_t", "_tr", "_l", "_c", "_r", "_bl", "_b", "_br"]:
 			if lower.ends_with(code):
 				return true
+		if (
+			lower.begins_with("auto_connect_slab_bottom_")
+			or lower.begins_with("auto_connect_slab_side_")
+			or lower.begins_with("auto_connect_stairs_upsidedown_")
+		):
+			return true
 	return (
 		lower.begins_with("auto_slab_bottom_")
 		or lower.begins_with("auto_slab_side_")
@@ -724,8 +723,6 @@ func _refresh_inventory_display() -> void:
 			_add_block_groups()
 		Category.PLACEABLES:
 			_add_placeable_group()
-		Category.USEABLES:
-			_add_useables_group()
 		Category.SIMULATION, Category.AGENTS:
 			pass
 
@@ -840,6 +837,22 @@ func _add_block_groups() -> void:
 					visible_variants.append(entry)
 			if visible_variants.is_empty():
 				continue
+
+			# Color groups default to the first palette color instead of the
+			# uncolored source item, so the group cell matches the chooser.
+			if not _block_group_display.has(group_id):
+				var color_indices := _group_color_indices(group_id)
+				if not color_indices.is_empty():
+					var first_color := int(color_indices[0])
+					for entry: Dictionary in material_groups[group_id]:
+						var entry_name := String(entry["name"])
+						if ColorPaletteDBScript.color_index(entry_name) != first_color:
+							continue
+						if BlockMaterialsDB.variant_of(entry_name) != "block":
+							continue
+						_block_group_display[group_id] = int(entry["id"])
+						break
+
 			var display: Dictionary = _display_variant_for(
 				group_id,
 				visible_variants
@@ -923,6 +936,12 @@ func _display_variant_for(group_id: String, variants: Array) -> Dictionary:
 func _visible_variants_for_group(group_id: String) -> Array:
 	if not _cached_mesh_library:
 		return []
+	var color_indices := _group_color_indices(group_id)
+	var selected_color := -1
+	if not color_indices.is_empty():
+		selected_color = int(
+			_block_color_choice.get(group_id, color_indices[0])
+		)
 	var variants: Array = []
 	for id in _cached_build_items:
 		var item_name: String = String(_cached_mesh_library.get_item_name(id))
@@ -930,6 +949,9 @@ func _visible_variants_for_group(group_id: String) -> Array:
 			continue
 		if BlockMaterialsDB.block_group_id(item_name) != group_id:
 			continue
+		if not color_indices.is_empty():
+			if ColorPaletteDBScript.color_index(item_name) != selected_color:
+				continue
 		if not _passes_active_filters(_get_item_tags(item_name)):
 			continue
 		variants.append({"id": id, "name": item_name})
@@ -938,6 +960,91 @@ func _visible_variants_for_group(group_id: String) -> Array:
 			return _variant_sort_index(String(a["name"])) < _variant_sort_index(String(b["name"]))
 	)
 	return variants
+
+
+## Palette indices present for a colorbase group, in palette order.
+func _group_color_indices(group_id: String) -> Array[int]:
+	var result: Array[int] = []
+	if not _cached_mesh_library:
+		return result
+	for id in _cached_build_items:
+		var item_name: String = String(_cached_mesh_library.get_item_name(id))
+		if BlockMaterialsDB.block_group_id(item_name) != group_id:
+			continue
+		var index := ColorPaletteDBScript.color_index(item_name)
+		if index >= 0 and not result.has(index):
+			result.append(index)
+	result.sort()
+	return result
+
+
+## Renders the palette as colored squares at the bottom-right of the group
+## chooser. Clicking one switches the displayed/selected variant color.
+func _rebuild_color_swatches(group_id: String) -> void:
+	if _variants_color_box == null:
+		return
+	for child in _variants_color_box.get_children():
+		_variants_color_box.remove_child(child)
+		child.queue_free()
+
+	var indices := _group_color_indices(group_id)
+	var show_colors := not indices.is_empty()
+	_variants_color_box.visible = show_colors
+	if _variants_color_label != null:
+		_variants_color_label.visible = show_colors
+	if not show_colors:
+		return
+
+	var selected := int(
+		_block_color_choice.get(group_id, indices[0])
+	)
+	for index: int in indices:
+		var color := ColorPaletteDBScript.color_at(index)
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(18.0, 18.0)
+		button.tooltip_text = "Color %d" % index
+		button.focus_mode = Control.FOCUS_NONE
+
+		var style := StyleBoxFlat.new()
+		style.bg_color = color
+		style.border_width_left = 1
+		style.border_width_top = 1
+		style.border_width_right = 1
+		style.border_width_bottom = 1
+		style.border_color = (
+			Color.WHITE if index == selected else Color(0.05, 0.05, 0.05, 1)
+		)
+		button.add_theme_stylebox_override("normal", style)
+		button.add_theme_stylebox_override("hover", style)
+		button.add_theme_stylebox_override("pressed", style)
+
+		button.pressed.connect(
+			_on_color_chosen.bind(group_id, index)
+		)
+		_variants_color_box.add_child(button)
+
+
+func _on_color_chosen(group_id: String, color_index: int) -> void:
+	_block_color_choice[group_id] = color_index
+
+	# Make the group cell show the full block of that color. The chooser is
+	# reopened below so the user can still pick slab/stairs.
+	for id in _cached_build_items:
+		var item_name: String = String(_cached_mesh_library.get_item_name(id))
+		if BlockMaterialsDB.block_group_id(item_name) != group_id:
+			continue
+		if ColorPaletteDBScript.color_index(item_name) != color_index:
+			continue
+		if BlockMaterialsDB.variant_of(item_name) != "block":
+			continue
+		_block_group_display[group_id] = id
+		break
+
+	# The button that emitted `pressed` is still locked for this frame; rebuild
+	# after the signal returns instead of freeing it inside the callback. Keep
+	# the chooser where it is: changing color should not teleport the panel.
+	call_deferred("_refresh_inventory_display")
+	call_deferred("_show_block_variants", group_id, Rect2(), true)
 
 
 func _variant_sort_index(item_name: String) -> int:
@@ -986,6 +1093,25 @@ func _ensure_variants_panel() -> void:
 	_variants_grid.add_theme_constant_override("v_separation", 4)
 	box.add_child(_variants_grid)
 
+	_variants_color_label = Label.new()
+	_variants_color_label.text = "Color"
+	_variants_color_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_variants_color_label.add_theme_font_size_override("font_size", 12)
+	_variants_color_label.add_theme_color_override(
+		"font_color",
+		Color(0.78, 0.78, 0.74, 1.0)
+	)
+	_variants_color_label.visible = false
+	box.add_child(_variants_color_label)
+
+	_variants_color_box = GridContainer.new()
+	_variants_color_box.columns = 8
+	_variants_color_box.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_variants_color_box.add_theme_constant_override("h_separation", 2)
+	_variants_color_box.add_theme_constant_override("v_separation", 2)
+	_variants_color_box.visible = false
+	box.add_child(_variants_color_box)
+
 
 func _on_block_variants_requested(
 	_item_id: int,
@@ -1006,7 +1132,8 @@ func _on_block_variants_requested(
 
 func _show_block_variants(
 	group_id: String,
-	anchor_rect: Rect2 = Rect2()
+	anchor_rect: Rect2 = Rect2(),
+	preserve_position: bool = false
 ) -> void:
 	var variants := _visible_variants_for_group(group_id)
 	if variants.size() <= 1:
@@ -1016,8 +1143,13 @@ func _show_block_variants(
 	if _variants_panel == null:
 		return
 
+	var keep_position := (
+		_variants_panel.position if preserve_position else Vector2.ZERO
+	)
+
 	for child in _variants_grid.get_children():
-		child.free()
+		_variants_grid.remove_child(child)
+		child.queue_free()
 
 	_variants_group_id = group_id
 	_variants_title.text = BlockMaterialsDB.block_group_label(
@@ -1031,10 +1163,18 @@ func _show_block_variants(
 			entry,
 			int(entry["id"]) == displayed_id
 		)
+	_rebuild_color_swatches(group_id)
 
 	_variants_panel.visible = true
 	_set_variants_badge_open(group_id)
-	_position_variants_panel(anchor_rect)
+	if preserve_position:
+		_variants_panel.size = _variants_content.get_combined_minimum_size()
+		_variants_panel.position = _clamp_popup_position(
+			_variants_panel,
+			keep_position
+		)
+	else:
+		_position_variants_panel(anchor_rect)
 
 
 ## Puts the chooser at the bottom-right of the plus badge, flipping to the
@@ -1200,14 +1340,11 @@ func _on_variant_chosen(group_id: String, item_id: int) -> void:
 	_hide_variants_panel(false)
 	_refresh_inventory_display()
 
-	var pinned_name := String(_property_pinned_item.get("raw_name", ""))
-	if (
-		not pinned_name.is_empty()
-		and BlockMaterialsDB.block_group_id(pinned_name) == group_id
-	):
-		_property_pinned_item = _block_item_data(item_id)
-	_property_hover_item.clear()
-	_refresh_property_tab()
+	# Clicking a shape is also a pick: run the same path as clicking the group
+	# cell itself, so the chosen block/slab/stairs lands in the active hotbar
+	# slot and the held item follows it. The color swatches keep their existing
+	# display-only behaviour.
+	_on_inventory_item_selected(item_id)
 
 
 func _hide_variants_panel(refresh_property: bool = true) -> void:
@@ -1719,44 +1856,6 @@ func _set_palette_badge_open(palette_id: String) -> void:
 		)
 
 
-## Non-block tools. These reuse the normal 60x60 item card so they fit the
-## inventory grid; future tools are added to `USEABLE_SCENE_PATHS`.
-func _add_useables_group() -> void:
-	var loaded: Array[PackedScene] = []
-	for path: String in USEABLE_SCENE_PATHS:
-		if not ResourceLoader.exists(path):
-			continue
-		var scene := load(path) as PackedScene
-		if scene != null:
-			loaded.append(scene)
-	if loaded.is_empty():
-		return
-	var grid := _add_group("Useables", loaded.size())
-	for scene: PackedScene in loaded:
-		var button = item_button_scene.instantiate()
-		grid.add_child(button)
-		button.set_useable(scene, _useable_display_name(scene))
-		button.useable_selected.connect(_on_useable_selected)
-
-
-func _useable_display_name(scene: PackedScene) -> String:
-	var base := scene.resource_path.get_file().get_basename()
-	return base.capitalize()
-
-
-func _on_useable_selected(scene: PackedScene) -> void:
-	if scene == null:
-		return
-	_property_hover_item.clear()
-	if _selected_placeable_scene != scene:
-		_selected_placeable_overrides.clear()
-	_selected_placeable_scene = scene
-	_property_pinned_item = _placeable_item_data(scene)
-	assign_hotbar_placeable(get_hotbar_selected_slot(), scene)
-	_refresh_property_tab()
-	placeable_selected.emit(scene)
-
-
 func _add_placeable_group() -> void:
 	var groups: Dictionary = {}
 
@@ -1800,6 +1899,7 @@ func _placeable_class(scene: PackedScene) -> String:
 	if scene == null:
 		return "Other"
 
+	var path := scene.resource_path.to_lower()
 	var base := scene.resource_path.get_file().get_basename().to_lower()
 
 	if base.begins_with("sim_"):
@@ -1808,6 +1908,19 @@ func _placeable_class(scene: PackedScene) -> String:
 		return "Device"
 	if base.begins_with("foliage_") or base.begins_with("foilage_"):
 		return "Foliage"
+	if base.begins_with("env_"):
+		return "Env"
+
+	# Folder fallbacks keep unprefixed helper scenes (for example the MultiMesh
+	# grass block) in the right filter.
+	if path.contains("/foilage/") or path.contains("/foliage/"):
+		return "Foliage"
+	if path.contains("/device/"):
+		return "Device"
+	if path.contains("/sim/"):
+		return "Sim"
+	if path.contains("/env/"):
+		return "Env"
 
 	return "Other"
 
@@ -1820,7 +1933,7 @@ func _placeable_display_name(scene: PackedScene) -> String:
 	var base := scene.resource_path.get_file().get_basename()
 	var lower := base.to_lower()
 
-	for prefix in ["sim_", "device_", "foliage_", "foilage_"]:
+	for prefix in ["sim_", "device_", "foliage_", "foilage_", "env_"]:
 		if lower.begins_with(prefix):
 			base = base.substr(prefix.length())
 			break
@@ -2047,8 +2160,6 @@ func _on_category_pressed(category: Category) -> void:
 		blocks_button.button_pressed = (_current_category == Category.BLOCKS)
 	if placeables_button:
 		placeables_button.button_pressed = (_current_category == Category.PLACEABLES)
-	if useables_button:
-		useables_button.button_pressed = (_current_category == Category.USEABLES)
 	if simulation_button:
 		simulation_button.button_pressed = (_current_category == Category.SIMULATION)
 	if agents_button:
@@ -2071,8 +2182,6 @@ func _update_category_arrow() -> void:
 			target_button = blocks_button
 		Category.PLACEABLES:
 			target_button = placeables_button
-		Category.USEABLES:
-			target_button = useables_button
 		Category.SIMULATION:
 			target_button = simulation_button
 		Category.AGENTS:
@@ -2112,8 +2221,7 @@ func _update_category_panel() -> void:
 	var filters := get_node_or_null("Inventory/ItemFilters")
 	if filters:
 		filters.visible = (
-			_current_category != Category.USEABLES
-			and not simulation_selected
+			not simulation_selected
 			and not agents_selected
 			and not searching
 		)
@@ -2387,46 +2495,48 @@ func _palette_item_data(palette_id: String) -> Dictionary:
 func _format_item_title(item_name: String) -> String:
 	var clean := item_name.trim_prefix("Auto_")
 	var lower := clean.to_lower()
-	var material := clean
+	var material_name := clean
 	var shape := ""
 
+	if lower.begins_with("water_"):
+		return "Water " + clean.substr(6).capitalize()
 	if lower.begins_with("connect_"):
-		material = clean.substr(8)
+		material_name = clean.substr(8)
 	elif lower.begins_with("slab_top_"):
-		material = clean.substr(9)
+		material_name = clean.substr(9)
 		shape = "Slab"
 	elif lower.begins_with("slab_bottom_"):
-		material = clean.substr(12)
+		material_name = clean.substr(12)
 		shape = "Slab"
 	elif lower.begins_with("slab_side_"):
-		material = clean.substr(10)
+		material_name = clean.substr(10)
 		shape = "Slab"
 	elif lower.begins_with("slab_"):
-		material = clean.substr(5)
+		material_name = clean.substr(5)
 		shape = "Slab"
 	elif lower.begins_with("panel_top_"):
-		material = clean.substr(10)
+		material_name = clean.substr(10)
 		shape = "Panel"
 	elif lower.begins_with("panel_bottom_"):
-		material = clean.substr(13)
+		material_name = clean.substr(13)
 		shape = "Panel"
 	elif lower.begins_with("panel_side_"):
-		material = clean.substr(11)
+		material_name = clean.substr(11)
 		shape = "Panel"
 	elif lower.begins_with("panel_"):
-		material = clean.substr(6)
+		material_name = clean.substr(6)
 		shape = "Panel"
 	elif lower.begins_with("stairs_upsidedown_"):
-		material = clean.substr(18)
+		material_name = clean.substr(18)
 		shape = "Stairs Upside Down"
 	elif lower.begins_with("stairs_"):
-		material = clean.substr(7)
+		material_name = clean.substr(7)
 		shape = "Stairs"
 	elif lower.begins_with("stair_"):
-		material = clean.substr(6)
+		material_name = clean.substr(6)
 		shape = "Stairs"
 
-	var pretty := material.replace("_", " ").capitalize()
+	var pretty := material_name.replace("_", " ").capitalize()
 	if shape.is_empty():
 		return pretty
 	return "%s %s" % [pretty, shape]
@@ -2444,11 +2554,17 @@ func _format_block_stat(value: Variant) -> String:
 
 ## Short category description for auto blocks. Hand-authored blocks return "".
 func _describe_block(item_name: String) -> String:
+	if item_name == "Water_Slab":
+		return "Half a block of water (8 units). It falls, spreads, and levels out."
+	if item_name == "Water_Panel":
+		return "A single unit of water. It spreads into the thinnest possible film."
+	if item_name.begins_with("Water_"):
+		return "A full block of water (16 units). It falls, spreads to the lowest level, and waterlogs non-full blocks."
 	if not item_name.begins_with("Auto_"):
 		return ""
 
 	var lower := item_name.to_lower()
-	var material := item_name.trim_prefix("Auto_").to_lower()
+	var material_name := item_name.trim_prefix("Auto_").to_lower()
 	for prefix in [
 		"connect_",
 		"slab_top_",
@@ -2464,22 +2580,22 @@ func _describe_block(item_name: String) -> String:
 		"stair_",
 	]:
 		if lower.begins_with("auto_" + prefix):
-			material = material.substr(prefix.length())
+			material_name = material_name.substr(prefix.length())
 			break
 
-	if "concrete" in material:
+	if "concrete" in material_name:
 		return "A sturdy cast-concrete building block."
-	if "dirt" in material:
+	if "dirt" in material_name:
 		return "A compacted dirt block."
-	if "grass" in material:
+	if "grass" in material_name:
 		return "A dirt block with a grass surface."
-	if "plank" in material or "wood" in material:
+	if "plank" in material_name or "wood" in material_name:
 		return "A wooden plank block."
-	if "window" in material:
+	if "window" in material_name:
 		return "A framed glass window block."
-	if "floortile" in material or "tile" in material:
+	if "floortile" in material_name or "tile" in material_name:
 		return "A tiled floor block."
-	if "debug" in material:
+	if "debug" in material_name:
 		return ""
 	return "An auto-generated block."
 
@@ -2508,7 +2624,6 @@ func _get_placeable_properties(scene: PackedScene) -> Array:
 		return _placeable_property_cache[key]
 
 	var props: Array = []
-	var seen: Dictionary = {}
 	var temp: Node = scene.instantiate()
 	var script: Script = temp.get_script()
 
@@ -2518,35 +2633,11 @@ func _get_placeable_properties(scene: PackedScene) -> Array:
 				continue
 			if not _is_editable_property_type(prop.type):
 				continue
-			var prop_name := String(prop.name)
-			seen[prop_name] = true
 			props.append({
-				"name": prop_name,
+				"name": String(prop.name),
 				"type": int(prop.type),
 				"default": temp.get(prop.name),
 			})
-
-	# Held tools keep their exports on the UseComponent child rather than the
-	# root scene. Merge those rows so the Water Tool brush is editable in the
-	# same Property tab as placeables.
-	var use_component := ComponentLookup.find_use(temp)
-	if use_component != null:
-		var use_script: Script = use_component.get_script()
-		if use_script:
-			for prop in use_script.get_script_property_list():
-				if prop.usage & PROPERTY_USAGE_EDITOR == 0:
-					continue
-				if not _is_editable_property_type(prop.type):
-					continue
-				var prop_name := String(prop.name)
-				if prop_name == "component_id" or seen.has(prop_name):
-					continue
-				seen[prop_name] = true
-				props.append({
-					"name": prop_name,
-					"type": int(prop.type),
-					"default": use_component.get(prop.name),
-				})
 
 	temp.free()
 	_placeable_property_cache[key] = props

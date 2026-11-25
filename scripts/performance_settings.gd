@@ -12,11 +12,28 @@ const FOLIAGE_SWAY_SCRIPT = preload("res://scripts/foliage_sway.gd")
 const QUALITY_NAMES: Array[String] = ["Low", "Medium", "High"]
 const RENDER_SCALES: Array[float] = [0.5, 0.65, 0.8, 1.0]
 const MESH_RADII: Array[int] = [4, 6, 8, 12, 16, 24, 32, 48, 64]
-const AGENT_CAPS: Array[int] = [40, 80, 120, 200, 300, 500, 700, 1000]
+const AGENT_CAPS: Array[int] = [40, 80, 120, 200, 300, 500, 600, 700, 1000]
 const VOLUMES: Array[float] = [0.0, 0.25, 0.5, 0.75, 1.0]
+const MUSIC_VOLUMES: Array[float] = [0.0, 0.25, 0.5, 0.75, 1.0]
 const FPS_CAPS: Array[int] = [30, 60, 0]
 const VIEW_ROLLS: Array[float] = [0.0, 0.75, 1.5, 2.5]
 const VIEW_ROLL_NAMES: Array[String] = ["Off", "Low", "Medium", "High"]
+const SKY_TIME_NAMES: Array[String] = ["Cycle", "Dawn", "Day", "Dusk", "Night"]
+const SKY_SPEEDS: Array[float] = [0.5, 1.0, 2.0, 4.0]
+const CLOUD_SPEEDS: Array[float] = [0.35, 0.7, 1.0, 1.5]
+const CLOUD_COVERAGES: Array[float] = [0.18, 0.26, 0.32, 0.42]
+const STORM_STRENGTHS: Array[float] = [0.4, 0.7, 1.0, 1.5]
+const STORM_STRENGTH_NAMES: Array[String] = ["Low", "Medium", "High", "Severe"]
+const SHADOW_DISTANCES: Array[float] = [20.0, 40.0, 60.0, 90.0, 120.0, 160.0]
+const FOLIAGE_SCALES: Array[float] = [0.5, 0.75, 1.0, 1.25]
+const FOG_OFFSETS: Array[float] = [0.0, 8.0, 16.0, 24.0, 32.0, 48.0, 64.0]
+
+const WATER_FLOW_STEPS: Array[float] = [0.067, 0.1, 0.15, 0.22, 0.3]
+const WATER_EQUALIZE_STEPS: Array[float] = [0.25, 0.5, 0.75, 1.0, 1.5]
+const WATER_UPDATE_BUDGETS: Array[int] = [96, 192, 384, 512, 768, 1024]
+const WATER_MESH_RATES: Array[float] = [0.033, 0.05, 0.08, 0.12, 0.2]
+const WATER_WAVE_STEPS: Array[float] = [0.0625, 0.125, 0.25, 0.5]
+const WATER_WAVE_SAMPLES: Array[int] = [4096, 8192, 12288, 32768]
 
 signal settings_changed
 
@@ -30,24 +47,14 @@ var load_radius: int = 20
 var nav_radius: int = 4
 var agent_cap: int = 120
 var clouds: bool = true
+var water_effects: bool = true
 var master_volume: float = 0.8
+## Background-music level, applied by MusicManager on top of its base volume.
+var music_volume: float = 0.75
 var max_fps: int = 60
 ## Camera view-roll strength, stored as an index into VIEW_ROLLS.
 var view_roll_index: int = 1
 
-<<<<<<< Updated upstream
-# Water simulation tuning (also editable from the pause menu's Water tab).
-var water_flow_interval: float = 0.15
-var water_equalize_interval: float = 0.5
-var water_update_budget: int = 384
-var water_mesh_interval: float = 0.08
-var water_waves: bool = true
-var water_wave_step: float = 0.125
-var water_wave_samples: int = 12288
-var water_wake_style: int = 1
-var water_splashes: bool = true
-var water_surface_particles: bool = true
-=======
 # Sky / weather presentation. These are cosmetic and never affect simulation.
 var sky_time_mode: int = 0
 var sky_speed_index: int = 1
@@ -62,7 +69,18 @@ var cloud_coverage_index: int = 2
 var foliage_scale: float = 1.0
 ## How far inside the rendered chunk ring the depth fog ends.
 var fog_distance_offset: float = 16.0
->>>>>>> Stashed changes
+
+# Water simulation tuning (also editable from the pause menu's Water tab).
+var water_flow_interval: float = 0.15
+var water_equalize_interval: float = 0.5
+var water_update_budget: int = 384
+var water_mesh_interval: float = 0.08
+var water_waves: bool = true
+var water_wave_step: float = 0.125
+var water_wave_samples: int = 12288
+var water_wake_style: int = 1
+var water_splashes: bool = true
+var water_surface_particles: bool = true
 
 
 func _ready() -> void:
@@ -78,19 +96,15 @@ func apply_preset(index: int, save: bool = true) -> void:
 		0:
 			render_scale = 0.5
 			shadows = false
-			shadow_distance = 40.0
 			ambient_occlusion = false
 			mesh_radius = 4
 			load_radius = 12
 			nav_radius = 3
 			agent_cap = 40
 			clouds = false
-<<<<<<< Updated upstream
 			water_effects = false
-=======
 			foliage_scale = 0.5
 			shadow_distance = 20.0
->>>>>>> Stashed changes
 			max_fps = 30
 		1:
 			render_scale = 0.8
@@ -102,35 +116,69 @@ func apply_preset(index: int, save: bool = true) -> void:
 			nav_radius = 4
 			agent_cap = 120
 			clouds = true
-<<<<<<< Updated upstream
 			water_effects = true
-=======
 			foliage_scale = 1.0
 			shadow_distance = 60.0
->>>>>>> Stashed changes
 			max_fps = 60
 		_:
 			render_scale = 1.0
 			shadows = true
-			shadow_distance = 120.0
 			ambient_occlusion = true
 			mesh_radius = 16
 			load_radius = 40
 			nav_radius = 8
-			agent_cap = 250
+			agent_cap = 600
 			clouds = true
-<<<<<<< Updated upstream
 			water_effects = true
-=======
 			foliage_scale = 1.0
 			shadow_distance = 120.0
->>>>>>> Stashed changes
 			max_fps = 0
+
+	_apply_water_preset(quality)
 
 	if save:
 		save_settings()
 
 	apply_all()
+
+
+## Water-specific defaults for a quality preset. These are copied into the
+## editable water settings so the Water tab and the presets stay in sync.
+func _apply_water_preset(index: int) -> void:
+	match clampi(index, 0, QUALITY_NAMES.size() - 1):
+		0:
+			water_flow_interval = 0.3
+			water_equalize_interval = 1.0
+			water_update_budget = 96
+			water_mesh_interval = 0.12
+			water_waves = true
+			water_wave_step = 0.25
+			water_wave_samples = 4096
+			water_wake_style = 0
+			water_splashes = false
+			water_surface_particles = false
+		1:
+			water_flow_interval = 0.15
+			water_equalize_interval = 0.5
+			water_update_budget = 384
+			water_mesh_interval = 0.08
+			water_waves = true
+			water_wave_step = 0.125
+			water_wave_samples = 12288
+			water_wake_style = 1
+			water_splashes = true
+			water_surface_particles = true
+		_:
+			water_flow_interval = 0.1
+			water_equalize_interval = 0.4
+			water_update_budget = 768
+			water_mesh_interval = 0.05
+			water_waves = true
+			water_wave_step = 0.0625
+			water_wave_samples = 32768
+			water_wake_style = 1
+			water_splashes = true
+			water_surface_particles = true
 
 
 func apply_all() -> void:
@@ -163,11 +211,34 @@ func apply_all() -> void:
 				2000 if quality == 0 else (3000 if quality == 1 else 4000)
 			)
 
+		var water = grid.get_water_system()
+		if water != null:
+			var waves_changed: bool = (
+				not is_equal_approx(water.wave_step, water_wave_step)
+				or water.wave_max_samples != water_wave_samples
+				or water.wake_style != water_wake_style
+			)
+			water.flow_interval = water_flow_interval
+			water.global_equalize_interval = water_equalize_interval
+			water.max_updates_per_tick = water_update_budget
+			water.mesh_rebuild_interval = water_mesh_interval
+			water.wave_step = water_wave_step
+			water.wave_max_samples = water_wave_samples
+			water.wake_style = water_wake_style
+			water.waves_enabled = water_effects and water_waves
+			water.splashes_enabled = water_effects and water_splashes
+			water.surface_particles_enabled = (
+				water_effects and water_surface_particles
+			)
+			if waves_changed and water.has_method("refresh_wave_settings"):
+				water.refresh_wave_settings()
+
 	var streamer := tree.get_first_node_in_group("chunk_streamer")
 	if streamer != null:
-		# A draw distance larger than the preset load radius must load the
-		# chunks it is asked to draw (plus one ring for neighbour meshing).
-		var effective_load: int = maxi(load_radius, mesh_radius + 2)
+		# Load exactly around what is drawn (plus one ring for neighbour
+		# meshing). Keeping the old larger preset load radius made low draw
+		# distance settings still load a huge ring of chunks.
+		var effective_load: int = maxi(6, mesh_radius + 2)
 		streamer.load_radius_chunks = effective_load
 		streamer.unload_radius_chunks = effective_load + 2
 		streamer.mesh_radius_chunks = mesh_radius
@@ -179,6 +250,7 @@ func apply_all() -> void:
 		streamer.max_chunk_loads_per_frame = 2 if quality == 0 else (3 if quality == 1 else 4)
 		streamer.max_chunk_unloads_per_frame = 6 if quality == 0 else 8
 		streamer.load_budget_usec = 1500 if quality == 0 else (2000 if quality == 1 else 2500)
+
 		if streamer.has_method("refresh_streaming"):
 			streamer.refresh_streaming()
 
@@ -190,22 +262,58 @@ func apply_all() -> void:
 		if "view_roll" in player:
 			player.view_roll = view_roll_degrees()
 
+	var sky_settings := {
+		"time_mode": sky_time_mode,
+		"cycle_speed": SKY_SPEEDS[clampi(sky_speed_index, 0, SKY_SPEEDS.size() - 1)],
+		"sun_disc": sun_visible,
+		"moon_disc": moon_visible,
+		"rainbow": rainbows,
+		"storm_flashes": storm_flashes,
+		"storm_strength": STORM_STRENGTHS[
+			clampi(storm_strength_index, 0, STORM_STRENGTHS.size() - 1)
+		],
+		"fog": fog_enabled,
+		"fog_distance": maxf(
+			32.0,
+			float(mesh_radius) * 16.0 - fog_distance_offset
+		),
+	}
+	for controller in tree.get_nodes_in_group("CycleControllers"):
+		if controller.has_method("apply_sky_settings"):
+			controller.apply_sky_settings(sky_settings)
+
 	var cloud_layer := tree.get_first_node_in_group("minecraft_clouds")
 	if cloud_layer != null:
 		cloud_layer.visible = clouds
 
-	# Foliage cards are numerous alpha quads; tie their cutoff to the preset.
-	var foliage_distance: float = (
-		80.0 if quality == 0 else (120.0 if quality == 1 else 150.0)
+		if "speed_scale" in cloud_layer:
+			cloud_layer.set(
+				"speed_scale",
+				CLOUD_SPEEDS[
+					clampi(cloud_speed_index, 0, CLOUD_SPEEDS.size() - 1)
+				]
+			)
+
+		if cloud_layer.has_method("set_coverage"):
+			var coverage: float = CLOUD_COVERAGES[
+				clampi(cloud_coverage_index, 0, CLOUD_COVERAGES.size() - 1)
+			]
+			cloud_layer.call("set_coverage", coverage, coverage * 0.72)
+
+	# Foliage lives inside the streamed chunk ring. Scale its cutoff with the
+	# actual chunk draw distance so foliage cannot outlive its ground.
+	var foliage_distance: float = maxf(
+		16.0,
+		float(mesh_radius) * 16.0 * 0.9 * foliage_scale
 	)
 	FOLIAGE_SWAY_SCRIPT.max_view_distance = foliage_distance
+	FOLIAGE_SWAY_SCRIPT.mid_view_distance = foliage_distance * 0.5
 	for plant in tree.get_nodes_in_group("foliage"):
-		for sprite in plant.find_children("*", "Sprite3D", true, false):
-			sprite.visibility_range_end = foliage_distance
-			sprite.visibility_range_end_margin = minf(
-				20.0,
-				foliage_distance * 0.15
-			)
+		FOLIAGE_SWAY_SCRIPT.apply_distance_settings(
+			plant,
+			foliage_distance,
+			foliage_distance * 0.5
+		)
 
 	for node in tree.get_nodes_in_group("sun_light"):
 		if node is DirectionalLight3D:
@@ -239,6 +347,11 @@ func cycle_volume() -> void:
 	_commit()
 
 
+func cycle_music_volume() -> void:
+	music_volume = _next_float(MUSIC_VOLUMES, music_volume)
+	_commit()
+
+
 func cycle_fps() -> void:
 	max_fps = _next_int(FPS_CAPS, max_fps)
 	_commit()
@@ -262,6 +375,21 @@ func toggle_shadows() -> void:
 	_commit()
 
 
+func cycle_shadow_distance() -> void:
+	shadow_distance = _next_float(SHADOW_DISTANCES, shadow_distance)
+	_commit()
+
+
+func cycle_foliage_scale() -> void:
+	foliage_scale = _next_float(FOLIAGE_SCALES, foliage_scale)
+	_commit()
+
+
+func cycle_fog_offset() -> void:
+	fog_distance_offset = _next_float(FOG_OFFSETS, fog_distance_offset)
+	_commit()
+
+
 func toggle_occlusion() -> void:
 	ambient_occlusion = not ambient_occlusion
 	_commit()
@@ -272,68 +400,6 @@ func toggle_clouds() -> void:
 	_commit()
 
 
-<<<<<<< Updated upstream
-func toggle_water() -> void:
-	water_effects = not water_effects
-	_commit()
-
-
-func cycle_water_flow() -> void:
-	water_flow_interval = _next_float(WATER_FLOW_STEPS, water_flow_interval)
-	_commit()
-
-
-func cycle_water_equalize() -> void:
-	water_equalize_interval = _next_float(
-		WATER_EQUALIZE_STEPS,
-		water_equalize_interval
-	)
-	_commit()
-
-
-func cycle_water_budget() -> void:
-	water_update_budget = _next_int(WATER_UPDATE_BUDGETS, water_update_budget)
-	_commit()
-
-
-func cycle_water_mesh() -> void:
-	water_mesh_interval = _next_float(WATER_MESH_RATES, water_mesh_interval)
-	_commit()
-
-
-func cycle_water_wave_detail() -> void:
-	water_wave_step = _next_float(WATER_WAVE_STEPS, water_wave_step)
-	_commit()
-
-
-func cycle_water_wave_cap() -> void:
-	water_wave_samples = _next_int(WATER_WAVE_SAMPLES, water_wave_samples)
-	_commit()
-
-
-func toggle_water_waves() -> void:
-	water_waves = not water_waves
-	_commit()
-
-
-func toggle_water_splashes() -> void:
-	water_splashes = not water_splashes
-	_commit()
-
-
-func toggle_water_surface_particles() -> void:
-	water_surface_particles = not water_surface_particles
-	_commit()
-
-
-func cycle_water_wake_style() -> void:
-	water_wake_style = (water_wake_style + 1) % 2
-	_commit()
-
-
-func reset_water_settings() -> void:
-	_apply_water_preset(quality)
-=======
 func cycle_sky_time() -> void:
 	sky_time_mode = (sky_time_mode + 1) % SKY_TIME_NAMES.size()
 	_commit()
@@ -397,7 +463,69 @@ func reset_sky_clouds() -> void:
 	cloud_speed_index = 2
 	cloud_coverage_index = 2
 	clouds = true
->>>>>>> Stashed changes
+	_commit()
+
+
+func toggle_water() -> void:
+	water_effects = not water_effects
+	_commit()
+
+
+func cycle_water_flow() -> void:
+	water_flow_interval = _next_float(WATER_FLOW_STEPS, water_flow_interval)
+	_commit()
+
+
+func cycle_water_equalize() -> void:
+	water_equalize_interval = _next_float(
+		WATER_EQUALIZE_STEPS,
+		water_equalize_interval
+	)
+	_commit()
+
+
+func cycle_water_budget() -> void:
+	water_update_budget = _next_int(WATER_UPDATE_BUDGETS, water_update_budget)
+	_commit()
+
+
+func cycle_water_mesh() -> void:
+	water_mesh_interval = _next_float(WATER_MESH_RATES, water_mesh_interval)
+	_commit()
+
+
+func cycle_water_wave_detail() -> void:
+	water_wave_step = _next_float(WATER_WAVE_STEPS, water_wave_step)
+	_commit()
+
+
+func cycle_water_wave_cap() -> void:
+	water_wave_samples = _next_int(WATER_WAVE_SAMPLES, water_wave_samples)
+	_commit()
+
+
+func toggle_water_waves() -> void:
+	water_waves = not water_waves
+	_commit()
+
+
+func toggle_water_splashes() -> void:
+	water_splashes = not water_splashes
+	_commit()
+
+
+func toggle_water_surface_particles() -> void:
+	water_surface_particles = not water_surface_particles
+	_commit()
+
+
+func cycle_water_wake_style() -> void:
+	water_wake_style = (water_wake_style + 1) % 2
+	_commit()
+
+
+func reset_water_settings() -> void:
+	_apply_water_preset(quality)
 	_commit()
 
 
@@ -421,12 +549,28 @@ func volume_name() -> String:
 	return "%d%%" % roundi(master_volume * 100.0)
 
 
+func music_volume_name() -> String:
+	return "%d%%" % roundi(music_volume * 100.0)
+
+
 func fps_name() -> String:
 	return "Unlimited" if max_fps <= 0 else str(max_fps)
 
 
 func shadows_name() -> String:
 	return "On" if shadows else "Off"
+
+
+func shadow_distance_name() -> String:
+	return "%d m" % roundi(shadow_distance)
+
+
+func foliage_scale_name() -> String:
+	return "%d%%" % roundi(foliage_scale * 100.0)
+
+
+func fog_offset_name() -> String:
+	return "%d m" % roundi(fog_distance_offset)
 
 
 func occlusion_name() -> String:
@@ -437,50 +581,6 @@ func clouds_name() -> String:
 	return "On" if clouds else "Off"
 
 
-<<<<<<< Updated upstream
-func water_name() -> String:
-	return "On" if water_effects else "Off"
-
-
-func water_flow_name() -> String:
-	return "%.2f s" % water_flow_interval
-
-
-func water_equalize_name() -> String:
-	return "%.2f s" % water_equalize_interval
-
-
-func water_budget_name() -> String:
-	return str(water_update_budget)
-
-
-func water_mesh_rate_name() -> String:
-	return "%d Hz" % roundi(1.0 / maxf(water_mesh_interval, 0.001))
-
-
-func water_wave_detail_name() -> String:
-	return "%.2f m" % water_wave_step
-
-
-func water_wave_cap_name() -> String:
-	return str(water_wave_samples)
-
-
-func water_waves_name() -> String:
-	return "On" if water_waves else "Off"
-
-
-func water_splashes_name() -> String:
-	return "On" if water_splashes else "Off"
-
-
-func water_surface_particles_name() -> String:
-	return "On" if water_surface_particles else "Off"
-
-
-func water_wake_name() -> String:
-	return "Vivid" if water_wake_style == 1 else "Soft"
-=======
 func sky_time_name() -> String:
 	return SKY_TIME_NAMES[clampi(sky_time_mode, 0, SKY_TIME_NAMES.size() - 1)]
 
@@ -529,7 +629,50 @@ func cloud_coverage_name() -> String:
 			clampi(cloud_coverage_index, 0, CLOUD_COVERAGES.size() - 1)
 		]
 	)
->>>>>>> Stashed changes
+
+
+func water_name() -> String:
+	return "On" if water_effects else "Off"
+
+
+func water_flow_name() -> String:
+	return "%.2f s" % water_flow_interval
+
+
+func water_equalize_name() -> String:
+	return "%.2f s" % water_equalize_interval
+
+
+func water_budget_name() -> String:
+	return str(water_update_budget)
+
+
+func water_mesh_rate_name() -> String:
+	return "%d Hz" % roundi(1.0 / maxf(water_mesh_interval, 0.001))
+
+
+func water_wave_detail_name() -> String:
+	return "%.2f m" % water_wave_step
+
+
+func water_wave_cap_name() -> String:
+	return str(water_wave_samples)
+
+
+func water_waves_name() -> String:
+	return "On" if water_waves else "Off"
+
+
+func water_splashes_name() -> String:
+	return "On" if water_splashes else "Off"
+
+
+func water_surface_particles_name() -> String:
+	return "On" if water_surface_particles else "Off"
+
+
+func water_wake_name() -> String:
+	return "Vivid" if water_wake_style == 1 else "Soft"
 
 
 func save_settings() -> void:
@@ -539,23 +682,12 @@ func save_settings() -> void:
 	config.set_value("graphics", "shadows", shadows)
 	config.set_value("graphics", "shadow_distance", shadow_distance)
 	config.set_value("graphics", "ambient_occlusion", ambient_occlusion)
+	config.set_value("graphics", "foliage_scale", foliage_scale)
 	config.set_value("graphics", "mesh_radius", mesh_radius)
 	config.set_value("graphics", "load_radius", load_radius)
 	config.set_value("graphics", "nav_radius", nav_radius)
 	config.set_value("graphics", "clouds", clouds)
-<<<<<<< Updated upstream
 	config.set_value("graphics", "water_effects", water_effects)
-	config.set_value("water", "flow_interval", water_flow_interval)
-	config.set_value("water", "equalize_interval", water_equalize_interval)
-	config.set_value("water", "update_budget", water_update_budget)
-	config.set_value("water", "mesh_interval", water_mesh_interval)
-	config.set_value("water", "waves", water_waves)
-	config.set_value("water", "wave_step", water_wave_step)
-	config.set_value("water", "wave_samples", water_wave_samples)
-	config.set_value("water", "wake_style", water_wake_style)
-	config.set_value("water", "splashes", water_splashes)
-	config.set_value("water", "surface_particles", water_surface_particles)
-=======
 	config.set_value("sky", "time_mode", sky_time_mode)
 	config.set_value("sky", "speed_index", sky_speed_index)
 	config.set_value("sky", "sun_visible", sun_visible)
@@ -567,8 +699,18 @@ func save_settings() -> void:
 	config.set_value("sky", "fog_offset", fog_distance_offset)
 	config.set_value("clouds", "speed_index", cloud_speed_index)
 	config.set_value("clouds", "coverage_index", cloud_coverage_index)
->>>>>>> Stashed changes
+	config.set_value("water", "flow_interval", water_flow_interval)
+	config.set_value("water", "equalize_interval", water_equalize_interval)
+	config.set_value("water", "update_budget", water_update_budget)
+	config.set_value("water", "mesh_interval", water_mesh_interval)
+	config.set_value("water", "waves", water_waves)
+	config.set_value("water", "wave_step", water_wave_step)
+	config.set_value("water", "wave_samples", water_wave_samples)
+	config.set_value("water", "wake_style", water_wake_style)
+	config.set_value("water", "splashes", water_splashes)
+	config.set_value("water", "surface_particles", water_surface_particles)
 	config.set_value("audio", "master_volume", master_volume)
+	config.set_value("audio", "music_volume", music_volume)
 	config.set_value("system", "agent_cap", agent_cap)
 	config.set_value("system", "max_fps", max_fps)
 	config.set_value("camera", "view_roll", view_roll_index)
@@ -582,30 +724,17 @@ func load_settings() -> void:
 		return
 
 	quality = int(config.get_value("preset", "quality", 1))
+	var has_water_settings := config.has_section_key("water", "flow_interval")
 	render_scale = float(config.get_value("graphics", "render_scale", 0.8))
 	shadows = bool(config.get_value("graphics", "shadows", true))
 	shadow_distance = float(config.get_value("graphics", "shadow_distance", 60.0))
 	ambient_occlusion = bool(config.get_value("graphics", "ambient_occlusion", false))
+	foliage_scale = float(config.get_value("graphics", "foliage_scale", 1.0))
 	mesh_radius = int(config.get_value("graphics", "mesh_radius", 8))
 	load_radius = int(config.get_value("graphics", "load_radius", 20))
 	nav_radius = int(config.get_value("graphics", "nav_radius", 4))
 	clouds = bool(config.get_value("graphics", "clouds", true))
-<<<<<<< Updated upstream
 	water_effects = bool(config.get_value("graphics", "water_effects", true))
-	water_flow_interval = float(config.get_value("water", "flow_interval", water_flow_interval))
-	water_equalize_interval = float(config.get_value("water", "equalize_interval", water_equalize_interval))
-	water_update_budget = int(config.get_value("water", "update_budget", water_update_budget))
-	water_mesh_interval = float(config.get_value("water", "mesh_interval", water_mesh_interval))
-	water_waves = bool(config.get_value("water", "waves", water_waves))
-	water_wave_step = float(config.get_value("water", "wave_step", water_wave_step))
-	water_wave_samples = int(config.get_value("water", "wave_samples", water_wave_samples))
-	water_wake_style = int(config.get_value("water", "wake_style", water_wake_style))
-	water_splashes = bool(config.get_value("water", "splashes", water_splashes))
-	water_surface_particles = bool(config.get_value("water", "surface_particles", water_surface_particles))
-
-	if not has_water_settings:
-		_apply_water_preset(quality)
-=======
 	sky_time_mode = clampi(
 		int(config.get_value("sky", "time_mode", 0)),
 		0,
@@ -639,8 +768,21 @@ func load_settings() -> void:
 		0,
 		CLOUD_COVERAGES.size() - 1
 	)
->>>>>>> Stashed changes
+	water_flow_interval = float(config.get_value("water", "flow_interval", water_flow_interval))
+	water_equalize_interval = float(config.get_value("water", "equalize_interval", water_equalize_interval))
+	water_update_budget = int(config.get_value("water", "update_budget", water_update_budget))
+	water_mesh_interval = float(config.get_value("water", "mesh_interval", water_mesh_interval))
+	water_waves = bool(config.get_value("water", "waves", water_waves))
+	water_wave_step = float(config.get_value("water", "wave_step", water_wave_step))
+	water_wave_samples = int(config.get_value("water", "wave_samples", water_wave_samples))
+	water_wake_style = int(config.get_value("water", "wake_style", water_wake_style))
+	water_splashes = bool(config.get_value("water", "splashes", water_splashes))
+	water_surface_particles = bool(config.get_value("water", "surface_particles", water_surface_particles))
+
+	if not has_water_settings:
+		_apply_water_preset(quality)
 	master_volume = float(config.get_value("audio", "master_volume", 0.8))
+	music_volume = float(config.get_value("audio", "music_volume", 0.75))
 	agent_cap = int(config.get_value("system", "agent_cap", 120))
 	max_fps = int(config.get_value("system", "max_fps", 60))
 	view_roll_index = int(config.get_value("camera", "view_roll", 1))

@@ -29,6 +29,7 @@ const CHUNK_FORMAT_VERSION: int = 2
 @export var generator: Resource = null
 @export var overlays: Array[Resource] = []
 @export var scenario: Resource = null
+@export var water_level: int = -1
 @export var min_y: int = -256
 @export var max_y: int = 255
 
@@ -81,6 +82,7 @@ func get_manifest() -> Dictionary:
 
 	return {
 		"recipe_id": get_recipe_id(),
+		"water_level": water_level,
 		"min_y": min_y,
 		"max_y": max_y,
 		"stages": stages,
@@ -106,6 +108,7 @@ func generate_chunk_data(chunk: Vector2i) -> Dictionary:
 		"chunk_size": VoxelSectionStoreScript.SIZE,
 		"min_y": min_y,
 		"max_y": max_y,
+		"water_level": water_level,
 		"recipe": get_recipe_id(),
 	}
 

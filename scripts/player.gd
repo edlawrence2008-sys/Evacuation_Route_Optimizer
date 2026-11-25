@@ -67,7 +67,7 @@ const MAX_WALL_UPWARD_VELOCITY = 1.8
 const WALL_RUN_GRAVITY = 3.0
 const WALL_JUMP_HORIZONTAL_FORCE = 18 
 const WALL_JUMP_VERTICAL_FORCE = 4.5    
-const WALL_STICK_DISTANCE = 1.0
+const WALL_STICK_DISTANCE = 0.5
 const MAX_WALL_STAMINA = 100.0
 const STAMINA_REGEN_RATE = 40.0
 const PENALTY_REGEN_RATE = 8
@@ -93,7 +93,7 @@ var damage_tween : Tween
 # --- Bunny Hop Settings ---
 ## Holding jump through a landing immediately jumps again and keeps the
 ## horizontal momentum, so slide jumps and chained hops carry their speed.
-const BHOP_MAX_SPEED = 14.0
+const BHOP_MAX_SPEED = 3500
 const BHOP_HOP_GAIN = 1.03
 const BHOP_AIR_TURN_RATE = 4.0
 var bhop_chain: int = 0

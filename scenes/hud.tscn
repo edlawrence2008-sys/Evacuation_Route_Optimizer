@@ -10,6 +10,7 @@
 [ext_resource type="Script" uid="uid://bef6m3mcjww17" path="res://scenes/hud/Hotbar.gd" id="8_hotbar"]
 [ext_resource type="Texture2D" uid="uid://dghkhv2rcbjx8" path="res://textures/Consul/bell.png" id="9_bell"]
 [ext_resource type="Script" path="res://scenes/dialogue/ConsulBell.gd" id="10_bell"]
+[ext_resource type="PackedScene" path="res://scenes/ui/bgm_popup.tscn" id="11_bgm"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_results"]
 content_margin_left = 8.0
@@ -129,3 +130,7 @@ texture_normal = ExtResource("9_bell")
 ignore_texture_size = true
 stretch_mode = 5
 script = ExtResource("10_bell")
+
+[node name="BgmPopup" parent="." instance=ExtResource("11_bgm")]
+layout_mode = 1
+z_index = 20

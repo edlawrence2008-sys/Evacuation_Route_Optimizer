@@ -8,7 +8,7 @@ offset_left = 16.0
 offset_top = 16.0
 offset_right = 437.0
 offset_bottom = 274.0
-theme_override_constants/separation = 4
+theme_override_constants/separation = 1
 script = ExtResource("1_panel")
 
 [node name="Title" type="Label" parent="." unique_id=848843198]
@@ -30,10 +30,28 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Reset"
 
+[node name="PauseSpawning" type="CheckButton" parent="Actions" unique_id=756238667]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Pause or resume spawning without resetting the run, counters, or quotas."
+theme_override_font_sizes/font_size = 14
+text = "Pause Spawning"
+
 [node name="EvacuationMode" type="CheckButton" parent="." unique_id=1636659906]
 layout_mode = 2
 tooltip_text = "On: every member evacuates. Off: every member wanders."
 text = "Evacuation Mode"
+
+[node name="RecordRun" type="CheckButton" parent="." unique_id=1643065159]
+layout_mode = 2
+tooltip_text = "Automatically record each run that starts with Start."
+button_pressed = true
+text = "Record On Start"
+
+[node name="RecordNow" type="Button" parent="." unique_id=1643065160]
+layout_mode = 2
+tooltip_text = "Start or stop a recording immediately, without using Start."
+text = "Start Recording"
 
 [node name="Limits" type="GridContainer" parent="." unique_id=661914493]
 layout_mode = 2
@@ -66,6 +84,29 @@ max_value = 100000.0
 value = 700.0
 allow_greater = true
 
+[node name="SeedLabel" type="Label" parent="Limits" unique_id=744210991]
+layout_mode = 2
+text = "Seed"
+
+[node name="SeedRow" type="HBoxContainer" parent="Limits" unique_id=744210992]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="SeedValue" type="SpinBox" parent="Limits/SeedRow" unique_id=744210993]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Run seed. Start from a clean reset with the same seed, layout and parameters to repeat the run."
+min_value = 0.0
+max_value = 2147483647.0
+value = 12345.0
+allow_greater = true
+
+[node name="Randomize" type="Button" parent="Limits/SeedRow" unique_id=744210994]
+layout_mode = 2
+tooltip_text = "Pick a new random seed. Applies when you press Start or Populate."
+text = "Random"
+
 [node name="Separator" type="HSeparator" parent="." unique_id=486116844]
 layout_mode = 2
 
@@ -77,7 +118,7 @@ text = "Random Populate"
 [node name="RandomGrid" type="GridContainer" parent="." unique_id=386228645]
 layout_mode = 2
 theme_override_constants/h_separation = 8
-theme_override_constants/v_separation = 2
+theme_override_constants/v_separation = 0
 columns = 2
 
 [node name="CountLabel" type="Label" parent="RandomGrid" unique_id=1188026069]

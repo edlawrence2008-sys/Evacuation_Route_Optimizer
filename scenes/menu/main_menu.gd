@@ -492,6 +492,9 @@ func _click_at(screen_position: Vector2) -> void:
 		"foliage_distance":
 			PerformanceSettings.cycle_foliage_scale()
 			_refresh_labels()
+		"water":
+			PerformanceSettings.toggle_water()
+			_refresh_labels()
 		"ao":
 			PerformanceSettings.toggle_occlusion()
 			_refresh_labels()
@@ -639,6 +642,8 @@ func _dynamic_caption(action: String) -> String:
 			return "Shadow Dist: " + PerformanceSettings.shadow_distance_name()
 		"foliage_distance":
 			return "Foliage: " + PerformanceSettings.foliage_scale_name()
+		"water":
+			return "Water FX: " + PerformanceSettings.water_name()
 		"ao":
 			return "AO: " + PerformanceSettings.occlusion_name()
 		"clouds":

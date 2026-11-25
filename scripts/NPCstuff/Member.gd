@@ -1,5 +1,14 @@
 extends CharacterBody3D
 
+## Measurement/recording hook. Emitted whenever this agent is assigned a new
+## evacuation route or target, and once when a route attempt fails. The payload
+## is intentionally self-contained so a recorder can be added without Member
+## knowing about it. See docs/SIM_MEASUREMENTS.md.
+signal route_changed(info: Dictionary)
+## Emitted immediately when the chosen exit/destination changes, before a path
+## is requested. Recorders must not infer this from later snapshots.
+signal destination_changed(info: Dictionary)
+
 # ============================================================
 # COMPONENT REFERENCES
 # ============================================================
@@ -14,45 +23,34 @@ extends CharacterBody3D
 
 @export_group("Personality & Stats")
 @export var npc_name: String = "Villager"
-@export var movement_speed: float = 3.0
+## Mean free-walking speed, m/s. Weidmann (1993) reports 1.34 m/s with a
+## 0.26 m/s standard deviation for mixed pedestrian traffic; that is the
+## default distribution (see use_desired_speed_distribution).
+@export var movement_speed: float = 1.34
 @export var enable_energy: bool = false
 @export var energy: float = 100.0
 @export var hunger: float = 0.0
 
 @export_group("Individuality & Variety")
-@export var max_extra_speed: float = 2.5
-@export var max_extra_lane_offset: float = 0.5
-@export var max_extra_separation_radius: float = 0.5
-@export var max_extra_separation_push: float = 1.0
+## Legacy uniform speed spread. Only used when
+## use_desired_speed_distribution is false.
+@export var max_extra_speed: float = 0.0
+## Extra lateral path offset (metres). Defaults to zero because lanes are an
+## emergent property of the social force model, not an authored offset.
+@export var max_extra_lane_offset: float = 0.0
 
 @export_group("Crowd Dynamics")
 @export var enable_crowd_damage: bool = false
 @export var crowd_threshold: int = 10
 @export var crush_damage_per_sec: float = 0.5
 @export var max_neighbors: int = 16
-@export var max_vertical_neighbor_distance: float = 1.5
-## When enabled, a higher-instance-ID agent backs off to break a crowd
-## deadlock. Disable to make agents keep their line and rely on collision.
+## When enabled, a higher-serial agent backs off to break a crowd deadlock.
+## Disable to make agents keep their line and rely on the social forces.
 @export var allow_yielding: bool = true
 
-@export_group("Water & Hazards")
-## Fraction of walking speed lost when fully submerged.
-@export_range(0.0, 0.95, 0.01) var water_speed_loss: float = 0.65
-## How strongly the local water flow drags the agent when submerged.
-@export_range(0.0, 12.0, 0.1) var water_drag: float = 2.5
-## How often depth/flow/hazard are sampled. 5-10 Hz is enough; the values move
-## smoothly compared with the 30 Hz physics tick.
-@export var water_query_interval: float = 0.15
-@export var hazard_query_interval: float = 0.25
-## Damage per second at full LPG concentration and at full fire heat.
-## FireComponent already applies direct radius damage, so heat damage defaults
-## to zero; raise it only if HazardWorld is the sole fire-damage source.
-@export var gas_damage_per_sec: float = 8.0
-@export var heat_damage_per_sec: float = 0.0
-
 @export_group("Collision")
-## When enabled, a stuck NPC may briefly stop colliding with other NPCs.
-## When disabled, NPCs always collide with each other.
+## Only used on the engine-collision path. In the default kinematic mode NPCs
+## carry collision_mask = 0 and rely on the SFM contact force instead.
 @export var allow_collision_disable: bool = false:
 	set(value):
 		allow_collision_disable = value
@@ -80,6 +78,12 @@ extends CharacterBody3D
 	set(value):
 		sprite_walk_fps = maxf(value, 1.0)
 		_sync_sprite_settings()
+## How often the sprite's facing/animation state is refreshed, seconds. The
+## node transform still follows the body every frame; this only throttles the
+## per-agent visual bookkeeping (row selection, ground offset, frame changes).
+@export_range(0.0, 0.5, 0.01) var sprite_update_interval: float = 0.1:
+	set(value):
+		sprite_update_interval = maxf(value, 0.0)
 ## Local-space nudge applied on top of the per-frame floor alignment.
 ## Use Y to lift or sink the sprite.
 @export var sprite_offset: Vector3 = Vector3.ZERO:
@@ -116,8 +120,6 @@ extends CharacterBody3D
 
 @export_group("Path Diversity")
 @export var lane_offset_strength: float = 0.0
-@export var separation_push: float = 2.0
-@export var separation_radius: float = 1.0
 
 @export_group("AI State")
 @export var is_evacuee: bool = true
@@ -126,10 +128,14 @@ extends CharacterBody3D
 @export var evac_confirm_timeout: float = 3.0
 @export var max_evacuation_failures: int = 3
 @export var failed_evac_point_cooldown: float = 5.0
+## Maximum time an agent will wait at an exit that is processing a queue. When
+## the wait expires the agent gives up on that exit and re-routes. This is a
+## fail-safe against a permanently full receiving area.
+@export var max_exit_hold_time: float = 120.0
 
 @export_group("Movement & Physics")
-## When false, this agent never uses the automatic obstacle hop or the random
-## stuck-hop. It still follows paths and falls normally.
+## Only used on the engine-collision path. Kinematic agents climb one-block
+## steps with the ground probe and never use the obstacle/random hop.
 @export var allow_jumping: bool = true
 @export var jump_force: float = 6.0
 @export var jump_push_force: float = 3.0
@@ -138,6 +144,77 @@ extends CharacterBody3D
 @export var stuck_progress_ratio: float = 0.25
 @export var obstacle_hop_cooldown: float = 0.4
 @export var waypoint_arrival_distance: float = 0.3
+
+@export_group("Social Force Model")
+## Collision radius of the body used by the crowd solver, metres. Must match
+## the collider in Member.tscn.
+@export_range(0.05, 1.0, 0.01) var body_radius: float = 0.25
+## Body mass, kg. Used for force -> acceleration and contact impulse.
+@export_range(20.0, 200.0, 1.0) var body_mass: float = 78.0
+## Relaxation time tau, seconds. Helbing et al. use ~0.5 s; it sets how
+## quickly an agent reaches its desired velocity.
+@export_range(0.05, 2.0, 0.01) var relaxation_time: float = 0.5
+## Sample the individual desired speed from a truncated normal distribution
+## instead of using movement_speed verbatim.
+@export var use_desired_speed_distribution: bool = true
+@export var desired_speed_std: float = 0.26
+@export var desired_speed_min: float = 0.6
+@export var desired_speed_max: float = 2.2
+## Multiplier on the crowd solver's psychological force. 1 = as solved.
+@export_range(0.0, 2.0, 0.01) var social_force_scale: float = 1.0
+## Multiplier on the wall repulsion. 1 = as configured on the grid map.
+@export_range(0.0, 2.0, 0.01) var wall_force_scale: float = 1.0:
+	set(value):
+		wall_force_scale = value
+		_wall_force_dirty = true
+## How often wall repulsion is re-sampled, seconds. The force changes smoothly
+## with distance, so 0.1 s (10 Hz) is indistinguishable from per-tick sampling.
+@export_range(0.0, 0.5, 0.01) var wall_force_update_interval: float = 0.1
+## When true, NPCs keep colliding with each other's physics bodies and the
+## social contact force is disabled. When false (default), NPC-NPC contact is
+## handled by SFM and the engine only resolves world geometry.
+@export var use_physics_contact: bool = false:
+	set(value):
+		use_physics_contact = value
+		_refresh_movement_mode()
+		_apply_collision_policy()
+## Hard cap on horizontal speed (m/s) so a dense pile cannot launch an agent.
+@export var max_horizontal_speed: float = 4.0
+## Kinematic movement mode. The agent is moved by its own ground probe instead
+## of move_and_slide() against world collision. Required for 600 agents: on a
+## voxel GridMap, 600 CharacterBody3D sweeps cost ~20 ms/frame, while one
+## downward ray per agent is a fraction of that.
+@export var use_kinematic_movement: bool = true:
+	set(value):
+		use_kinematic_movement = value
+		_refresh_movement_mode()
+		_apply_collision_policy()
+## Highest step (metres) the kinematic probe climbs in one tick. The nav grid
+## connects one-block step-up edges (NEIGHBOR_OFFSETS includes y = +1), and
+## slabs/stairs can present a full 1 m surface, so this must cover one voxel.
+## 1.05 keeps a small float margin; a two-block face is still a wall.
+@export var kinematic_step_height: float = 1.05
+## Largest drop the probe snaps down in one tick. Keeping this below the step
+## height lets a 1 m ledge be a short fall rather than an instant snap.
+@export var kinematic_snap_down_height: float = 0.65
+
+@export_group("Pre-movement")
+## Time from the alarm to the first movement, seconds. Sampled lognormal so
+## the distribution is right-skewed like observed pre-movement times.
+@export var pre_movement_enabled: bool = true
+@export var pre_movement_mean: float = 6.0
+@export var pre_movement_sigma: float = 0.7
+@export var pre_movement_max: float = 45.0
+
+@export_group("Exit Choice")
+## Utility = -beta_d * path_distance - beta_q * queue_density
+##           + beta_visible * line_of_sight + familiarity.
+@export var exit_choice_beta_distance: float = 0.012
+@export var exit_choice_beta_queue: float = 3.0
+@export var exit_choice_beta_visible: float = 1.5
+@export var exit_choice_familiarity: float = 0.8
+## Softmax temperature used to sample the exit. 0 = always the best utility.
+@export_range(0.0, 2.0, 0.01) var exit_choice_temperature: float = 0.35
 
 
 # ============================================================
@@ -176,19 +253,61 @@ var _flow_target_cell: Vector3i = Vector3i.ZERO
 var _flow_wait: float = 0.0
 
 var actual_movement_speed: float = 4.0
-var actual_separation_radius: float = 1.0
-var actual_separation_push: float = 2.0
-
-## Last unified environment sample. `water` is the WaterWorld sample; `gas`
-## and `heat` come from HazardWorld. Empty when neither system is present.
-var _environment_sample: Dictionary = {}
-var _water_sample: Dictionary = {}
-var _environment_accum: float = 0.0
-var _was_in_water: bool = false
 
 var lane_offset: float = 0.0
-var _crowd_push: Vector3 = Vector3.ZERO
 var local_density: float = 0.0
+
+# --- Social Force Model state ---------------------------------------------
+## Monotonic agent id assigned at spawn. Used for the deterministic
+## right-of-way tie-break and as part of the agent RNG seed.
+var agent_serial: int = 0
+## Per-agent random stream. Seeded from (GlobalData.rng_seed, agent_serial) so
+## spawn order and instance ids never influence behaviour.
+var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
+## Desired (free) walking speed sampled once at spawn.
+var desired_speed: float = 1.34
+## Unit vector the agent wants to walk along. Read by the crowd solver for
+## the anisotropy weight.
+var _desired_direction: Vector3 = Vector3.ZERO
+## Acceleration (m/s^2) produced by the crowd solver this tick.
+var _social_accel: Vector3 = Vector3.ZERO
+## Acceleration (m/s^2) from wall repulsion this tick.
+var _wall_accel: Vector3 = Vector3.ZERO
+## Sum of contact normal forces this tick, N. Instrumentation and crush model.
+var contact_force: float = 0.0
+var contact_overlaps: int = 0
+## Pre-movement delay sampled at spawn and the time already spent waiting.
+var _pre_movement_delay: float = 0.0
+var _pre_movement_elapsed: float = 0.0
+var _has_started_moving: bool = false
+
+# --- Kinematic movement state --------------------------------------------
+## Cached movement-mode flag, refreshed by the export setters so hot paths do
+## not recompute it thousands of times per frame.
+var _kinematic_active: bool = true
+## True when the last ground probe found support under the agent.
+var _kinematic_grounded: bool = false
+## Origin height that corresponds to standing on the last probed ground.
+var _kinematic_stand_y: float = 0.0
+## Distance from the node origin to the bottom of the collision sphere.
+var _foot_offset: float = 0.25
+## Reused ray query so 600 agents do not allocate one per tick.
+var _ground_query: PhysicsRayQueryParameters3D = null
+## Single-entry ground-probe cache. Agents move a few centimetres per tick, so
+## re-probing the same 0.2 m bucket every tick is wasted work. Only used while
+## grounded; airborne agents need a fresh hit to detect the landing surface.
+var _ground_probe_cache_valid: bool = false
+var _ground_probe_cache_key: Vector3i = Vector3i.ZERO
+var _ground_probe_cache_hit: Dictionary = {}
+const GROUND_PROBE_CACHE_HORIZONTAL: float = 0.15
+const GROUND_PROBE_CACHE_VERTICAL: float = 0.4
+## Wall repulsion is smooth relative to walking, so sampling it at 10 Hz is
+## visually indistinguishable and removes a large per-tick dictionary lookup.
+var _wall_force_accum: float = 0.0
+var _wall_force_dirty: bool = true
+## Sprite animation runs at 5 FPS; updating its visual state every physics tick
+## is unnecessary. The transform still follows the body every frame.
+var _sprite_update_accum: float = 0.0
 
 var _stuck_strikes: int = 0
 var _stuck_sample_index: int = -1
@@ -217,11 +336,51 @@ var _sprite_hurt_tween: Tween = null
 var _distance_travelled: float = 0.0
 var _stuck_time_total: float = 0.0
 var _peak_density: float = 0.0
+var _peak_contact_force: float = 0.0
 var _last_position: Vector3 = Vector3.ZERO
 var _has_last_position: bool = false
 
+# --- Run measurement state -------------------------------------------------
+## Number of route/target reassessments (each emitted route event + failures).
+var route_changes: int = 0
+## Number of times the chosen destination exit changed.
+var route_switch_count: int = 0
+## Monotonic id for the current route; 0 = no evacuation route assigned yet.
+var route_id: int = 0
+var destination_exit_id: String = ""
+var destination_exit_name: String = ""
+var last_route_reason: String = ""
+
+## External assignment override. When active, the agent keeps this exit instead
+## of re-running the local logit choice. Set only through
+## set_optimizer_assignment(); cleared on rejection, failure, unavailability,
+## admission or an evacuation-mode change. A pre-movement agent stores the
+## assignment and uses it when its pre-movement delay expires.
+var _optimizer_assignment_active: bool = false
+var _optimizer_assigned_exit_id: String = ""
+var _optimizer_assigned_target: Vector3 = Vector3.ZERO
+## Set by the demo-state importer so the deferred initial action does not
+## overwrite the restored state on the next frame.
+var _imported_demo_state: bool = false
+var last_path_usec: int = 0
+## Finite-difference acceleration over one physics tick, m/s^2.
+var acceleration: Vector3 = Vector3.ZERO
+var _previous_velocity: Vector3 = Vector3.ZERO
+var _route_previous_id: int = 0
+var _route_previous_target: Vector3 = Vector3.ZERO
+var _route_previous_exit_id: String = ""
+var _last_requested_target: Vector3 = Vector3.ZERO
+var _last_requested_exit_id: String = ""
+var _pending_route_reason: String = ""
+var _pending_route_started_usec: int = 0
+var _spawned_at_sim: float = -1.0
+var _evacuated_at_sim: float = -1.0
+
 const LOGIC_TICK_RATE: float = 0.15
 const FALL_CHECK_INTERVAL: float = 0.25
+## Substeps used to integrate the social force acceleration. Three substeps at
+## a 30 Hz physics rate gives an effective 90 Hz integration for contact.
+const SFM_SUBSTEPS: int = 3
 ## A pushed agent this far off the path requests a fresh path instead of
 ## walking backwards to the waypoint it already passed.
 const CORNER_REPATH_DISTANCE: float = 0.75
@@ -242,6 +401,15 @@ var _detour_from_flow: bool = false
 var _detour_previous_length: float = -1.0
 var _stuck_sample_flow_cell: Vector3i = Vector3i.ZERO
 var _has_stuck_flow_cell: bool = false
+## True while the chunk containing this agent is streamed out. The agent is
+## hidden and its physics is suspended so it cannot fall through missing floor.
+var _streamed_out: bool = false
+## Monotonic id attached to every grid path request. A late callback from an
+## older request must not overwrite a route assigned after it was queued.
+var _path_request_serial: int = 0
+## Seconds spent in SEEKING_EVAC without any route at all. The watchdog below
+## re-routes when this elapses instead of leaving the agent standing in place.
+var _route_idle_time: float = 0.0
 
 ## Higher instance IDs yield to lower IDs when two agents block each other.
 const YIELD_DETECT_RADIUS: float = 1.0
@@ -255,11 +423,23 @@ const CONGESTION_REPATH_INTERVAL: float = 2.0
 const CONGESTION_CHECK_INTERVAL: float = 0.35
 const CONGESTION_PROBE_CELL_SCALE: float = 0.9
 const FLOW_STUCK_SAMPLE: int = -2
+## How long a SEEKING_EVAC agent may have no route before it re-routes itself.
+## Some congestion paths leave an agent with no usable route (a detour request
+## that never lands, a stale flow field, a walked-out path), and the brain has
+## no other branch that would recover it.
+const ROUTE_RECOVERY_SECONDS: float = 2.5
+## A queued path request that never calls back must not block recovery forever.
+## Kept generous: a large crowd can leave requests queued behind the per-frame
+## path budget for several seconds.
+const PATH_REQUEST_TIMEOUT_USEC: int = 8000000
 
 ## evacuation point position -> unix-style engine time when it may be tried again
 var _failed_evac_points: Dictionary = {}
 var _last_evac_target: Vector3 = Vector3.ZERO
 var _awaiting_evac_confirmation: bool = false
+var _exit_hold_active: bool = false
+var _exit_hold_exit: Node = null
+var _exit_hold_deadline: float = 0.0
 var has_evacuation_target: bool = false
 var _evacuation_failures: int = 0
 
@@ -270,6 +450,18 @@ var _evacuation_failures: int = 0
 
 func _ready() -> void:
 	add_to_group("npc")
+	# Identity and randomness are assigned before anything else so every
+	# behaviour derived from them is reproducible for a given run seed.
+	agent_serial = GlobalData.claim_agent_serial()
+	_rng.seed = hash([GlobalData.rng_seed, agent_serial])
+	_spawned_at_sim = GlobalData.sim_now()
+	_foot_offset = _measure_foot_offset()
+	_ground_query = PhysicsRayQueryParameters3D.new()
+	_ground_query.collision_mask = 1
+	_ground_query.collide_with_bodies = true
+	_ground_query.collide_with_areas = false
+	_refresh_ground_exclusions()
+	_refresh_movement_mode()
 	_apply_collision_policy()
 
 	crowd_manager = get_node_or_null("/root/CrowdManager")
@@ -281,6 +473,7 @@ func _ready() -> void:
 
 	_sanitize_agent_settings()
 	_refresh_derived_stats()
+	_sample_pre_movement()
 	_apply_visual_mode()
 
 	if evacuation_manager and evacuation_manager.has_method("register_npc"):
@@ -296,7 +489,10 @@ func _ready() -> void:
 		)
 
 	is_evacuee = GlobalData.evacuation_mode
-	logic_tick_timer = randf_range(0.0, LOGIC_TICK_RATE)
+	# Pre-movement: the agent stays IDLE until this timer expires. IDLE is
+	# ticked by _process_npc_brain, so a pause or a hitch does not shorten it.
+	wait_timer = _pre_movement_delay
+	logic_tick_timer = _rng.randf_range(0.0, LOGIC_TICK_RATE)
 	call_deferred("_begin_initial_action")
 
 
@@ -304,7 +500,16 @@ func _begin_initial_action() -> void:
 	# Allow the scene and navigation nodes to finish their current setup.
 	await get_tree().process_frame
 
+	if _imported_demo_state:
+		# The demo importer restored a concrete state (possibly pre-movement or
+		# already seeking an exit). Running the normal opening choice here would
+		# overwrite it one frame later.
+		return
+
 	if not is_inside_tree() or current_state == State.DEAD:
+		return
+
+	if wait_timer > 0.0:
 		return
 
 	choose_next_action()
@@ -318,6 +523,155 @@ func apply_agent_overrides(overrides: Dictionary) -> void:
 	_sanitize_agent_settings()
 	_refresh_derived_stats()
 	_apply_visual_mode()
+
+
+## Best-effort restore from a recorded demo tick. This preserves identity,
+## position, chosen exit, speed, pre-movement remainder and the measurement
+## counters that the recorder captures. Route geometry, queue membership and
+## contact state are rebuilt by the normal simulation after the import.
+func apply_demo_state(state: Dictionary) -> void:
+	if state.is_empty():
+		return
+
+	_imported_demo_state = true
+
+	var restored_serial: int = int(state.get("serial", agent_serial))
+	if restored_serial > 0:
+		agent_serial = restored_serial
+		_rng.seed = hash([GlobalData.rng_seed, agent_serial])
+
+	var restored_position: Vector3 = state.get(
+		"position", global_position
+	)
+	global_position = restored_position
+	_last_position = restored_position
+	_has_last_position = true
+	velocity = state.get("velocity", Vector3.ZERO)
+	acceleration = state.get("acceleration", Vector3.ZERO)
+
+	var recorded_speed: float = float(state.get("desired_speed", 0.0))
+
+	if recorded_speed > 0.0:
+		desired_speed = maxf(0.1, recorded_speed)
+
+	is_evacuee = bool(state.get("is_evacuee", is_evacuee))
+	contact_force = maxf(0.0, float(state.get("contact_force", 0.0)))
+	local_density = maxf(0.0, float(state.get("density", 0.0)))
+
+	_distance_travelled = maxf(0.0, float(state.get("distance", 0.0)))
+	_peak_density = maxf(
+		local_density, float(state.get("peak_density", 0.0))
+	)
+	_peak_contact_force = maxf(
+		contact_force, float(state.get("peak_contact_force", 0.0))
+	)
+	route_changes = maxi(0, int(state.get("route_changes", 0)))
+	route_switch_count = maxi(0, int(state.get("route_switches", 0)))
+
+	var spawned_at: float = float(state.get("spawned_at", -1.0))
+	if spawned_at >= 0.0:
+		_spawned_at_sim = spawned_at
+
+	_reset_stuck()
+	_stuck_time_total = maxf(0.0, float(state.get("stuck_time", 0.0)))
+	_stuck_strikes = maxi(0, int(state.get("stuck_strikes", 0)))
+
+	var pre_delay: float = maxf(0.0, float(state.get("pre_movement_delay", 0.0)))
+	var pre_wait: float = maxf(0.0, float(state.get("pre_movement_wait", 0.0)))
+	var was_pre_movement: bool = String(state.get("status", "")) == "pre_movement"
+
+	if pre_delay > 0.0:
+		_pre_movement_delay = pre_delay
+
+		if was_pre_movement:
+			_pre_movement_elapsed = clampf(pre_wait, 0.0, pre_delay)
+			_has_started_moving = false
+			wait_timer = maxf(pre_delay - _pre_movement_elapsed, 0.0)
+		else:
+			_pre_movement_elapsed = pre_delay
+			_has_started_moving = true
+			wait_timer = 0.0
+	else:
+		_pre_movement_delay = 0.0
+		_pre_movement_elapsed = 0.0
+		_has_started_moving = true
+		wait_timer = 0.0
+
+	clear_optimizer_assignment()
+	has_evacuation_target = false
+
+	var recorded_state: int = int(state.get("state", State.IDLE))
+	var exit_id: String = String(state.get("exit_id", ""))
+	var exit_target: Vector3 = state.get("destination", Vector3.ZERO)
+
+	if exit_target == Vector3.ZERO and not exit_id.is_empty():
+		exit_target = _live_exit_target(exit_id)
+
+	var has_exit: bool = (
+		not exit_id.is_empty() and exit_target != Vector3.ZERO
+	)
+
+	if was_pre_movement:
+		current_state = State.IDLE
+	elif recorded_state == State.WANDERING:
+		# A recorded wanderer did not have a destination yet. Let the normal
+		# brain choose a fresh one after a short delay.
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = _rng.randf_range(0.1, 0.5)
+	elif recorded_state == State.SEEKING_EVAC or recorded_state == State.ARRIVED:
+		current_state = State.SEEKING_EVAC
+	elif recorded_state == State.IDLE:
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = 0.0
+	else:
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = 0.0
+
+	if has_exit and not was_pre_movement:
+		var used_optimizer: bool = bool(state.get("optimizer_assigned", false))
+
+		if used_optimizer:
+			set_optimizer_assignment(exit_id, exit_target)
+		else:
+			request_evacuation_target(exit_target, "demo_restore")
+	elif has_exit and bool(state.get("optimizer_assigned", false)):
+		# Pre-movement agents keep an optimizer assignment until their delay
+		# expires, exactly as the live assignment path does.
+		set_optimizer_assignment(exit_id, exit_target)
+
+	if not has_exit and current_state == State.SEEKING_EVAC:
+		# Recorded exit no longer exists in this map. Let the normal choice run
+		# instead of leaving the agent stuck on a missing target.
+		current_state = State.IDLE
+		_has_started_moving = true
+		wait_timer = 0.0
+
+
+## Resolves a recorded exit id to the live EvacPoint position. Missing exits
+## return ZERO so the caller can fall back to the local choice.
+func _live_exit_target(exit_id: String) -> Vector3:
+	if exit_id.is_empty() or get_tree() == null:
+		return Vector3.ZERO
+
+	for node: Node in get_tree().get_nodes_in_group("EvacPoint"):
+		if node == null or not is_instance_valid(node):
+			continue
+
+		if not node.has_method("get_exit_status"):
+			continue
+
+		var status: Dictionary = node.call("get_exit_status")
+
+		if String(status.get("exit_id", "")) != exit_id:
+			continue
+
+		if node is Node3D:
+			return (node as Node3D).global_position
+
+	return Vector3.ZERO
 
 
 func _apply_export_overrides(overrides: Dictionary) -> void:
@@ -341,10 +695,6 @@ func _sanitize_agent_settings() -> void:
 	movement_speed = maxf(0.0, movement_speed)
 	max_extra_speed = maxf(0.0, max_extra_speed)
 	max_extra_lane_offset = maxf(0.0, max_extra_lane_offset)
-	max_extra_separation_radius = maxf(0.0, max_extra_separation_radius)
-	max_extra_separation_push = maxf(0.0, max_extra_separation_push)
-	separation_radius = maxf(0.0, separation_radius)
-	separation_push = maxf(0.0, separation_push)
 	lane_offset_strength = maxf(0.0, lane_offset_strength)
 	movement_rate = maxf(1.0, movement_rate)
 	jump_force = maxf(0.0, jump_force)
@@ -362,42 +712,83 @@ func _sanitize_agent_settings() -> void:
 	crowd_threshold = maxi(0, crowd_threshold)
 	crush_damage_per_sec = maxf(0.0, crush_damage_per_sec)
 	max_neighbors = maxi(1, max_neighbors)
-	max_vertical_neighbor_distance = maxf(
-		0.0,
-		max_vertical_neighbor_distance
-	)
 	sprite_pixel_size = maxf(sprite_pixel_size, 0.0001)
 	sprite_walk_fps = maxf(sprite_walk_fps, 1.0)
 	sprite_rim_strength = clampf(sprite_rim_strength, 0.0, 1.0)
 	sprite_bounce_strength = maxf(sprite_bounce_strength, 0.0)
 	sprite_normal_strength = maxf(sprite_normal_strength, 0.0)
+	body_radius = clampf(body_radius, 0.05, 1.0)
+	body_mass = maxf(1.0, body_mass)
+	relaxation_time = maxf(0.05, relaxation_time)
+	desired_speed_std = maxf(0.0, desired_speed_std)
+	desired_speed_min = maxf(0.05, desired_speed_min)
+	desired_speed_max = maxf(desired_speed_min, desired_speed_max)
+	max_horizontal_speed = maxf(0.5, max_horizontal_speed)
+	kinematic_step_height = maxf(0.1, kinematic_step_height)
+	kinematic_snap_down_height = clampf(
+		kinematic_snap_down_height,
+		0.05,
+		kinematic_step_height
+	)
+	wall_force_update_interval = maxf(0.0, wall_force_update_interval)
+	sprite_update_interval = maxf(0.0, sprite_update_interval)
+	pre_movement_mean = maxf(0.0, pre_movement_mean)
+	pre_movement_sigma = maxf(0.0, pre_movement_sigma)
+	pre_movement_max = maxf(0.0, pre_movement_max)
+	exit_choice_beta_distance = maxf(0.0, exit_choice_beta_distance)
+	exit_choice_beta_queue = maxf(0.0, exit_choice_beta_queue)
+	exit_choice_beta_visible = maxf(0.0, exit_choice_beta_visible)
+	exit_choice_temperature = maxf(0.0, exit_choice_temperature)
 
 
 func _refresh_derived_stats() -> void:
-	actual_movement_speed = maxf(0.0, movement_speed) + randf_range(
-		0.0,
-		maxf(0.0, max_extra_speed)
-	)
-	actual_separation_radius = maxf(0.0, separation_radius) + randf_range(
-		0.0,
-		maxf(0.0, max_extra_separation_radius)
-	)
-	actual_separation_push = maxf(0.0, separation_push) + randf_range(
-		0.0,
-		maxf(0.0, max_extra_separation_push)
-	)
+	# Weidmann-style free-walking speed distribution. The mean is the export
+	# value; the spread is a truncated normal around it.
+	if use_desired_speed_distribution:
+		desired_speed = clampf(
+			maxf(0.0, movement_speed)
+			+ _rng.randfn(0.0, desired_speed_std),
+			desired_speed_min,
+			desired_speed_max
+		)
+	else:
+		desired_speed = clampf(
+			maxf(0.0, movement_speed)
+			+ _rng.randf_range(0.0, maxf(0.0, max_extra_speed)),
+			desired_speed_min,
+			desired_speed_max
+		)
+
+	actual_movement_speed = desired_speed
 
 	var cell_size: float = gridmap.cell_size.x if gridmap else 1.0
 	var effective_lane_strength: float = (
 		maxf(0.0, lane_offset_strength)
-		+ randf_range(0.0, maxf(0.0, max_extra_lane_offset))
+		+ _rng.randf_range(0.0, maxf(0.0, max_extra_lane_offset))
 	)
 
 	lane_offset = (
-		randf_range(-1.0, 1.0)
+		_rng.randf_range(-1.0, 1.0)
 		* effective_lane_strength
 		* cell_size
 	)
+
+
+## Lognormal pre-movement time, truncated at pre_movement_max. A lognormal is
+## the usual empirical shape for "time until the first move" (right-skewed,
+## non-negative). mean is the arithmetic mean of the untruncated distribution.
+func _sample_pre_movement() -> void:
+	_pre_movement_elapsed = 0.0
+	_has_started_moving = false
+
+	if not pre_movement_enabled or pre_movement_mean <= 0.0:
+		_pre_movement_delay = 0.0
+		return
+
+	var sigma: float = pre_movement_sigma
+	var mu: float = log(pre_movement_mean) - 0.5 * sigma * sigma
+	var sample: float = exp(mu + sigma * _rng.randfn(0.0, 1.0))
+	_pre_movement_delay = clampf(sample, 0.0, pre_movement_max)
 
 
 ## Switches between the 3D model + LeanAnimator and the baked sprite sheet.
@@ -534,7 +925,7 @@ func _exit_tree() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if current_state == State.DEAD:
+	if _streamed_out or current_state == State.DEAD:
 		return
 
 	_fall_check_timer -= delta
@@ -544,22 +935,15 @@ func _physics_process(delta: float) -> void:
 			_on_health_depleted()
 			return
 
-	var env_interval: float = minf(
-		maxf(water_query_interval, 0.02),
-		maxf(hazard_query_interval, 0.02)
-	)
-	_environment_accum += delta
-	if _environment_accum + 0.0001 >= env_interval:
-		var elapsed := _environment_accum
-		_environment_accum = 0.0
-		_refresh_environment_sample(elapsed)
-
 	_movement_accum += delta
 	var interval: float = 1.0 / maxf(movement_rate, 1.0)
-	var update_steering: bool = _movement_accum >= interval
+	# The epsilon keeps an exact 30 Hz movement_rate from skipping ticks through
+	# float accumulation, which would otherwise halve the covered distance.
+	var update_steering: bool = _movement_accum + 0.0001 >= interval
 	var step: float = _movement_accum
 	var wants_to_move: bool = false
 	var move_direction: Vector3 = Vector3.ZERO
+	var speed_scale: float = 1.0
 
 	if update_steering:
 		_movement_accum = 0.0
@@ -569,15 +953,15 @@ func _physics_process(delta: float) -> void:
 		# Another character's body is never valid ground: an agent balanced on
 		# someone's head counts as airborne so it cannot walk, hop or steer
 		# from on top of the crowd.
-		var is_grounded: bool = (
-			is_on_floor()
-			and _character_floor_body() == null
-		)
+		var is_grounded: bool = _is_grounded()
 
-		if not is_grounded:
-			velocity.y -= gravity * step
-		elif velocity.y < 0.0:
-			velocity.y = 0.0
+		# Kinematic mode integrates gravity in _move_kinematic(), including
+		# stair support, so it must not double-apply here.
+		if not _uses_kinematic_movement():
+			if not is_grounded:
+				velocity.y -= gravity * step
+			elif velocity.y < 0.0:
+				velocity.y = 0.0
 
 		if _flow_active:
 			if (
@@ -623,82 +1007,26 @@ func _physics_process(delta: float) -> void:
 			_maybe_avoid_congestion(move_direction)
 			_last_move_direction = move_direction.normalized()
 
-		var crowd_adjustment: Vector3 = Vector3.ZERO
-		var speed_scale: float = 1.0
-
 		if _yield_timer > 0.0:
-			# Deadlock yield: back away diagonally so the lower-priority agent
-			# can get through without disabling NPC collision.
+			# Deadlock yield: the lower-priority agent steps aside. The social
+			# force model then resolves the physical squeeze without turning off
+			# NPC-NPC collision.
 			wants_to_move = true
 			move_direction = _yield_direction
 			speed_scale = YIELD_SPEED_SCALE
-		elif wants_to_move and move_direction.length_squared() > 0.001:
-			# Only apply sideways crowd separation while following a path.
-			# This prevents separation forces from directly reversing navigation.
-			var lateral_push: Vector3 = (
-				_crowd_push
-				- move_direction * _crowd_push.dot(move_direction)
-			)
-
-			crowd_adjustment = lateral_push.limit_length(
-				actual_movement_speed * 0.35
-			)
-
-		if not wants_to_move:
+		elif not wants_to_move:
 			_last_move_direction = Vector3.ZERO
 
+		# Direction the solver uses for the anisotropy weight. Zero when the
+		# agent has no goal, which makes it isotropic (and therefore easier to
+		# push around) while queueing.
+		_desired_direction = Vector3.ZERO
+
+		if wants_to_move and move_direction.length_squared() > 0.0001:
+			_desired_direction = move_direction.normalized()
+
 		var desired_velocity: Vector3 = (
-<<<<<<< Updated upstream
-			move_direction * actual_movement_speed * speed_scale
-			+ crowd_adjustment
-		)
-
-		if is_grounded and desired_velocity.length_squared() > 0.01:
-			desired_velocity = _guard_ledge(
-				desired_velocity,
-				move_direction
-			)
-
-		if is_grounded:
-			if desired_velocity.length_squared() > 0.01:
-				velocity.x = lerpf(
-					velocity.x,
-					desired_velocity.x,
-					15.0 * step
-				)
-				velocity.z = lerpf(
-					velocity.z,
-					desired_velocity.z,
-					15.0 * step
-				)
-
-				var look_direction: Vector3 = Vector3(
-					velocity.x,
-					0.0,
-					velocity.z
-				)
-
-				if look_direction.length_squared() > 0.1:
-					look_at(global_position + look_direction, Vector3.UP)
-			else:
-				velocity.x = lerpf(velocity.x, 0.0, 15.0 * step)
-				velocity.z = lerpf(velocity.z, 0.0, 15.0 * step)
-		else:
-			velocity.x = lerpf(
-				velocity.x,
-				desired_velocity.x,
-				6.0 * step
-			)
-			velocity.z = lerpf(
-				velocity.z,
-				desired_velocity.z,
-				6.0 * step
-			)
-=======
-			_desired_direction
-			* actual_movement_speed
-			* speed_scale
-			* _water_speed_scale()
+			_desired_direction * actual_movement_speed * speed_scale
 		)
 
 		_update_wall_force(step)
@@ -707,32 +1035,43 @@ func _physics_process(delta: float) -> void:
 			desired_velocity,
 			is_grounded
 		)
-		_apply_water_drag(delta)
->>>>>>> Stashed changes
 
 	# Movement runs every physics tick. Steering may run at movement_rate, but
-	# move_and_slide() always integrates with the physics delta; skipping a tick
+	# the integrator always advances by the physics delta; skipping a tick
 	# silently halves the distance the NPC can cover.
 	var pre_move_position: Vector3 = global_position
-	var pre_move_grounded: bool = is_on_floor()
+	var pre_move_grounded: bool = _is_grounded()
 
-	# Agents never stand on other characters (or the player): a body balanced
-	# on someone else's collider slides off instead of becoming a step.
-	_slide_off_character_floor(delta)
-
-	move_and_slide()
-	_keep_on_walkable_ground(pre_move_position, pre_move_grounded)
+	if _uses_kinematic_movement():
+		_move_kinematic(delta)
+	else:
+		# Agents never stand on other characters (or the player): a body
+		# balanced on someone else's collider slides off instead of becoming
+		# a step.
+		_slide_off_character_floor(delta)
+		move_and_slide()
+		_keep_on_walkable_ground(pre_move_position, pre_move_grounded)
 
 	if realistic_sprites_mode and _sprite_visual != null:
-		_sprite_visual.call("tick", delta)
+		_sprite_update_accum += delta
+
+		if (
+			sprite_update_interval <= 0.0
+			or _sprite_update_accum >= sprite_update_interval
+		):
+			_sprite_visual.call("tick", _sprite_update_accum)
+			_sprite_update_accum = 0.0
 
 	_track_movement_distance()
 
+	# Measurement: acceleration is the change in velocity over this tick. The
+	# SFM integrator writes velocity directly, so this is the effective
+	# kinematic acceleration rather than only the steering force.
+	acceleration = (velocity - _previous_velocity) / maxf(delta, 0.0001)
+	_previous_velocity = velocity
+
 	if update_steering:
-		var grounded_now: bool = (
-			is_on_floor()
-			and _character_floor_body() == null
-		)
+		var grounded_now: bool = _is_grounded()
 		if wants_to_move and grounded_now and _yield_timer <= 0.0:
 			_try_obstacle_hop(move_direction)
 			_update_stuck_detection(step, wants_to_move, grounded_now)
@@ -742,102 +1081,6 @@ func _physics_process(delta: float) -> void:
 		if logic_tick_timer >= LOGIC_TICK_RATE:
 			_process_npc_brain(logic_tick_timer)
 			logic_tick_timer = 0.0
-
-
-<<<<<<< Updated upstream
-=======
-# ---------------------------------------------------------------------------
-# Water and hazards
-# ---------------------------------------------------------------------------
-
-## One query for both systems. HazardWorld folds in the WaterWorld sample; if it
-## is absent, query WaterWorld directly so water still works on its own.
-func _refresh_environment_sample(elapsed: float) -> void:
-	_environment_sample = {}
-	_water_sample = {}
-
-	var hazard_world := get_tree().get_first_node_in_group("hazard_world")
-	var sample: Dictionary = {}
-	if hazard_world != null and hazard_world.has_method("sample_hazard"):
-		var hazard_result: Variant = hazard_world.call(
-			"sample_hazard",
-			global_position + Vector3.UP * 0.9
-		)
-		if hazard_result is Dictionary:
-			sample = hazard_result
-	else:
-		var direct_water := get_tree().get_first_node_in_group("water_world")
-		if direct_water != null and direct_water.has_method("sample_water"):
-			var direct_result: Variant = direct_water.call(
-				"sample_water",
-				global_position + Vector3.UP * 0.9
-			)
-			if direct_result is Dictionary:
-				sample = {"water": direct_result}
-
-	var water_value: Variant = sample.get("water", {})
-	var water: Dictionary = water_value if water_value is Dictionary else {}
-	if water.is_empty():
-		var fallback_water := get_tree().get_first_node_in_group("water_world")
-		if fallback_water != null and fallback_water.has_method("sample_water"):
-			var fallback_result: Variant = fallback_water.call(
-				"sample_water",
-				global_position
-			)
-			if fallback_result is Dictionary:
-				water = fallback_result
-	if not water.is_empty():
-		var surface := float(water.get("surface_y", global_position.y))
-		var submerged := clampf((surface - global_position.y) / 1.8, 0.0, 1.0)
-		water["submerged_fraction"] = submerged
-
-	_environment_sample = sample
-	_water_sample = water
-
-	var in_water := not water.is_empty()
-	if in_water and not _was_in_water:
-		var water_world := get_tree().get_first_node_in_group("water_world")
-		if water_world != null and water_world.has_method("spawn_splash"):
-			water_world.call("spawn_splash", global_position, 1.0)
-	_was_in_water = in_water
-
-	# Fire/LPG damage. This is intentionally separate from the water solver;
-	# it only reads the shared hazard sample.
-	if health_component != null and not sample.is_empty():
-		var gas := maxf(0.0, float(sample.get("gas", 0.0)))
-		var heat := maxf(0.0, float(sample.get("heat", 0.0)))
-		var damage := (
-			gas * gas_damage_per_sec
-			+ heat * heat_damage_per_sec
-		) * elapsed
-		if damage > 0.0:
-			health_component.take_damage(damage)
-
-
-func _water_speed_scale() -> float:
-	var submerged := clampf(
-		float(_water_sample.get("submerged_fraction", 0.0)),
-		0.0,
-		1.0
-	)
-	return clampf(1.0 - water_speed_loss * submerged, 0.25, 1.0)
-
-
-func _apply_water_drag(delta: float) -> void:
-	if _water_sample.is_empty():
-		return
-	var submerged := clampf(
-		float(_water_sample.get("submerged_fraction", 0.0)),
-		0.0,
-		1.0
-	)
-	if submerged <= 0.02:
-		return
-	var flow_value: Variant = _water_sample.get("flow", Vector2.ZERO)
-	var flow: Vector2 = flow_value if flow_value is Vector2 else Vector2.ZERO
-	var blend := 1.0 - exp(-water_drag * submerged * maxf(delta, 0.0001))
-	velocity.x = lerpf(velocity.x, flow.x, blend)
-	velocity.z = lerpf(velocity.z, flow.y, blend)
 
 
 ## Social Force Model integration (Helbing & Molnar 1995):
@@ -1074,7 +1317,6 @@ func _move_kinematic(delta: float) -> void:
 		_kinematic_grounded = false
 
 
->>>>>>> Stashed changes
 func _track_movement_distance() -> void:
 	if _has_last_position:
 		var delta_position: Vector3 = global_position - _last_position
@@ -1121,6 +1363,10 @@ func _keep_on_walkable_ground(
 	pre_move_position: Vector3,
 	pre_move_grounded: bool
 ) -> void:
+	if _uses_kinematic_movement():
+		# The kinematic step already refuses unsupported ground.
+		return
+
 	if not pre_move_grounded:
 		return
 
@@ -1354,23 +1600,31 @@ func _request_congestion_detour(
 	if not _detour_from_flow:
 		_detour_previous_length = _remaining_path_length()
 
-	_flow_active = false
-	_flow_wait = 0.0
-
-	# Flow mode has no per-agent path to fall back on, so stop until the detour
-	# arrives. Path mode keeps its current route until the replacement lands.
-	if _detour_from_flow:
-		current_path.clear()
-		path_index = 0
-
+	# Keep the current route (or flow field) active while the replacement is
+	# queued. This used to switch flow mode off and clear the path, so an agent
+	# waiting behind a full path-request queue had neither a route nor a field
+	# and simply stood still in the middle of the jam.
 	is_awaiting_path = true
+	_pending_route_reason = "detour"
+	_pending_route_started_usec = Time.get_ticks_usec()
+	_request_grid_path(grid, global_position, target)
+	return true
+
+
+## Queues an A* request that carries the current request serial, so a callback
+## from a superseded request is ignored instead of clobbering the newer route.
+func _request_grid_path(
+	grid: NavGridMap,
+	start: Vector3,
+	end: Vector3
+) -> void:
+	_path_request_serial += 1
 	grid.request_path(
 		self,
-		global_position,
-		target,
-		_on_path_received
+		start,
+		end,
+		_on_path_received.bind(_path_request_serial)
 	)
-	return true
 
 
 func _advance_waypoint() -> void:
@@ -1435,6 +1689,8 @@ func _request_corner_repath() -> void:
 		return
 
 	_corner_repath_timer = CORNER_REPATH_INTERVAL
+	_pending_route_reason = "corner"
+	_pending_route_started_usec = Time.get_ticks_usec()
 	_repath()
 
 
@@ -1464,7 +1720,7 @@ func _finish_path() -> void:
 			)
 	else:
 		current_state = State.IDLE
-		wait_timer = randf_range(1.0, 3.0)
+		wait_timer = _rng.randf_range(1.0, 3.0)
 
 
 func _complete_flow_arrival() -> void:
@@ -1482,7 +1738,150 @@ func _complete_flow_arrival() -> void:
 			)
 	else:
 		current_state = State.IDLE
-		wait_timer = randf_range(1.0, 3.0)
+		wait_timer = _rng.randf_range(1.0, 3.0)
+
+
+# ============================================================
+# EXIT QUEUE / EVACUATION LIFECYCLE
+# ============================================================
+
+## Called by an EvacPoint when this agent has to wait for an exit service slot
+## or for room in the receiving area. The agent stops navigating and keeps its
+## place in the Active crowd so it still contributes to density and contact
+## force while queueing.
+func begin_exit_hold(exit_point: Node) -> void:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return
+
+	_exit_hold_active = true
+	_exit_hold_exit = exit_point
+	_exit_hold_deadline = (
+		_now_seconds() + maxf(1.0, max_exit_hold_time)
+	)
+	_invalidate_pending_path()
+
+	has_evacuation_target = true
+	current_state = State.ARRIVED
+	_flow_active = false
+	_flow_wait = 0.0
+	is_awaiting_path = false
+	_repath_pending = false
+	current_path.clear()
+	path_index = 0
+	wait_timer = evac_confirm_timeout
+
+
+## The area was left, or the exit was deleted, before service completed. Clear
+## the hold without treating it as an evacuation failure so the agent can pick
+## a route again.
+func on_exit_area_exited() -> void:
+	if not _exit_hold_active or has_meta("evacuated"):
+		return
+
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+
+	if current_state == State.DEAD:
+		return
+
+	_invalidate_pending_path()
+	has_evacuation_target = false
+	current_state = State.IDLE
+	wait_timer = 0.35
+
+
+## The exit rejected this agent (full receiving area or full queue). Put that
+## specific exit on cooldown so the next choice goes elsewhere, but do not count
+## it as a path failure.
+func reject_evacuation(_reason: String = "capacity") -> void:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return
+
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	_invalidate_pending_path()
+	clear_optimizer_assignment()
+
+	if _last_evac_target != Vector3.ZERO:
+		_mark_evacuation_point_failed(_last_evac_target)
+
+	has_evacuation_target = false
+	current_state = State.IDLE
+	current_path.clear()
+	path_index = 0
+	is_awaiting_path = false
+	_flow_active = false
+	_flow_wait = 0.0
+	wait_timer = _rng.randf_range(0.2, 0.8)
+
+
+## Fail-safe used when a queued agent waits longer than max_exit_hold_time.
+## Removes the agent from the exit queue and asks the normal failure path to
+## choose a different exit.
+func resume_evacuation() -> void:
+	if (
+		_exit_hold_exit != null
+		and is_instance_valid(_exit_hold_exit)
+		and _exit_hold_exit.has_method("cancel_agent")
+	):
+		_exit_hold_exit.cancel_agent(self)
+
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	_fail_evacuation()
+
+
+## Marks the agent as successfully evacuated and removes it from every active
+## agent system. The node can stay alive (and visible) afterwards without
+## influencing navigation, crowd density, contact force or run completion.
+func mark_evacuated() -> void:
+	if has_meta("evacuated"):
+		return
+
+	set_meta("evacuated", true)
+	_evacuated_at_sim = GlobalData.sim_now()
+	_invalidate_pending_path()
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	clear_optimizer_assignment()
+	is_evacuee = false
+	has_evacuation_target = false
+	_awaiting_evac_confirmation = false
+	_flow_active = false
+	_flow_wait = 0.0
+	is_awaiting_path = false
+	_repath_pending = false
+	current_path.clear()
+	path_index = 0
+	velocity = Vector3.ZERO
+
+	if is_instance_valid(gridmap):
+		gridmap.cancel_path_requests(self)
+
+	remove_from_group("npc")
+	# The spawner uses the Members group for its live-agent cap; a retained
+	# evacuated agent must not count against future spawns.
+	remove_from_group("Members")
+	collision_layer = 0
+	collision_mask = 0
+	set_physics_process(false)
+	set_process(false)
+
+	if animator != null:
+		animator.set_physics_process(false)
+		animator.set_process(false)
+
+	if _sprite_visual != null:
+		_sprite_visual.set_physics_process(false)
+		_sprite_visual.set_process(false)
+
+
+func is_evacuated() -> bool:
+	return has_meta("evacuated")
 
 
 # ============================================================
@@ -1614,6 +2013,11 @@ func _is_obstacle_jumpable(direction: Vector3) -> bool:
 ## Returns the character whose body this agent is currently standing on, or
 ## null when the floor is world geometry.
 func _character_floor_body() -> CharacterBody3D:
+	if _uses_kinematic_movement():
+		# Kinematic bodies do not collide with each other or the world, so
+		# there are no slide collisions to inspect.
+		return null
+
 	if not is_on_floor():
 		return null
 
@@ -1749,6 +2153,9 @@ func _reset_stuck() -> void:
 
 
 func _restore_layer_2() -> void:
+	if not use_physics_contact:
+		return
+
 	if not _layer_2_disabled:
 		return
 
@@ -1785,6 +2192,9 @@ func _can_restore_npc_collision() -> bool:
 
 
 func _disable_layer_2() -> void:
+	if not use_physics_contact:
+		return
+
 	if not allow_collision_disable:
 		_apply_collision_policy()
 		return
@@ -1794,20 +2204,53 @@ func _disable_layer_2() -> void:
 		collision_mask &= ~(1 << 1)
 
 
-## Keeps NPC-vs-NPC collision enabled when this agent may not disable it.
+## NPC-NPC contact is owned by the Social Force Model by default. Kinematic
+## movement additionally takes the body out of world collision and follows the
+## grid with a downward probe, which is what makes 600 agents affordable.
+## Set use_physics_contact (or use_kinematic_movement = false) to restore
+## engine-level collision.
 func _apply_collision_policy() -> void:
-	if allow_collision_disable:
+	_layer_2_disabled = false
+
+	if _uses_kinematic_movement():
+		collision_mask = 0
 		return
 
-	_layer_2_disabled = false
-	collision_mask |= 1 << 1
+	collision_mask = 1
+
+	if use_physics_contact:
+		collision_mask |= 1 << 1
+
+
+func _refresh_movement_mode() -> void:
+	_kinematic_active = use_kinematic_movement and not use_physics_contact
+	_ground_probe_cache_valid = false
+
+
+func _uses_kinematic_movement() -> bool:
+	return _kinematic_active
+
+
+func _measure_foot_offset() -> float:
+	var shape_node := get_node_or_null("CollisionShape3D") as CollisionShape3D
+
+	if shape_node != null and shape_node.shape is SphereShape3D:
+		return shape_node.position.y - (shape_node.shape as SphereShape3D).radius
+
+	return 0.25
 
 
 func _random_hop(is_grounded: bool) -> void:
+	# Kinematic agents do not collide with the world, so a hop could carry one
+	# through a wall and leave it inside geometry. Hopping was only a workaround
+	# for engine collision, and the solver + repath handle stuck agents instead.
+	if _uses_kinematic_movement():
+		return
+
 	if not allow_jumping or not is_grounded or jump_cooldown_timer > 0.0:
 		return
 
-	var random_angle: float = randf_range(0.0, TAU)
+	var random_angle: float = _rng.randf_range(0.0, TAU)
 
 	velocity.y = jump_force
 	velocity.x = cos(random_angle) * jump_push_force
@@ -1816,10 +2259,11 @@ func _random_hop(is_grounded: bool) -> void:
 
 
 ## Deterministic right-of-way. When two agents block each other, the higher
-## instance ID backs away diagonally for a short time; the lower ID keeps moving.
-## This breaks head-on deadlocks without disabling NPC collision.
+## agent serial backs away diagonally for a short time; the lower serial keeps
+## moving. This breaks head-on deadlocks without disabling NPC collision and,
+## unlike instance IDs, is independent of spawn/engine order.
 func _try_deadlock_yield(blocker: CharacterBody3D = null) -> bool:
-	if not allow_yielding or allow_collision_disable or _yield_timer > 0.0:
+	if not allow_yielding or _yield_timer > 0.0:
 		return false
 
 	if blocker == null:
@@ -1828,7 +2272,14 @@ func _try_deadlock_yield(blocker: CharacterBody3D = null) -> bool:
 	if blocker == null:
 		return false
 
-	if get_instance_id() < blocker.get_instance_id():
+	var other_serial: int = agent_serial
+
+	if blocker.has_method("get_agent_serial"):
+		other_serial = int(blocker.get_agent_serial())
+	elif blocker.has_method("get_instance_id"):
+		other_serial = int(blocker.get_instance_id())
+
+	if agent_serial < other_serial:
 		return false
 
 	var forward: Vector3 = _last_move_direction
@@ -1843,9 +2294,7 @@ func _try_deadlock_yield(blocker: CharacterBody3D = null) -> bool:
 
 	forward = forward.normalized()
 	var side: Vector3 = forward.cross(Vector3.UP)
-	var side_sign: float = (
-		1.0 if (get_instance_id() & 1) == 0 else -1.0
-	)
+	var side_sign: float = 1.0 if (agent_serial & 1) == 0 else -1.0
 	var yield_candidate: Vector3 = (
 		-forward + side * side_sign * 0.8
 	).normalized()
@@ -2024,6 +2473,11 @@ func set_evacuation_mode(enabled: bool) -> void:
 	is_evacuee = enabled
 	has_evacuation_target = false
 	_awaiting_evac_confirmation = false
+	_invalidate_pending_path()
+	clear_optimizer_assignment()
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
 	_flow_active = false
 	_flow_wait = 0.0
 	is_awaiting_path = false
@@ -2052,9 +2506,21 @@ func _process_npc_brain(elapsed_time: float) -> void:
 	if enable_energy and current_state != State.IDLE:
 		energy -= elapsed_time * 0.3
 
-	_update_crowd_push(elapsed_time)
+	_update_crowd_health(elapsed_time)
 
 	if current_state == State.ARRIVED:
+		# A finite exit holds the agent while it waits for a service slot or
+		# receiving-area capacity. The hold must outlive the normal arrival
+		# confirmation timeout, otherwise the agent would abandon its place in
+		# the queue and walk away.
+		if _exit_hold_active:
+			if (
+				_exit_hold_deadline > 0.0
+				and _now_seconds() >= _exit_hold_deadline
+			):
+				resume_evacuation()
+			return
+
 		wait_timer -= elapsed_time
 
 		if wait_timer <= 0.0:
@@ -2062,13 +2528,19 @@ func _process_npc_brain(elapsed_time: float) -> void:
 			# another evacuation attempt instead of wandering forever.
 			has_evacuation_target = false
 			current_state = State.IDLE
-			wait_timer = randf_range(1.0, 3.0)
+			wait_timer = _rng.randf_range(1.0, 3.0)
 
 		return
 
 	match current_state:
 		State.IDLE:
 			wait_timer -= elapsed_time
+
+			if not _has_started_moving:
+				_pre_movement_elapsed = minf(
+					_pre_movement_elapsed + elapsed_time,
+					_pre_movement_delay
+				)
 
 			if wait_timer <= 0.0:
 				if _awaiting_evac_confirmation:
@@ -2079,72 +2551,183 @@ func _process_npc_brain(elapsed_time: float) -> void:
 		State.WANDERING:
 			if _should_evacuate() or has_evacuation_target:
 				# Recover agents left wandering with a stale evacuation target.
+				# The pending wander request must not land as an evacuation
+				# route, so drop it before choosing the exit.
+				_invalidate_pending_path()
 				has_evacuation_target = false
 				current_state = State.SEEKING_EVAC
 				current_path.clear()
 				path_index = 0
 				_route_to_closest_evac_point()
+			else:
+				_update_wander_watchdog(elapsed_time)
+
+		State.SEEKING_EVAC:
+			_update_route_watchdog(elapsed_time)
 
 
-func _update_crowd_push(elapsed_time: float) -> void:
-	var push: Vector3 = Vector3.ZERO
-
-	if crowd_manager == null:
-		_crowd_push = Vector3.ZERO
+## Crush injury model. The crowd solver measures density inside the density
+## radius; crowd_threshold is still expressed in "people nearby", so convert it
+## to persons/m^2 with the same area the solver uses. Damage is linear in the
+## excess density, which is the usual simplification for a crushing load.
+func _update_crowd_health(elapsed_time: float) -> void:
+	if (
+		not enable_crowd_damage
+		or health_component == null
+		or crowd_threshold <= 0
+	):
 		return
 
-	var nearby: Array[CharacterBody3D] = crowd_manager.get_nearby_npcs(
-		global_position,
-		max_neighbors
+	var density_radius: float = 1.4
+	var configured_radius: Variant = crowd_manager.get("density_radius") if crowd_manager != null else null
+
+	if configured_radius != null:
+		density_radius = float(configured_radius)
+
+	var threshold_density: float = (
+		float(crowd_threshold) / (PI * density_radius * density_radius)
 	)
 
-	var neighbor_count: int = nearby.size() - 1
+	if threshold_density <= 0.0 or local_density <= threshold_density:
+		return
 
-	if (
-		enable_crowd_damage
-		and neighbor_count >= crowd_threshold
-		and health_component
-	):
-		health_component.take_damage(
-			crush_damage_per_sec * elapsed_time
-		)
+	var excess_ratio: float = (
+		local_density / threshold_density - 1.0
+	)
+	health_component.take_damage(
+		crush_damage_per_sec * elapsed_time * excess_ratio
+	)
 
-	if actual_separation_push > 0.0:
-		for other: CharacterBody3D in nearby:
-			if other == self or not is_instance_valid(other):
-				continue
 
-			var difference: Vector3 = (
-				global_position - other.global_position
-			)
+# ============================================================
+# SOCIAL FORCE MODEL INTERFACE
+# ============================================================
 
-			if (
-				absf(difference.y)
-				> max_vertical_neighbor_distance
-			):
-				continue
+## Called by CrowdManager once per solve with the net acceleration (m/s^2)
+## from every other agent, the summed contact normal force (N), the overlap
+## count and the measured density. Pairwise forces are accumulated centrally
+## so both agents are updated in the same pass, with no neighbour cap.
+func apply_social_forces(
+	social_acceleration: Vector3,
+	contact_force_sum: float,
+	overlaps: int,
+	density: float
+) -> void:
+	_social_accel = social_acceleration
+	contact_force = contact_force_sum
+	contact_overlaps = overlaps
+	_peak_contact_force = maxf(_peak_contact_force, contact_force_sum)
+	set_local_density(density)
 
-			difference.y = 0.0
 
-			var distance_squared: float = difference.length_squared()
+func get_body_radius() -> float:
+	return body_radius
 
-			if (
-				distance_squared
-				> actual_separation_radius * actual_separation_radius
-			):
-				continue
 
-			var distance: float = sqrt(distance_squared)
+func get_body_mass() -> float:
+	return body_mass
 
-			if distance < 0.001:
-				continue
 
-			var falloff: float = (
-				1.0 - distance / actual_separation_radius
-			)
-			push += (difference / distance) * falloff
+func get_desired_direction() -> Vector3:
+	return _desired_direction
 
-	_crowd_push = push * actual_separation_push
+
+func get_flat_velocity() -> Vector3:
+	return Vector3(velocity.x, 0.0, velocity.z)
+
+
+func get_agent_serial() -> int:
+	return agent_serial
+
+
+## Called by ChunkStreamer when the chunk under this agent loads/unloads.
+## Suspending the body prevents the missing-floor fall while the world is out.
+func set_chunk_streamed(loaded: bool) -> void:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return
+
+	var should_stream: bool = not loaded
+
+	if _streamed_out == should_stream:
+		return
+
+	_streamed_out = should_stream
+	visible = loaded
+	velocity = Vector3.ZERO
+	_desired_direction = Vector3.ZERO
+	_social_accel = Vector3.ZERO
+	_wall_accel = Vector3.ZERO
+	set_physics_process(loaded)
+	set_process(loaded)
+
+	if loaded:
+		_ground_probe_cache_valid = false
+		_fall_check_timer = 0.0
+		_reset_stuck()
+	else:
+		_has_stuck_flow_cell = false
+
+
+func is_streamed_out() -> bool:
+	return _streamed_out
+
+
+func get_desired_speed() -> float:
+	return desired_speed
+
+
+## Complete behavioural parameter set for run metadata. Keep this list aligned
+## with the exports above; the comparer needs to know what differed between runs.
+func get_behavior_parameters() -> Dictionary:
+	return {
+		"movement_speed": movement_speed,
+		"max_extra_speed": max_extra_speed,
+		"max_extra_lane_offset": max_extra_lane_offset,
+		"lane_offset_strength": lane_offset_strength,
+		"use_desired_speed_distribution": use_desired_speed_distribution,
+		"desired_speed_std": desired_speed_std,
+		"desired_speed_min": desired_speed_min,
+		"desired_speed_max": desired_speed_max,
+		"body_radius": body_radius,
+		"body_mass": body_mass,
+		"relaxation_time": relaxation_time,
+		"social_force_scale": social_force_scale,
+		"wall_force_scale": wall_force_scale,
+		"wall_force_update_interval": wall_force_update_interval,
+		"use_physics_contact": use_physics_contact,
+		"use_kinematic_movement": use_kinematic_movement,
+		"kinematic_step_height": kinematic_step_height,
+		"kinematic_snap_down_height": kinematic_snap_down_height,
+		"max_horizontal_speed": max_horizontal_speed,
+		"allow_jumping": allow_jumping,
+		"allow_yielding": allow_yielding,
+		"waypoint_arrival_distance": waypoint_arrival_distance,
+		"stuck_time_threshold": stuck_time_threshold,
+		"stuck_progress_ratio": stuck_progress_ratio,
+		"enable_crowd_damage": enable_crowd_damage,
+		"crowd_threshold": crowd_threshold,
+		"crush_damage_per_sec": crush_damage_per_sec,
+		"is_evacuee": is_evacuee,
+		"evac_shortlist_size": evac_shortlist_size,
+		"evac_choice_tolerance": evac_choice_tolerance,
+		"evac_confirm_timeout": evac_confirm_timeout,
+		"max_evacuation_failures": max_evacuation_failures,
+		"failed_evac_point_cooldown": failed_evac_point_cooldown,
+		"max_exit_hold_time": max_exit_hold_time,
+		"pre_movement_enabled": pre_movement_enabled,
+		"pre_movement_mean": pre_movement_mean,
+		"pre_movement_sigma": pre_movement_sigma,
+		"pre_movement_max": pre_movement_max,
+		"exit_choice_beta_distance": exit_choice_beta_distance,
+		"exit_choice_beta_queue": exit_choice_beta_queue,
+		"exit_choice_beta_visible": exit_choice_beta_visible,
+		"exit_choice_familiarity": exit_choice_familiarity,
+		"exit_choice_temperature": exit_choice_temperature,
+	}
+
+
+func get_pre_movement_delay() -> float:
+	return _pre_movement_delay
 
 
 # ============================================================
@@ -2161,6 +2744,9 @@ func _on_damaged(_amount: float) -> void:
 func _on_health_depleted() -> void:
 	current_state = State.DEAD
 	velocity = Vector3.ZERO
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
 
 	if evacuation_manager and evacuation_manager.has_method("notify_npc_died"):
 		evacuation_manager.notify_npc_died(self)
@@ -2179,6 +2765,13 @@ func _is_below_chunk_floor() -> bool:
 		return false
 
 	var chunk: Vector2i = grid.position_to_chunk(global_position)
+
+	# A streamed-out chunk (or one whose collision is still building) has no
+	# real floor. Do not treat that as a fall; ChunkStreamer suspends the agent
+	# until the chunk returns.
+	if not grid.has_chunk_collision(chunk):
+		return false
+
 	var lowest_y: int = grid.get_chunk_lowest_block_y(chunk)
 
 	# An empty chunk has no local floor; use the world's zero level so agents
@@ -2212,8 +2805,10 @@ func _get_gridmap() -> NavGridMap:
 
 
 func choose_next_action() -> void:
-	if is_awaiting_path or current_state == State.DEAD:
+	if is_awaiting_path or current_state == State.DEAD or has_meta("evacuated"):
 		return
+
+	_has_started_moving = true
 
 	if _should_evacuate() or has_evacuation_target:
 		# A stale target with no route (for example after all exits briefly
@@ -2231,16 +2826,73 @@ func _should_evacuate() -> bool:
 	return is_evacuee and not has_evacuation_target
 
 
-func request_evacuation_target(target: Vector3) -> void:
-	if current_state == State.DEAD:
+## Applies a global assignment from the optimizer bridge. Returns false when the
+## agent cannot take one (dead, admitted, already in the exit queue).
+##
+## Pre-movement is preserved: the assignment is stored, but the agent keeps its
+## IDLE wait and picks the assigned exit when the delay expires. That lets the
+## optimizer cover the whole population without bypassing the behavioural model.
+func set_optimizer_assignment(exit_id: String, target: Vector3) -> bool:
+	if current_state == State.DEAD or has_meta("evacuated"):
+		return false
+
+	if current_state == State.ARRIVED:
+		return false
+
+	if exit_id.is_empty() or target == Vector3.ZERO:
+		return false
+
+	_optimizer_assignment_active = true
+	_optimizer_assigned_exit_id = exit_id
+	_optimizer_assigned_target = target
+
+	if current_state == State.IDLE and not _has_started_moving:
+		return true
+
+	if is_instance_valid(gridmap):
+		gridmap.cancel_path_requests(self)
+
+	request_evacuation_target(target, "optimizer")
+	return true
+
+
+func clear_optimizer_assignment() -> void:
+	_optimizer_assignment_active = false
+	_optimizer_assigned_exit_id = ""
+	_optimizer_assigned_target = Vector3.ZERO
+
+
+func has_optimizer_assignment() -> bool:
+	return _optimizer_assignment_active
+
+
+func get_optimizer_exit_id() -> String:
+	return _optimizer_assigned_exit_id
+
+
+func get_optimizer_target() -> Vector3:
+	return _optimizer_assigned_target
+
+
+func request_evacuation_target(
+	target: Vector3,
+	reason: String = "destination"
+) -> void:
+	if current_state == State.DEAD or has_meta("evacuated"):
 		return
 
+	# Any detour still queued for the previous route is now stale.
+	_invalidate_pending_path()
+	_route_idle_time = 0.0
 	has_evacuation_target = true
 	_last_evac_target = target
 	current_state = State.SEEKING_EVAC
 	current_path.clear()
 	path_index = 0
 	_flow_wait = 0.0
+	_pending_route_reason = reason
+	_pending_route_started_usec = Time.get_ticks_usec()
+	_emit_destination_changed(target)
 
 	if gridmap:
 		if gridmap.enable_flow_fields:
@@ -2257,15 +2909,11 @@ func request_evacuation_target(target: Vector3) -> void:
 			gridmap.ensure_flow_field_cell(_flow_target_cell)
 			is_awaiting_path = false
 			_reset_stuck()
+			_assign_route(reason, PackedVector3Array(), "flow")
 		else:
 			_flow_active = false
 			is_awaiting_path = true
-			gridmap.request_path(
-				self,
-				global_position,
-				target,
-				_on_path_received
-			)
+			_request_grid_path(gridmap, global_position, target)
 	else:
 		_fail_evacuation()
 		return
@@ -2278,6 +2926,9 @@ func request_evacuation_target(target: Vector3) -> void:
 
 
 func _fail_evacuation() -> void:
+	_invalidate_pending_path()
+	clear_optimizer_assignment()
+
 	if _last_evac_target != Vector3.ZERO:
 		_mark_evacuation_point_failed(_last_evac_target)
 
@@ -2286,11 +2937,14 @@ func _fail_evacuation() -> void:
 			_last_evac_target
 		)
 
+	if route_id > 0 or has_evacuation_target:
+		_assign_route("failed", PackedVector3Array(), "failed")
+
 	has_evacuation_target = false
 	current_state = State.IDLE
 	current_path.clear()
 	path_index = 0
-	wait_timer = randf_range(0.5, 1.5)
+	wait_timer = _rng.randf_range(0.5, 1.5)
 	is_awaiting_path = false
 	_flow_active = false
 	_flow_wait = 0.0
@@ -2324,11 +2978,18 @@ func _mark_evacuation_point_failed(point_position: Vector3) -> void:
 
 
 func _now_seconds() -> float:
-	return Time.get_ticks_msec() / 1000.0
+	return GlobalData.sim_now()
 
 
 func _route_to_closest_evac_point() -> void:
 	if is_awaiting_path or _flow_active or current_state == State.DEAD:
+		return
+
+	# The optimizer bridge owns this agent's choice. Keep the assigned exit
+	# instead of re-running the local logit model; the override is cleared by
+	# rejection, failure, unavailability or admission.
+	if _optimizer_assignment_active and _optimizer_assigned_target != Vector3.ZERO:
+		request_evacuation_target(_optimizer_assigned_target, "optimizer")
 		return
 
 	var grid: NavGridMap = _get_gridmap()
@@ -2353,8 +3014,29 @@ func _route_to_closest_evac_point() -> void:
 		wait_timer = 2.0
 		return
 
-	var my_position: Vector3 = global_position
 	var valid_points: Array[Vector3] = []
+	var seen_positions: Dictionary = {}
+	var unavailable: Dictionary = {}
+
+	# Exits can be disabled at runtime. Collect their quantised keys first so a
+	# root node visited before its Area3D cannot sneak an unavailable exit in.
+	for node: Node in evacuation_nodes:
+		var disabled_exit := node as Node3D
+
+		if (
+			disabled_exit == null
+			or not is_instance_valid(disabled_exit)
+			or not disabled_exit.has_method("is_available")
+			or disabled_exit.is_available()
+		):
+			continue
+
+		var disabled_position: Vector3 = disabled_exit.global_position
+		unavailable[Vector3i(
+			roundi(disabled_position.x * 2.0),
+			roundi(disabled_position.y * 2.0),
+			roundi(disabled_position.z * 2.0)
+		)] = true
 
 	for node: Node in evacuation_nodes:
 		var point := node as Node3D
@@ -2364,53 +3046,146 @@ func _route_to_closest_evac_point() -> void:
 
 		var point_position: Vector3 = point.global_position
 
+		# Each exit is registered twice (root node + trigger area). Deduplicate
+		# by position so a duplicated exit does not win twice in the utility
+		# model.
+		var key := Vector3i(
+			roundi(point_position.x * 2.0),
+			roundi(point_position.y * 2.0),
+			roundi(point_position.z * 2.0)
+		)
+
+		if seen_positions.has(key):
+			continue
+
+		seen_positions[key] = true
+
+		if unavailable.has(key):
+			continue
+
 		if not _is_evacuation_point_failed(point_position):
 			valid_points.append(point_position)
 
 	if valid_points.is_empty():
-		# Every point is temporarily on cooldown. Clear cooldowns so the NPC
-		# can try again rather than becoming permanently unable to evacuate.
-		_failed_evac_points.clear()
+		# Every exit is temporarily on cooldown. Wait for the earliest cooldown
+		# instead of clearing all of them and immediately re-choosing: clearing
+		# made agents alternate between two failed exits every retry.
+		var now: float = _now_seconds()
+		var earliest_ready: float = now + 2.0
+
+		for failed_position: Variant in _failed_evac_points.keys():
+			earliest_ready = minf(
+				earliest_ready, float(_failed_evac_points[failed_position])
+			)
+
 		has_evacuation_target = false
 		_flow_active = false
 		is_awaiting_path = false
 		current_state = State.IDLE
-		wait_timer = 2.0
+		wait_timer = clampf(earliest_ready - now, 0.5, 2.0)
 		return
 
-	valid_points.sort_custom(
-		func(a: Vector3, b: Vector3):
-			return my_position.distance_squared_to(a) < my_position.distance_squared_to(b)
+	request_evacuation_target(
+		_choose_evacuation_point(grid, valid_points)
 	)
 
-	var shortlist_size: int = mini(
-		evac_shortlist_size,
-		valid_points.size()
-	)
 
-	# Straight-line ranking avoids running an A* query per NPC just to
-	# shortlist candidates. The actual route is still found by A* or the
-	# baked flow field when the request is made.
-	var best_distance: float = sqrt(
-		my_position.distance_squared_to(valid_points[0])
-	)
-	var near_best: Array[Vector3] = []
+## Discrete-choice exit model. Agents do not simply take the nearest exit:
+## they weigh route distance, queueing at the exit, whether they can see it,
+## and a persistent (per-agent) familiarity term. Utilities are sampled with a
+## Gumbel softmax, which is equivalent to a multinomial logit over exits, so
+## two agents in the same place need not make the same choice.
+##
+##   U_j = -beta_d * d_j - beta_q * rho_j + beta_v * visible_j + fam_j
+##
+## d_j is the route length in metres (baked flow-field cost when available,
+## otherwise a straight-line estimate scaled by a documented detour factor),
+## rho_j is crowd density in persons/m^2 at the exit, and fam_j is a stable
+## uniform value in [0, familiarity] derived from (agent serial, exit).
+func _choose_evacuation_point(
+	grid: NavGridMap,
+	candidates: Array[Vector3]
+) -> Vector3:
+	var best_point: Vector3 = candidates[0]
+	var best_score: float = -INF
+	var temperature: float = maxf(exit_choice_temperature, 0.001)
 
-	for index: int in shortlist_size:
-		var candidate: Vector3 = valid_points[index]
-		var distance: float = sqrt(
-			my_position.distance_squared_to(candidate)
+	for point: Vector3 in candidates:
+		var path_distance: float = -1.0
+
+		if grid.has_method("get_path_distance"):
+			path_distance = grid.get_path_distance(global_position, point)
+
+		if path_distance < 0.0 or not is_finite(path_distance):
+			# No baked cost field yet: scale the straight line by 1.2 to
+			# approximate route detours without issuing an A* query per exit
+			# per agent.
+			path_distance = (
+				Vector2(
+					point.x - global_position.x,
+					point.z - global_position.z
+				).length() * 1.2
+			)
+
+		var queue_density: float = 0.0
+
+		if crowd_manager != null and crowd_manager.has_method("get_density_per_m2"):
+			queue_density = crowd_manager.get_density_per_m2(point, 2.0)
+
+		var visibility_score: float = 1.0 if _has_line_of_sight(point) else 0.0
+		var familiarity: float = _exit_familiarity(point)
+
+		var utility: float = (
+			-exit_choice_beta_distance * path_distance
+			-exit_choice_beta_queue * queue_density
+			+exit_choice_beta_visible * visibility_score
+			+familiarity
 		)
 
-		if distance <= best_distance * evac_choice_tolerance:
-			near_best.append(candidate)
+		# Gumbel-max sampling: logit noise with the correct extreme-value
+		# distribution, so this is a true multinomial logit draw.
+		var u: float = clampf(_rng.randf(), 0.000001, 0.999999)
+		var gumbel: float = -log(-log(u))
+		var score: float = utility / temperature + gumbel
 
-	var best_point: Vector3 = valid_points[0]
+		if score > best_score:
+			best_score = score
+			best_point = point
 
-	if not near_best.is_empty():
-		best_point = near_best.pick_random()
+	return best_point
 
-	request_evacuation_target(best_point)
+
+## Stable per-agent, per-exit preference. Hashing the serial and the quantised
+## exit position means the value does not depend on iteration order.
+func _exit_familiarity(point: Vector3) -> float:
+	if exit_choice_familiarity <= 0.0:
+		return 0.0
+
+	var key: Array = [
+		agent_serial,
+		roundi(point.x * 10.0),
+		roundi(point.y * 10.0),
+		roundi(point.z * 10.0),
+	]
+	var normalized: float = float(abs(hash(key)) % 1000) / 1000.0
+	return normalized * exit_choice_familiarity
+
+
+func _has_line_of_sight(point: Vector3) -> bool:
+	var world := get_world_3d()
+
+	if world == null:
+		return true
+
+	var query := PhysicsRayQueryParameters3D.create(
+		global_position + Vector3(0.0, 1.2, 0.0),
+		point + Vector3(0.0, 1.0, 0.0),
+		1
+	)
+	query.exclude = [get_rid()]
+	query.collide_with_areas = false
+
+	return world.direct_space_state.intersect_ray(query).is_empty()
 
 
 func _request_random_wander_path() -> void:
@@ -2420,56 +3195,90 @@ func _request_random_wander_path() -> void:
 		return
 
 	is_awaiting_path = true
+	_pending_route_reason = "wander"
+	_pending_route_started_usec = Time.get_ticks_usec()
 
-	var random_angle: float = randf_range(0.0, TAU)
+	var random_angle: float = _rng.randf_range(0.0, TAU)
 	var target_position: Vector3 = global_position + Vector3(
 		cos(random_angle),
 		0.0,
 		sin(random_angle)
-	) * randf_range(5.0, 12.0)
+	) * _rng.randf_range(5.0, 12.0)
 
-	grid.request_path(
-		self,
-		global_position,
-		target_position,
-		_on_path_received
-	)
+	_request_grid_path(grid, global_position, target_position)
 
 
-func _on_path_received(new_path: PackedVector3Array) -> void:
+func _on_path_received(
+	new_path: PackedVector3Array,
+	request_serial: int = -1
+) -> void:
+	# Ignore a callback for a request that a newer one has already superseded.
+	if request_serial >= 0 and request_serial != _path_request_serial:
+		return
+
+	# A path request can complete after the agent was admitted through an exit.
+	# Do not let the late callback revive an inactive, retained agent.
+	if has_meta("evacuated"):
+		return
+
 	is_awaiting_path = false
 
 	var previous_length: float = _detour_previous_length
+	var was_detour_from_flow: bool = _detour_from_flow
+	_detour_from_flow = false
 	_detour_previous_length = -1.0
 
-	if _flow_active:
+	# A stale request can land after the agent was re-routed into a flow field.
+	# That newer assignment wins; the path it asked for is no longer relevant.
+	if _flow_active and not was_detour_from_flow:
 		return
 
+	# With no waypoint left there is nothing to keep moving on. Accepting the
+	# replacement is the only way out, so skip the detour-length preference.
+	var has_remaining_route: bool = (
+		not current_path.is_empty() and path_index < current_path.size()
+	)
+
 	if not new_path.is_empty():
-		if not _detour_route_is_acceptable(new_path, previous_length):
+		if (
+			has_remaining_route
+			and not _detour_route_is_acceptable(new_path, previous_length)
+		):
 			# Keep the existing route and keep moving; the heat still makes
 			# other agents avoid this spot. Retry only after a longer pause.
-			_detour_from_flow = false
 			_congestion_repath_timer = maxf(
 				_congestion_repath_timer,
 				CONGESTION_REPATH_INTERVAL * 1.5
 			)
+			_pending_route_reason = ""
+			_pending_route_started_usec = 0
 			_reset_stuck()
 			return
 
-		_detour_from_flow = false
 		_evacuation_failures = 0
-		_failed_evac_points.clear()
+		_flow_active = false
+		_flow_wait = 0.0
+		# Cooldowns are time-based and must survive a successful path request.
+		# Clearing them here let an agent alternate between two failed exits
+		# every few hundred milliseconds.
 
 		# NavGridMap applies lane_offset to flow-field evacuation paths.
 		current_path = new_path
 		path_index = 0
 		_reset_stuck()
+
+		if current_state == State.SEEKING_EVAC or has_evacuation_target:
+			var reason: String = _pending_route_reason
+			if reason.is_empty():
+				reason = "path"
+			_assign_route(reason, new_path, "path")
+
 		return
 
 	# A congestion detour that failed should not discard a still-usable route.
-	if _detour_from_flow:
-		_detour_from_flow = false
+	# If it came from a flow field, keep the (still active) field so the agent
+	# keeps moving instead of standing in the jam.
+	if was_detour_from_flow:
 		_flow_active = true
 		_flow_wait = 0.0
 
@@ -2480,6 +3289,19 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 	if not current_path.is_empty() and path_index < current_path.size():
 		return
 
+	# No replacement and no waypoint left. If the retained route already
+	# carried the agent to its destination, complete the arrival instead of
+	# failing an evacuation that actually made it.
+	var target: Vector3 = _current_route_target()
+
+	if (
+		target != Vector3.ZERO
+		and global_position.distance_to(target)
+		<= waypoint_arrival_distance + 1.0
+	):
+		_finish_path()
+		return
+
 	if current_state == State.SEEKING_EVAC:
 		_fail_evacuation()
 	else:
@@ -2488,11 +3310,128 @@ func _on_path_received(new_path: PackedVector3Array) -> void:
 		)
 
 
+## True while the agent has somewhere to walk right now: a flow field it can
+## follow, or a path with at least one waypoint left.
+func _has_active_route() -> bool:
+	if _flow_active:
+		return true
+
+	return not current_path.is_empty() and path_index < current_path.size()
+
+
+## SEEKING_EVAC has no brain branch of its own, so an agent that loses its
+## route (a rejected detour, a dropped request, a stale flow field) would stand
+## in place until something external moved it. Re-route after a short grace.
+func _update_route_watchdog(elapsed_time: float) -> void:
+	if _has_active_route():
+		_route_idle_time = 0.0
+		return
+
+	if is_awaiting_path:
+		var started_usec: int = _pending_route_started_usec
+
+		if (
+			started_usec > 0
+			and Time.get_ticks_usec() - started_usec
+			< PATH_REQUEST_TIMEOUT_USEC
+		):
+			return
+
+		# The request never came back, or the grid dropped it. Stop waiting so
+		# the recovery below is allowed to run.
+		is_awaiting_path = false
+		_reset_stuck()
+
+	_route_idle_time += elapsed_time
+
+	if _route_idle_time < ROUTE_RECOVERY_SECONDS:
+		return
+
+	_route_idle_time = 0.0
+	_recover_missing_route()
+
+
+## Same safety net for non-evacuees. A wanderer whose path request is dropped
+## or whose path runs out has no brain branch that would start it moving again.
+func _update_wander_watchdog(elapsed_time: float) -> void:
+	if _has_active_route():
+		_route_idle_time = 0.0
+		return
+
+	if is_awaiting_path:
+		var started_usec: int = _pending_route_started_usec
+
+		if (
+			started_usec > 0
+			and Time.get_ticks_usec() - started_usec
+			< PATH_REQUEST_TIMEOUT_USEC
+		):
+			return
+
+		is_awaiting_path = false
+		_reset_stuck()
+
+	_route_idle_time += elapsed_time
+
+	if _route_idle_time < ROUTE_RECOVERY_SECONDS:
+		return
+
+	_route_idle_time = 0.0
+	choose_next_action()
+
+
+## Rebuilds the evacuation route for an agent that has none. Keeps the
+## optimizer's assigned exit when there is one, otherwise retries the last
+## exit, and falls back to the normal choice when that exit is on cooldown.
+func _recover_missing_route() -> void:
+	if current_state != State.SEEKING_EVAC or is_awaiting_path:
+		return
+
+	var target: Vector3 = _last_evac_target
+
+	if _optimizer_assignment_active and _optimizer_assigned_target != Vector3.ZERO:
+		target = _optimizer_assigned_target
+
+	if target != Vector3.ZERO and not _is_evacuation_point_failed(target):
+		request_evacuation_target(target, "recovery")
+		return
+
+	has_evacuation_target = false
+	_route_to_closest_evac_point()
+
+
+func _clear_pending_detour() -> void:
+	_detour_from_flow = false
+	_detour_previous_length = -1.0
+
+
+## Makes any path request that is already in the grid's queue stale. Called
+## whenever a route assignment supersedes it, so an old detour cannot land on
+## an agent that has since been admitted, retargeted or sent back to IDLE.
+func _invalidate_pending_path() -> void:
+	_path_request_serial += 1
+	_clear_pending_detour()
+
+	# Drop the superseded requests from the queue as well. Under heavy
+	# congestion the path budget is the scarce resource, so computing routes
+	# nobody will use starves the agents that still need one. The timestamp
+	# guard skips the O(queue) scan when this agent has nothing pending.
+	if (
+		is_instance_valid(gridmap)
+		and (_pending_route_started_usec > 0 or is_awaiting_path)
+	):
+		gridmap.cancel_path_requests(self)
+
+
 # ============================================================
 # RUNTIME MAP CHANGES
 # ============================================================
 
 func _on_navigation_changed(changed_cells: Array[Vector3i]) -> void:
+	# Geometry changed: no cached probe or wall sample is trustworthy.
+	_ground_probe_cache_valid = false
+	_wall_force_dirty = true
+
 	if _repath_pending or current_state == State.DEAD:
 		return
 
@@ -2525,7 +3464,7 @@ func _on_navigation_changed(changed_cells: Array[Vector3i]) -> void:
 		):
 			_repath_pending = true
 			get_tree().create_timer(
-				randf_range(0.05, 0.5)
+				_rng.randf_range(0.05, 0.5)
 			).timeout.connect(_repath)
 			return
 
@@ -2564,6 +3503,7 @@ func _repath() -> void:
 
 	if (
 		current_state == State.DEAD
+		or has_meta("evacuated")
 		or is_awaiting_path
 		or not is_inside_tree()
 	):
@@ -2575,10 +3515,26 @@ func _repath() -> void:
 		return
 
 	if current_path.is_empty() or path_index >= current_path.size():
+		# Nothing left to re-path along. Rebuild the route instead of doing
+		# nothing, which used to leave the agent standing indefinitely.
+		if current_state == State.SEEKING_EVAC:
+			_recover_missing_route()
 		return
 
 	if current_state == State.SEEKING_EVAC:
-		_route_to_closest_evac_point()
+		# A navigation refresh must re-path to the same exit, not re-run the
+		# exit choice. Re-choosing here made chunk/nav edits flip agents
+		# between near-equal exits.
+		var keep_target: Vector3 = (
+			_optimizer_assigned_target
+			if _optimizer_assignment_active
+			else _last_evac_target
+		)
+
+		if keep_target != Vector3.ZERO:
+			request_evacuation_target(keep_target, "navigation")
+		else:
+			_route_to_closest_evac_point()
 		return
 
 	var grid: NavGridMap = _get_gridmap()
@@ -2587,13 +3543,354 @@ func _repath() -> void:
 		return
 
 	is_awaiting_path = true
+	_pending_route_reason = "navigation"
+	_pending_route_started_usec = Time.get_ticks_usec()
 
-	grid.request_path(
-		self,
+	_request_grid_path(
+		grid,
 		global_position,
-		current_path[current_path.size() - 1],
-		_on_path_received
+		current_path[current_path.size() - 1]
 	)
+
+
+## Publish a route assignment for recording and expose the destination exit.
+## `mode` is "path", "flow" or "failed". Route ids are monotonic per agent; the
+## recorder uses `previous_route_id` to link before/after disruption snapshots.
+func _emit_destination_changed(target: Vector3) -> void:
+	var identity: Dictionary = _resolve_exit_identity(target)
+	var new_exit_id: String = String(identity.get("exit_id", ""))
+	var changed: bool = (
+		target.distance_to(_last_requested_target) > 0.25
+		or new_exit_id != _last_requested_exit_id
+	)
+
+	if not changed:
+		return
+
+	destination_changed.emit({
+		"agent_serial": agent_serial,
+		"previous_target": _last_requested_target,
+		"previous_exit_id": _last_requested_exit_id,
+		"target": target,
+		"exit_id": new_exit_id,
+		"exit_name": String(identity.get("name", "")),
+		"at": GlobalData.sim_now(),
+	})
+	_last_requested_target = target
+	_last_requested_exit_id = new_exit_id
+
+
+func _assign_route(reason: String, path: PackedVector3Array, mode: String) -> void:
+	var target: Vector3 = _last_evac_target
+	var identity: Dictionary = _resolve_exit_identity(target)
+	var new_exit_id: String = String(identity.get("exit_id", ""))
+	var new_exit_name: String = String(identity.get("name", ""))
+	var switched: bool = (
+		route_id > 0
+		and (
+			target.distance_to(_route_previous_target) > 0.25
+			or new_exit_id != _route_previous_exit_id
+		)
+	)
+	var previous_id: int = route_id
+	var path_usec: int = 0
+
+	if _pending_route_started_usec > 0:
+		path_usec = Time.get_ticks_usec() - _pending_route_started_usec
+
+	_pending_route_started_usec = 0
+	_pending_route_reason = ""
+	route_id += 1
+	route_changes += 1
+
+	if switched:
+		route_switch_count += 1
+
+	_route_previous_id = previous_id
+	_route_previous_target = target
+	_route_previous_exit_id = new_exit_id
+	destination_exit_id = new_exit_id
+	destination_exit_name = new_exit_name
+	last_route_reason = reason
+	last_path_usec = path_usec
+
+	var path_cells: Array = []
+
+	if gridmap != null:
+		for point: Vector3 in path:
+			var cell: Vector3i = gridmap.local_to_map(
+				gridmap.to_local(point)
+			)
+			path_cells.append([cell.x, cell.y, cell.z])
+
+		if path.is_empty():
+			var target_cell: Vector3i = gridmap.local_to_map(
+				gridmap.to_local(target)
+			)
+			path_cells.append([target_cell.x, target_cell.y, target_cell.z])
+
+	var info: Dictionary = {
+		"agent_serial": agent_serial,
+		"agent_id": get_instance_id(),
+		"route_id": route_id,
+		"previous_route_id": previous_id,
+		"reason": reason,
+		"mode": mode,
+		"success": mode != "failed",
+		"evacuating": current_state == State.SEEKING_EVAC or has_evacuation_target,
+		"target": target,
+		"exit_id": destination_exit_id,
+		"exit_name": destination_exit_name,
+		"path": path,
+		"path_cells": path_cells,
+		"path_points": path.size(),
+		"path_usec": path_usec,
+		"route_length": _route_length(path),
+		"remaining_length": _remaining_route_length(),
+		"switched": switched,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
+		"at": GlobalData.sim_now(),
+	}
+	route_changed.emit(info)
+
+
+func _route_length(path: PackedVector3Array) -> float:
+	if path.is_empty():
+		return 0.0
+
+	var from: Vector3 = global_position
+	var total: float = 0.0
+
+	for point: Vector3 in path:
+		total += from.distance_to(point)
+		from = point
+
+	return total
+
+
+func _remaining_route_length() -> float:
+	if _flow_active:
+		return global_position.distance_to(_flow_target)
+
+	if path_index < current_path.size():
+		return _path_length_from_here(current_path)
+
+	return 0.0
+
+
+## Finds the EvacPoint node that owns `point` and returns its stable id/name.
+## Exits are deduplicated by quantised position because the root and Area3D
+## both join the group.
+func _resolve_exit_identity(point: Vector3) -> Dictionary:
+	var tree: SceneTree = get_tree()
+
+	if tree == null or point == Vector3.ZERO:
+		return {}
+
+	var best_distance: float = INF
+	var best: Dictionary = {}
+
+	for node: Node in tree.get_nodes_in_group("EvacPoint"):
+		var exit_node := node as Node3D
+
+		if exit_node == null or not is_instance_valid(exit_node):
+			continue
+
+		if not exit_node.has_method("get_exit_status"):
+			continue
+
+		var distance: float = exit_node.global_position.distance_to(point)
+
+		if distance >= best_distance or distance > 0.5:
+			continue
+
+		var status: Dictionary = exit_node.get_exit_status()
+		best_distance = distance
+		best = {
+			"exit_id": String(status.get("exit_id", exit_node.get_path())),
+			"name": String(status.get("name", exit_node.name)),
+		}
+
+	return best
+
+
+## True when this agent's current evacuation route runs within `radius` of the
+## point. Used by the recorder to count agents affected by an environment edit.
+func is_route_affected(
+	point: Vector3,
+	radius: float = 3.0,
+	vertical_tolerance: float = 2.0
+) -> bool:
+	if has_meta("evacuated") or current_state == State.DEAD:
+		return false
+
+	if _flow_active:
+		var closest: Vector3 = Geometry3D.get_closest_point_to_segment(
+			point,
+			global_position,
+			_flow_target
+		)
+		var difference: Vector3 = closest - point
+		return (
+			Vector2(difference.x, difference.z).length() <= radius
+			and absf(difference.y) <= vertical_tolerance
+		)
+
+	if current_path.is_empty():
+		var direct := global_position - point
+
+		return (
+			Vector2(direct.x, direct.z).length() <= radius
+			and absf(direct.y) <= vertical_tolerance
+		)
+
+	return _path_passes_near(point, radius, vertical_tolerance)
+
+
+## Called by an EvacPoint that was disabled at runtime while this agent was
+## heading for it. Drops the target and lets the normal IDLE timer choose a
+## different exit.
+func on_exit_unavailable(exit_point: Node3D) -> void:
+	if exit_point == null or not is_instance_valid(exit_point):
+		return
+
+	var distance: float = _last_evac_target.distance_to(exit_point.global_position)
+
+	if distance > 1.5:
+		return
+
+	_invalidate_pending_path()
+	clear_optimizer_assignment()
+
+	if _last_evac_target != Vector3.ZERO:
+		_mark_evacuation_point_failed(_last_evac_target)
+
+	if route_id > 0:
+		_assign_route("exit_unavailable", PackedVector3Array(), "failed")
+
+	has_evacuation_target = false
+	current_state = State.IDLE
+	current_path.clear()
+	path_index = 0
+	is_awaiting_path = false
+	_repath_pending = false
+	_flow_active = false
+	_flow_wait = 0.0
+	_exit_hold_active = false
+	_exit_hold_exit = null
+	_exit_hold_deadline = 0.0
+	wait_timer = 0.1
+
+
+## Route snapshot for a recorder that attaches after the route was assigned.
+func get_route_snapshot() -> Dictionary:
+	if route_id == 0:
+		return {}
+
+	var path: PackedVector3Array = (
+		PackedVector3Array() if _flow_active else current_path
+	)
+	var path_cells: Array = []
+
+	if gridmap != null:
+		for point: Vector3 in path:
+			var cell: Vector3i = gridmap.local_to_map(gridmap.to_local(point))
+			path_cells.append([cell.x, cell.y, cell.z])
+
+		if path.is_empty():
+			var target_cell: Vector3i = gridmap.local_to_map(
+				gridmap.to_local(_last_evac_target)
+			)
+			path_cells.append([target_cell.x, target_cell.y, target_cell.z])
+
+	return {
+		"agent_serial": agent_serial,
+		"agent_id": get_instance_id(),
+		"route_id": route_id,
+		"previous_route_id": _route_previous_id,
+		"reason": "snapshot",
+		"mode": "flow" if _flow_active else "path",
+		"success": true,
+		"evacuating": true,
+		"target": _last_evac_target,
+		"exit_id": destination_exit_id,
+		"exit_name": destination_exit_name,
+		"path": path,
+		"path_cells": path_cells,
+		"path_points": path.size(),
+		"path_usec": 0,
+		"route_length": _route_length(path),
+		"remaining_length": _remaining_route_length(),
+		"switched": false,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
+		"at": GlobalData.sim_now(),
+	}
+
+
+## Flat snapshot consumed by the simulator recorder and any future player.
+func get_measurement_state() -> Dictionary:
+	return {
+		"serial": agent_serial,
+		"id": get_instance_id(),
+		"state": int(current_state),
+		"status": _status_name(),
+		"position": global_position,
+		"velocity": velocity,
+		"speed": Vector2(velocity.x, velocity.z).length(),
+		"acceleration": acceleration,
+		"destination": _last_evac_target,
+		"exit_id": destination_exit_id,
+		"exit_name": destination_exit_name,
+		"route_id": route_id,
+		"route_index": path_index,
+		"route_points": current_path.size(),
+		"route_length": _remaining_route_length(),
+		"remaining_length": _remaining_route_length(),
+		"distance": _distance_travelled,
+		"contact_force": contact_force,
+		"density": local_density,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
+		"stuck_strikes": _stuck_strikes,
+		"evacuated": is_evacuated(),
+		"evacuated_at": _evacuated_at_sim,
+		"spawned_at": _spawned_at_sim,
+		"desired_speed": desired_speed,
+		"pre_movement_delay": _pre_movement_delay,
+		"pre_movement_wait": (
+			_pre_movement_delay if _has_started_moving else _pre_movement_elapsed
+		),
+		"stuck_time": _stuck_time_total,
+		"flow_active": _flow_active,
+		"exit_hold": _exit_hold_active,
+		"is_evacuee": is_evacuee,
+		"has_target": has_evacuation_target,
+		"peak_density": _peak_density,
+		"peak_contact_force": _peak_contact_force,
+		"optimizer_assigned": _optimizer_assignment_active,
+		"optimizer_exit_id": _optimizer_assigned_exit_id,
+	}
+
+
+func _status_name() -> String:
+	if has_meta("evacuated"):
+		return "evacuated"
+
+	match current_state:
+		State.DEAD:
+			return "dead"
+		State.ARRIVED:
+			return "queued" if _exit_hold_active else "arrived"
+		State.SEEKING_EVAC:
+			return "seeking_exit"
+		State.WANDERING:
+			return "wandering"
+		State.IDLE:
+			return "pre_movement" if not _has_started_moving else "idle"
+		_:
+			return "active"
 
 
 ## Snapshot consumed by EvacuationManager when this NPC reaches an exit.
@@ -2605,4 +3902,14 @@ func get_evacuation_snapshot() -> Dictionary:
 		"stuck_strikes": _stuck_strikes,
 		"state": int(current_state),
 		"target": _last_evac_target,
+		"agent_serial": agent_serial,
+		"desired_speed": desired_speed,
+		"pre_movement_delay": _pre_movement_delay,
+		"pre_movement_wait": (
+			_pre_movement_delay if _has_started_moving else _pre_movement_elapsed
+		),
+		"peak_contact_force": _peak_contact_force,
+		"contact_overlaps": contact_overlaps,
+		"route_changes": route_changes,
+		"route_switches": route_switch_count,
 	}

@@ -3,11 +3,17 @@ extends RefCounted
 
 ## Generates Minecraft-style isometric item icons for non-block placeables.
 ##
+## This is the shared implementation, not the editor tool. It is a plain
+## `RefCounted` because gameplay code (`hand_item.gd`, `hud.gd`) preloads it for
+## the runtime lookups (`icon_for_scene`, `entry_for_scene`). To generate icons,
+## run `scripts/voxel_item_generator_editor.gd` or use
+## Project > Tools > Content: Generate Voxel Item Icons.
+##
 ## Each icon is rendered from the scene's own meshes/sprites through a
 ## SubViewport, so it keeps the object's silhouette and materials. The icons
 ## live in resources/voxel_items/ and are indexed by resources/voxel_items.json.
 ## Other generators can call `generate_for_scene()` / `generate_all()` and the
-## runtime lookups (`icon_for_scene`, `entry_for_scene`) stay shared.
+## runtime lookups stay shared.
 
 const OUTPUT_DIR := "res://resources/voxel_items/"
 const MANIFEST_PATH := "res://resources/voxel_items.json"
@@ -17,6 +23,7 @@ const SOURCE_FOLDERS: Array[String] = [
 	"res://scenes/placeables/sim/",
 	"res://scenes/placeables/device/",
 	"res://scenes/placeables/foilage/",
+	"res://scenes/placeables/env/",
 ]
 
 static var _manifest: Dictionary = {}

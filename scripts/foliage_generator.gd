@@ -8,8 +8,8 @@ extends EditorScript
 ## texture uses two crossed Sprite3D quads (Minecraft-style grass/plant cross).
 ## One texture pixel equals one block-texture pixel.
 ##
-## After generating scenes, run scripts/voxel_item_generator_tool.gd to refresh
-## the placeable item icons and foliage hand item.
+## After generating scenes, run scripts/voxel_item_generator_editor.gd to
+## refresh the placeable item icons and foliage hand item.
 
 const TEXTURES_FOLDER := "res://textures/placeables/foilage/"
 const OUTPUT_FOLDER := "res://scenes/placeables/foilage/"
@@ -208,13 +208,20 @@ static func _ensure_sprites(
 		root.add_child(_make_sprite("Sprite3D", texture, 0.0, true))
 		return
 
-	var random_yaw := randf_range(0.0, TAU)
+	var random_yaw := _stable_yaw(String(texture.resource_path))
 	root.add_child(
 		_make_sprite("Sprite3D_A", texture, random_yaw + PI * 0.25, false)
 	)
 	root.add_child(
 		_make_sprite("Sprite3D_B", texture, random_yaw - PI * 0.25, false)
 	)
+
+
+## Deterministic yaw so regenerating foliage does not rotate every card and
+## churn the scene files. The texture path is stable for a given asset.
+static func _stable_yaw(seed_text: String) -> float:
+	var value := float(abs(seed_text.hash()) % 100000)
+	return (value / 100000.0) * TAU
 
 
 static func _make_sprite(

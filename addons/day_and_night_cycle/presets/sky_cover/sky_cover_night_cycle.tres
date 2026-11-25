@@ -19,7 +19,6 @@ point_count = 3
 [resource]
 script = ExtResource("1_n66fy")
 colors = SubResource("GradientTexture2D_mbrvl")
-length = 60.0
 light_energy = SubResource("Curve_bh4kp")
 sky_cover = ExtResource("2_26a61")
 metadata/_custom_type_script = "uid://kolqah11th63"

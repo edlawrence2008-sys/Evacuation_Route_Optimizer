@@ -9,6 +9,7 @@ const MENU_LAYER: int = 1 << 9
 const UI_FONT: Font = preload("res://font/dogicapixel.ttf")
 const MENU_FONT: Font = preload("res://font/Pixelta.ttf")
 const MAP_RENDERER := preload("res://scripts/map_renderer.gd")
+const WORLD_GENERATORS := preload("res://scripts/world/WorldGeneratorRegistry.gd")
 
 const UI_SOUND_HOVER := preload("res://sounds/ui/menu_hover.wav")
 const UI_SOUND_CLICK := preload("res://sounds/ui/menu_click.wav")
@@ -22,8 +23,9 @@ const UI_SOUND_TYPE_0 := preload("res://sounds/ui/type_0.wav")
 const UI_SOUND_TYPE_1 := preload("res://sounds/ui/type_1.wav")
 const UI_SOUND_TYPING_FINISH := preload("res://sounds/ui/typing_input_finish.wav")
 const TRANSITION_ACTIONS := [
-	"settings", "stats", "saves", "back_main", "back_settings",
+	"settings", "stats", "saves", "water_tuning", "back_main", "back_settings",
 	"settings_graphics", "settings_gameplay", "settings_audio", "settings_controls",
+	"sky_clouds", "back_graphics", "export_defaults",
 ]
 
 ## Actions shown in the dedicated Controls page. Internal ui_* actions that are
@@ -37,8 +39,17 @@ const BINDABLE_ACTIONS: Array[StringName] = [
 	&"ui_console_toggle",
 ]
 
-@export var save_row_step: float = 0.165
-@export var save_rows_per_page: int = 4
+@export var save_row_step: float = 0.15
+@export var save_rows_per_page: int = 6
+## When true this instance is a saves-only overlay for the main menu: Save and
+## Save As are hidden, Back closes the overlay instead of showing the pause
+## menu's main page, and the tree is never paused.
+@export var saves_only: bool = false
+
+signal saves_closed
+## Emitted when a save (or a new blank map) is about to be loaded, so menu-only
+## music can stop before the game scene takes over.
+signal save_loaded
 
 var _camera: Camera3D = null
 var _player: Node3D = null
@@ -46,6 +57,13 @@ var _hud: CanvasLayer = null
 var _hands: Node3D = null
 var _dialog_layer: CanvasLayer = null
 var _save_manager: Node = null
+var _defaults_layer: CanvasLayer = null
+var _defaults_agent_panel: Node = null
+var _defaults_cap: SpinBox = null
+var _defaults_quota: SpinBox = null
+var _defaults_seed: SpinBox = null
+var _defaults_evac: CheckBox = null
+var _defaults_record: CheckBox = null
 
 @onready var _panel: Node3D = $Panel
 @onready var _dim: MeshInstance3D = $Dim
@@ -53,7 +71,9 @@ var _save_manager: Node = null
 @onready var _section_title: Label3D = $Panel/SectionTitle
 @onready var _main_panel: Node3D = $Panel/MainPanel
 @onready var _settings_panel: Node3D = $Panel/SettingsPanel
+@onready var _water_panel: Node3D = $Panel/WaterPanel
 @onready var _graphics_panel: Node3D = $Panel/GraphicsPanel
+@onready var _sky_clouds_panel: Node3D = $Panel/SkyCloudsPanel
 @onready var _gameplay_panel: Node3D = $Panel/GameplayPanel
 @onready var _audio_panel: Node3D = $Panel/AudioPanel
 @onready var _controls_panel: Node3D = $Panel/ControlsPanel
@@ -72,6 +92,21 @@ var _binding_button: Button = null
 @onready var _save_list: Node3D = $Panel/SavesPanel/SaveList
 @onready var _page_label: Label3D = $Panel/SavesPanel/PageLabel
 @onready var _status_label: Label3D = $Panel/SavesPanel/StatusLabel
+
+# Demos tab (built at runtime in _ensure_demos_ui).
+var _demos_panel: Node3D = null
+var _demo_list: Node3D = null
+var _demo_page_label: Label3D = null
+var _demo_details: Label3D = null
+var _demo_status_label: Label3D = null
+var _demo_folder_button: Node = null
+var _demo_compare_button: Node = null
+var _demos: Array = []
+var _demo_start: int = 0
+var _selected_demo_id: String = ""
+var _demo_folder_filter: String = ""
+var _demo_compare_mode: bool = false
+var _demo_compare_ids: Array[String] = []
 @onready var _stats_map: MeshInstance3D = $Panel/StatisticsPanel/StatsMap
 @onready var _stats_text: Label3D = $Panel/StatisticsPanel/StatsText
 @onready var _thumbnail: MeshInstance3D = $Panel/SavesPanel/Thumbnail
@@ -79,6 +114,8 @@ var _binding_button: Button = null
 
 var _button_scene: PackedScene = preload("res://scenes/menu/pause_button_3d.tscn")
 var _view: String = "main"
+## Last non-main page, restored when the menu is paused again.
+var _last_view: String = "main"
 var _stats_mode: String = "topo"
 var _saves: Array = []
 var _save_start: int = 0
@@ -101,6 +138,10 @@ var _thumbnail_rest_scale: Vector3 = Vector3.ONE
 var _camera_h_rest: float = 0.0
 var _camera_v_rest: float = 0.0
 var _title_root: Node3D = null
+var _title_rest_position: Vector3 = Vector3.ZERO
+var _title_rest_rotation: Vector3 = Vector3.ZERO
+var _cursor_nx: float = 0.0
+var _cursor_ny: float = 0.0
 var _title_letters: Array = []
 var _title_tween: Tween = null
 var _section_tween: Tween = null
@@ -113,6 +154,9 @@ var _ui_players: Array[AudioStreamPlayer] = []
 var _ui_play_index: int = 0
 var _ui_type_toggle: bool = false
 var _new_map_world_type: String = "blank"
+var _new_map_generator_id: String = "heightmap_v1"
+var _new_map_world_size: String = "medium"
+var _new_map_seed: int = 0
 var _pending_new_map_name: String = "New Map"
 
 
@@ -138,6 +182,7 @@ func _ready() -> void:
 		_dim_alpha = _dim_material.albedo_color.a
 	_build_title_letters()
 	_ensure_saves_ui()
+	_ensure_demos_ui()
 	_bind_keybind_ui()
 	_load_input_bindings()
 
@@ -145,9 +190,10 @@ func _ready() -> void:
 	if _save_manager != null:
 		_save_manager.saves_changed.connect(_on_saves_changed)
 
-	get_tree().auto_accept_quit = false
-	if not get_tree().root.close_requested.is_connected(_on_close_requested):
-		get_tree().root.close_requested.connect(_on_close_requested)
+	if not saves_only:
+		get_tree().auto_accept_quit = false
+		if not get_tree().root.close_requested.is_connected(_on_close_requested):
+			get_tree().root.close_requested.connect(_on_close_requested)
 
 	visible = false
 	_stats_map.visible = false
@@ -155,8 +201,6 @@ func _ready() -> void:
 	_show_view("main", false, false)
 
 
-<<<<<<< Updated upstream
-=======
 	if saves_only:
 		_deactivate_all_panels()
 
@@ -193,6 +237,7 @@ func _deactivate_all_panels() -> void:
 	for panel: Node3D in [
 		_main_panel,
 		_settings_panel,
+		_water_panel,
 		_graphics_panel,
 		_gameplay_panel,
 		_audio_panel,
@@ -234,7 +279,6 @@ func _apply_saves_only_layout() -> void:
 	# World Type stays available: New Map needs it in both menus.
 
 
->>>>>>> Stashed changes
 func _setup_ui_audio() -> void:
 	for index in 8:
 		var player := AudioStreamPlayer.new()
@@ -282,8 +326,26 @@ func _input(event: InputEvent) -> void:
 	if not is_inside_tree():
 		return
 
+	# A focused text field gets Escape first. Without this the pause handler
+	# below swallowed it and the field could only be left by clicking away.
+	if _release_text_focus_on_escape(event):
+		get_viewport().set_input_as_handled()
+		return
+
+	if saves_only:
+		if event.is_action_pressed("ui_cancel"):
+			close_saves_only()
+			get_viewport().set_input_as_handled()
+			return
+
 	if _keybind_layer != null and _keybind_layer.visible:
 		_handle_keybind_input(event)
+		return
+
+	if _defaults_layer != null and _defaults_layer.visible:
+		if event.is_action_pressed("ui_cancel"):
+			_defaults_layer.visible = false
+			get_viewport().set_input_as_handled()
 		return
 
 	if _view == "controls":
@@ -309,7 +371,9 @@ func _input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventMouseMotion:
+		_set_cursor_sway(event.position)
 		_set_hover(_button_at(event.position), true)
+		_sway_to(_hovered)
 	elif event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_click_at(event.position)
@@ -323,6 +387,17 @@ func _input(event: InputEvent) -> void:
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				_save_start = mini(maxi(0, _saves.size() - 1), _save_start + 1)
 				_refresh_save_list()
+				get_viewport().set_input_as_handled()
+		elif _demos_panel != null and _demos_panel.visible and event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_demo_start = maxi(0, _demo_start - 1)
+				_refresh_demo_list()
+				get_viewport().set_input_as_handled()
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_demo_start = mini(
+					maxi(0, _filtered_demo_count() - 1), _demo_start + 1
+				)
+				_refresh_demo_list()
 				get_viewport().set_input_as_handled()
 
 
@@ -347,16 +422,27 @@ func set_paused(value: bool) -> void:
 			_hud.visible = false
 
 		_fit_to_camera()
-		_show_view("main", false, false)
+
+		var restore_view: String = (
+			_last_view if not _last_view.is_empty() else "main"
+		)
+		_show_view(restore_view, true, false)
 		_refresh_labels()
 		_set_status("")
 		_play_open_intro()
 		_play_ui(UI_SOUND_TRANSITION, -9.0)
 		get_tree().paused = true
-		_set_hover(_button_at(get_viewport().get_mouse_position()))
+		var mouse_position := get_viewport().get_mouse_position()
+		_set_cursor_sway(mouse_position)
+		_set_hover(_button_at(mouse_position))
+		_sway_to(_hovered)
 	else:
+		if _demo_compare_mode:
+			_cancel_demo_compare(false)
 		_play_ui(UI_SOUND_TRANSITION, -11.0)
 		_reset_sway()
+		if _defaults_layer != null and is_instance_valid(_defaults_layer):
+			_defaults_layer.visible = false
 		get_tree().paused = false
 		Input.set_mouse_mode(_saved_mouse_mode)
 		if _hands != null:
@@ -366,8 +452,40 @@ func set_paused(value: bool) -> void:
 		_set_hover(null)
 
 
+func _release_text_focus_on_escape(event: InputEvent) -> bool:
+	if not event.is_action_pressed("ui_cancel"):
+		return false
+
+	var focus := get_viewport().gui_get_focus_owner()
+
+	if focus == null or not is_instance_valid(focus):
+		return false
+
+	if not (focus is LineEdit or focus is TextEdit):
+		return false
+
+	var node: Node = focus
+	var root := get_tree().root
+
+	while node != null and node != root:
+		if node is Window:
+			return false
+		node = node.get_parent()
+
+	focus.release_focus()
+	return true
+
+
 func is_paused() -> bool:
 	return _paused
+
+
+func is_export_defaults_open() -> bool:
+	return (
+		_defaults_layer != null
+		and is_instance_valid(_defaults_layer)
+		and _defaults_layer.visible
+	)
 
 
 func _fit_to_camera() -> void:
@@ -379,16 +497,25 @@ func _fit_to_camera() -> void:
 
 
 func _show_view(view: String, refresh: bool = true, animate: bool = true) -> void:
+	if view != "demos" and _demo_compare_mode:
+		_cancel_demo_compare(false)
+
 	var previous_view := _view
 	_view = view
+
+	if view != "main":
+		_last_view = view
 	_main_panel.visible = view == "main"
 	_settings_panel.visible = view == "settings"
+	_water_panel.visible = view == "water"
 	_graphics_panel.visible = view == "graphics"
+	_sky_clouds_panel.visible = view == "sky_clouds"
 	_gameplay_panel.visible = view == "gameplay"
 	_audio_panel.visible = view == "audio"
 	_controls_panel.visible = view == "controls"
 	_stats_panel.visible = view == "statistics"
 	_saves_panel.visible = view == "saves"
+	_demos_panel.visible = view == "demos"
 	if _title_root != null:
 		_title_root.visible = view == "main"
 	_main_title.visible = false
@@ -399,40 +526,59 @@ func _show_view(view: String, refresh: bool = true, animate: bool = true) -> voi
 			_section_title.text = "SETTINGS"
 		"graphics":
 			_section_title.text = "GRAPHICS"
+		"sky_clouds":
+			_section_title.text = "SKY & CLOUDS"
 		"gameplay":
 			_section_title.text = "GAMEPLAY"
 		"audio":
 			_section_title.text = "AUDIO"
 		"controls":
 			_section_title.text = "CONTROLS"
+		"water":
+			_section_title.text = "WATER"
 		"statistics":
 			_section_title.text = "STATISTICS"
 		"saves":
 			_section_title.text = "SAVES"
+		"demos":
+			_section_title.text = "DEMOS"
 
 	_set_panel_buttons_active(_main_panel, view == "main")
 	_set_panel_buttons_active(_settings_panel, view == "settings")
+	_set_panel_buttons_active(_water_panel, view == "water")
 	_set_panel_buttons_active(_graphics_panel, view == "graphics")
+	_set_panel_buttons_active(_sky_clouds_panel, view == "sky_clouds")
 	_set_panel_buttons_active(_gameplay_panel, view == "gameplay")
 	_set_panel_buttons_active(_audio_panel, view == "audio")
 	_set_panel_buttons_active(_controls_panel, view == "controls")
 	_set_panel_buttons_active(_stats_panel, view == "statistics")
 	_set_panel_buttons_active(_saves_panel, view == "saves")
+	_set_panel_buttons_active(_demos_panel, view == "demos")
 	_set_hover(null)
 
 	if refresh:
 		if view == "settings":
 			_refresh_labels()
-		elif view == "graphics" or view == "gameplay" or view == "audio":
+		elif (
+			view == "graphics"
+			or view == "sky_clouds"
+			or view == "gameplay"
+			or view == "audio"
+		):
 			_refresh_labels()
 		elif view == "controls":
 			_refresh_labels()
 			_refresh_keybind_page()
+		elif view == "water":
+			_refresh_labels()
 		elif view == "statistics":
 			_refresh_statistics(false)
 		elif view == "saves":
 			_refresh_labels()
 			_refresh_save_list()
+		elif view == "demos":
+			_refresh_labels()
+			_refresh_demo_list()
 
 	if animate:
 		_animate_view(view)
@@ -466,6 +612,8 @@ func _build_title_letters() -> void:
 	_title_root.position = _main_title.position
 	_title_root.rotation = _main_title.rotation
 	_title_root.scale = _main_title.scale
+	_title_rest_position = _title_root.position
+	_title_rest_rotation = _title_root.rotation
 	_panel.add_child(_title_root)
 
 	var cursor: float = -total * 0.5
@@ -494,6 +642,59 @@ func _build_title_letters() -> void:
 		cursor += advance
 
 
+## The Water tab is authored in pause_menu.tscn, but the Godot editor can
+## resave an older copy of the scene over it. Rebuild any missing Water nodes
+## at runtime so the menu never references a null panel.
+func _ensure_water_ui() -> void:
+	var panel := get_node_or_null("Panel") as Node3D
+	if panel == null:
+		return
+
+	var water := panel.get_node_or_null("WaterPanel") as Node3D
+	if water == null:
+		water = Node3D.new()
+		water.name = "WaterPanel"
+		water.visible = false
+		panel.add_child(water)
+	_water_panel = water
+
+	var left := _ensure_water_column(water, "LeftColumn", Vector3(-0.68, 0, 0.035))
+	var right := _ensure_water_column(water, "RightColumn", Vector3(0.68, 0, 0.035))
+
+	_ensure_water_button(left, "FlowStep", "water_flow", "Flow Step", 0.47)
+	_ensure_water_button(left, "Equalize", "water_equalize", "Equalize", 0.265)
+	_ensure_water_button(left, "UpdateBudget", "water_budget", "Update Budget", 0.06)
+	_ensure_water_button(left, "MeshRate", "water_mesh", "Mesh Rate", -0.145)
+	_ensure_water_button(left, "WaveDetail", "water_wave_detail", "Wave Detail", -0.35)
+	_ensure_water_button(left, "WaveCap", "water_wave_cap", "Wave Samples", -0.555)
+
+	_ensure_water_button(right, "Waves", "water_waves", "Waves", 0.47)
+	_ensure_water_button(right, "Splashes", "water_splashes", "Splashes", 0.265)
+	_ensure_water_button(right, "SurfaceDrops", "water_surface_drops", "Surface Drops", 0.06)
+	_ensure_water_button(right, "WakeStyle", "water_wake", "Wake Style", -0.145)
+	_ensure_water_button(right, "ResetWater", "water_reset", "Reset Water", -0.35)
+	_ensure_water_button(
+		water,
+		"WaterBack",
+		"back_settings",
+		"Back",
+		-0.79,
+		Vector3(1.9, 1.2, 1.0)
+	)
+
+	var settings_right := get_node_or_null(
+		"Panel/SettingsPanel/RightColumn"
+	) as Node3D
+	if settings_right != null:
+		_ensure_water_button(
+			settings_right,
+			"WaterTuning",
+			"water_tuning",
+			"Water Tuning",
+			-0.555
+		)
+
+
 ## Reorganizes the authored Settings panel into dedicated pages. Existing
 ## buttons are reparented (with their action bindings intact) so the editor
 ## scene remains the single source for their look and captions.
@@ -506,26 +707,22 @@ func _ensure_settings_ui() -> void:
 	_audio_panel = _ensure_category_panel("AudioPanel")
 	_controls_panel = _ensure_category_panel("ControlsPanel")
 
-	var graphics_left := _ensure_menu_column(
+	var graphics_left := _ensure_water_column(
 		_graphics_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-	var graphics_right := _ensure_menu_column(
+	var graphics_right := _ensure_water_column(
 		_graphics_panel, "RightColumn", Vector3(0.68, 0, 0.035)
 	)
-	var gameplay_left := _ensure_menu_column(
+	var gameplay_left := _ensure_water_column(
 		_gameplay_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-<<<<<<< Updated upstream
-	var audio_left := _ensure_water_column(
-=======
-	var gameplay_right := _ensure_menu_column(
+	var gameplay_right := _ensure_water_column(
 		_gameplay_panel, "RightColumn", Vector3(0.68, 0, 0.035)
 	)
-	var audio_left := _ensure_menu_column(
->>>>>>> Stashed changes
+	var audio_left := _ensure_water_column(
 		_audio_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-	var controls_left := _ensure_menu_column(
+	var controls_left := _ensure_water_column(
 		_controls_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
 
@@ -539,15 +736,10 @@ func _ensure_settings_ui() -> void:
 	_move_settings_button("Reset", graphics_right, -0.36)
 
 	_move_settings_button("AgentLimit", gameplay_left, 0.35)
-	_ensure_menu_button(
+	_ensure_water_button(
 		gameplay_left, "ViewRoll", "view_roll", "View Roll", 0.05
 	)
-<<<<<<< Updated upstream
-
-	_move_settings_button("Volume", audio_left, 0.15)
 	_ensure_water_button(
-=======
-	_ensure_menu_button(
 		gameplay_right,
 		"ExportDefaults",
 		"export_defaults",
@@ -556,22 +748,30 @@ func _ensure_settings_ui() -> void:
 	)
 
 	_move_settings_button("Volume", audio_left, 0.10)
-	_ensure_menu_button(audio_left, "Music", "music", "Music", 0.40)
-	_ensure_menu_button(
->>>>>>> Stashed changes
+	_ensure_water_button(audio_left, "Music", "music", "Music", 0.40)
+	_ensure_water_button(
 		controls_left, "Keybinds", "keybinds", "Keybinds", 0.15
 	)
 
-	var hub_left := _ensure_menu_column(
+	var water_right := _water_panel.get_node_or_null("RightColumn") as Node3D
+	if water_right != null:
+		_move_settings_button("Water", water_right, -0.555)
+		if water_right.get_node_or_null("Water") == null:
+			_ensure_water_button(
+				water_right, "Water", "water", "Water FX", -0.555
+			)
+
+	var hub_left := _ensure_water_column(
 		_settings_panel, "HubLeft", Vector3(-0.68, 0, 0.035)
 	)
-	var hub_right := _ensure_menu_column(
+	var hub_right := _ensure_water_column(
 		_settings_panel, "HubRight", Vector3(0.68, 0, 0.035)
 	)
-	_ensure_menu_button(hub_left, "Graphics", "settings_graphics", "Graphics", 0.35)
-	_ensure_menu_button(hub_left, "Gameplay", "settings_gameplay", "Gameplay", 0.05)
-	_ensure_menu_button(hub_left, "Controls", "settings_controls", "Controls", -0.25)
-	_ensure_menu_button(hub_right, "Audio", "settings_audio", "Audio", 0.35)
+	_ensure_water_button(hub_left, "Graphics", "settings_graphics", "Graphics", 0.35)
+	_ensure_water_button(hub_left, "Gameplay", "settings_gameplay", "Gameplay", 0.05)
+	_ensure_water_button(hub_left, "Controls", "settings_controls", "Controls", -0.25)
+	_ensure_water_button(hub_right, "Audio", "settings_audio", "Audio", 0.35)
+	_move_settings_button("WaterTuning", hub_right, 0.05)
 	var settings_back := _settings_panel.get_node_or_null("SettingsBack") as Node3D
 	if settings_back != null:
 		settings_back.position = Vector3(0.0, -0.55, 0.035)
@@ -584,7 +784,7 @@ func _ensure_settings_ui() -> void:
 		[_controls_panel, "ControlsBack", -0.15],
 	]:
 		var panel: Node3D = entry[0]
-		_ensure_menu_button(
+		_ensure_water_button(
 			panel,
 			String(entry[1]),
 			"back_settings",
@@ -796,16 +996,16 @@ func _handle_keybind_input(event: InputEvent) -> void:
 			)
 			if code != 0:
 				var binding := InputEventKey.new()
-				binding.physical_keycode = code
+				binding.physical_keycode = code as Key
 				_apply_binding(binding)
 		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseButton and event.pressed:
 		var mouse_event := event as InputEventMouseButton
-		var binding := InputEventMouseButton.new()
-		binding.button_index = mouse_event.button_index
-		_apply_binding(binding)
+		var mouse_binding := InputEventMouseButton.new()
+		mouse_binding.button_index = mouse_event.button_index
+		_apply_binding(mouse_binding)
 		get_viewport().set_input_as_handled()
 
 
@@ -871,12 +1071,12 @@ func _load_input_bindings() -> void:
 			var data: Dictionary = entry
 			if String(data.get("type", "")) == "key":
 				var key_event := InputEventKey.new()
-				key_event.physical_keycode = int(data.get("physical", 0))
-				key_event.keycode = int(data.get("key", 0))
+				key_event.physical_keycode = int(data.get("physical", 0)) as Key
+				key_event.keycode = int(data.get("key", 0)) as Key
 				InputMap.action_add_event(action, key_event)
 			elif String(data.get("type", "")) == "mouse":
 				var mouse_event := InputEventMouseButton.new()
-				mouse_event.button_index = int(data.get("button", 0))
+				mouse_event.button_index = int(data.get("button", 0)) as MouseButton
 				InputMap.action_add_event(action, mouse_event)
 
 
@@ -884,10 +1084,10 @@ func _ensure_keybinds_ui() -> void:
 	if _keybinds_panel != null:
 		return
 	_keybinds_panel = _ensure_category_panel("KeybindsPanel")
-	var left := _ensure_menu_column(
+	var left := _ensure_water_column(
 		_keybinds_panel, "LeftColumn", Vector3(-0.68, 0, 0.035)
 	)
-	var right := _ensure_menu_column(
+	var right := _ensure_water_column(
 		_keybinds_panel, "RightColumn", Vector3(0.68, 0, 0.035)
 	)
 	var rows: Array[float] = [0.45, 0.20, -0.05, -0.30]
@@ -915,19 +1115,19 @@ func _ensure_keybinds_ui() -> void:
 	_keybind_page_label.position = Vector3(0.0, -0.42, 0.035)
 	_keybind_panel_add(_keybind_page_label)
 
-	_ensure_menu_button(
+	_ensure_water_button(
 		_keybinds_panel, "KeybindPrev", "keybind_prev", "Prev",
 		-0.58, Vector3(0.75, 0.75, 1.0), 20, -0.65
 	)
-	_ensure_menu_button(
+	_ensure_water_button(
 		_keybinds_panel, "KeybindNext", "keybind_next", "Next",
 		-0.58, Vector3(0.75, 0.75, 1.0), 20, 0.65
 	)
-	_ensure_menu_button(
+	_ensure_water_button(
 		_keybinds_panel, "KeybindReset", "keybind_reset", "Reset",
 		-0.78, Vector3(0.65, 0.65, 1.0), 20, -0.65
 	)
-	_ensure_menu_button(
+	_ensure_water_button(
 		_keybinds_panel, "KeybindsBack", "back_settings", "Back",
 		-0.78, Vector3(0.65, 0.65, 1.0), 20, 0.65
 	)
@@ -1009,16 +1209,16 @@ func _handle_keybind_capture(event: InputEvent) -> void:
 			)
 			if code != 0:
 				var binding := InputEventKey.new()
-				binding.physical_keycode = code
+				binding.physical_keycode = code as Key
 				_apply_keybind_binding(binding)
 		get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseButton and event.pressed:
 		var mouse_event := event as InputEventMouseButton
-		var binding := InputEventMouseButton.new()
-		binding.button_index = mouse_event.button_index
-		_apply_keybind_binding(binding)
+		var mouse_binding := InputEventMouseButton.new()
+		mouse_binding.button_index = mouse_event.button_index
+		_apply_keybind_binding(mouse_binding)
 		get_viewport().set_input_as_handled()
 
 
@@ -1071,55 +1271,50 @@ func _ensure_saves_ui() -> void:
 	var saves := get_node_or_null("Panel/SavesPanel") as Node3D
 	if saves == null:
 		return
+
+	# Sort is part of the saves view even in older scene copies that already
+	# have the other controls.
+	_ensure_save_sort_button(saves)
+
+	var has_rename := (
+		saves.get_node_or_null("LeftActions/Rename") != null
+		or saves.get_node_or_null("RightActions/Rename") != null
+	)
 	if (
 		saves.get_node_or_null("NewMap") != null
 		and saves.get_node_or_null("WorldType") != null
-		and saves.get_node_or_null("LeftActions/Rename") != null
+		and has_rename
 	):
 		return
 
 	var save_list := saves.get_node_or_null("SaveList") as Node3D
 	if save_list != null:
-		save_list.position = Vector3(-0.55, 0.40, 0.035)
+		save_list.position = Vector3(-0.55, 0.50, 0.035)
 	var page := saves.get_node_or_null("PageLabel") as Label3D
 	if page != null:
-		page.position = Vector3(-0.55, -0.20, 0.04)
+		page.position = Vector3(-0.55, -0.36, 0.04)
 
 	var left := saves.get_node_or_null("LeftActions") as Node3D
 	var right := saves.get_node_or_null("RightActions") as Node3D
 	if left != null:
-		_place_saves_button(left, "Save", -0.50)
-		_place_saves_button(left, "SaveAs", -0.66)
-		_place_saves_button(left, "Load", -0.82)
-		_ensure_water_button(left, "Rename", "rename", "Rename", -0.34)
+		var header_scale := Vector3(0.7, 0.85, 1.0)
+		_place_saves_button(left, "Save", -0.48, header_scale, 20)
+		_place_saves_button(left, "SaveAs", -0.65, header_scale, 20)
+		_place_saves_button(left, "Load", -0.82, header_scale, 20)
 	if right != null:
-		_place_saves_button(right, "Duplicate", -0.50)
-		_place_saves_button(right, "Delete", -0.66)
+		_place_saves_button(right, "Duplicate", -0.48)
+		_place_saves_button(right, "Delete", -0.65)
 		_place_saves_button(right, "Back", -0.82)
-<<<<<<< Updated upstream
-
-	_ensure_water_button(
-		saves, "NewMap", "new_map", "New Map...", 0.74,
-		Vector3.ONE, 24, -0.68
-	)
-	_ensure_water_button(
-		saves, "WorldType", "world_type", "World: Blank Platform", 0.58,
-		Vector3.ONE, 20, -0.68
-	)
-
-
-func _place_saves_button(parent: Node3D, node_name: String, local_y: float) -> void:
-=======
-		_ensure_menu_button(
+		_ensure_water_button(
 			right, "Rename", "rename", "Rename", 0.66,
 			Vector3(0.7, 0.85, 1.0), 20, 0.0, true
 		)
 
-	_ensure_menu_button(
+	_ensure_water_button(
 		saves, "NewMap", "new_map", "New Map...", 0.80,
 		Vector3(0.7, 0.85, 1.0), 20, -0.62, true
 	)
-	_ensure_menu_button(
+	_ensure_water_button(
 		saves, "WorldType", "world_type", "World: Blank Platform", 0.66,
 		Vector3(0.7, 0.85, 1.0), 18, -0.62, true
 	)
@@ -1129,7 +1324,7 @@ func _ensure_save_sort_button(saves: Node3D) -> void:
 	var right := saves.get_node_or_null("RightActions") as Node3D
 	var parent: Node3D = right if right != null else saves
 	var local_x: float = 0.0 if right != null else 0.62
-	_ensure_menu_button(
+	_ensure_water_button(
 		parent,
 		"Sort",
 		"save_sort",
@@ -1149,17 +1344,18 @@ func _place_saves_button(
 	button_scale: Vector3 = Vector3(0.52, 0.85, 1.0),
 	label_size_value: int = 22
 ) -> void:
->>>>>>> Stashed changes
 	var button := parent.get_node_or_null(node_name) as Node3D
 	if button == null:
 		return
 	button.position = Vector3(0.0, local_y, 0.0)
+	button.scale = button_scale
+	button.set("label_size", label_size_value)
+	button.set("keep_label_aspect", true)
+	if button.has_method("refresh_label_aspect"):
+		button.call("refresh_label_aspect")
 	button.set("_rest_position", button.position)
 
 
-<<<<<<< Updated upstream
-func _ensure_water_column(
-=======
 # ============================================================
 # DEMOS LIBRARY
 # ============================================================
@@ -1223,16 +1419,16 @@ func _ensure_demos_ui() -> void:
 	right.position = Vector3(0.68, 0, 0)
 	_demos_panel.add_child(right)
 
-	_ensure_menu_button(left, "Play", "play_demo", "Play", -0.34, Vector3.ONE, 22)
-	_ensure_menu_button(left, "Rename", "rename_demo", "Rename", -0.50, Vector3.ONE, 22)
-	_ensure_menu_button(left, "Description", "describe_demo", "Description", -0.66, Vector3.ONE, 22)
-	_ensure_menu_button(left, "Folder", "folder_demo", "Move to Folder", -0.82, Vector3.ONE, 20)
-	_ensure_menu_button(right, "Compare", "compare_demo", "Compare", -0.34, Vector3.ONE, 22)
-	_ensure_menu_button(right, "Duplicate", "duplicate_demo", "Duplicate", -0.50, Vector3.ONE, 22)
-	_ensure_menu_button(right, "Delete", "delete_demo", "Delete", -0.66, Vector3.ONE, 22)
-	_ensure_menu_button(right, "Back", "back_demos", "Back", -0.82, Vector3.ONE, 22)
+	_ensure_water_button(left, "Play", "play_demo", "Play", -0.34, Vector3.ONE, 22)
+	_ensure_water_button(left, "Rename", "rename_demo", "Rename", -0.50, Vector3.ONE, 22)
+	_ensure_water_button(left, "Description", "describe_demo", "Description", -0.66, Vector3.ONE, 22)
+	_ensure_water_button(left, "Folder", "folder_demo", "Move to Folder", -0.82, Vector3.ONE, 20)
+	_ensure_water_button(right, "Compare", "compare_demo", "Compare", -0.34, Vector3.ONE, 22)
+	_ensure_water_button(right, "Duplicate", "duplicate_demo", "Duplicate", -0.50, Vector3.ONE, 22)
+	_ensure_water_button(right, "Delete", "delete_demo", "Delete", -0.66, Vector3.ONE, 22)
+	_ensure_water_button(right, "Back", "back_demos", "Back", -0.82, Vector3.ONE, 22)
 
-	_ensure_menu_button(
+	_ensure_water_button(
 		_demos_panel,
 		"FolderFilter",
 		"demo_folder_filter",
@@ -1697,8 +1893,7 @@ func _format_duration(seconds: float) -> String:
 
 
 
-func _ensure_menu_column(
->>>>>>> Stashed changes
+func _ensure_water_column(
 	parent: Node3D,
 	column_name: String,
 	local_position: Vector3
@@ -1712,7 +1907,7 @@ func _ensure_menu_column(
 	return column
 
 
-func _ensure_menu_button(
+func _ensure_water_button(
 	parent: Node3D,
 	node_name: String,
 	action: String,
@@ -1720,7 +1915,8 @@ func _ensure_menu_button(
 	local_y: float,
 	button_scale: Vector3 = Vector3.ONE,
 	label_size_value: int = 24,
-	local_x: float = 0.0
+	local_x: float = 0.0,
+	keep_aspect: bool = false
 ) -> void:
 	if parent.get_node_or_null(node_name) != null:
 		return
@@ -1730,6 +1926,7 @@ func _ensure_menu_button(
 	button.action = StringName(action)
 	button.caption = caption
 	button.label_size = label_size_value
+	button.set("keep_label_aspect", keep_aspect)
 	button.position = Vector3(local_x, local_y, 0.0)
 	button.scale = button_scale
 	parent.add_child(button)
@@ -1747,18 +1944,24 @@ func _animate_view(view: String) -> void:
 			_play_buttons_intro(_settings_panel)
 		"graphics":
 			_play_buttons_intro(_graphics_panel)
+		"sky_clouds":
+			_play_buttons_intro(_sky_clouds_panel)
 		"gameplay":
 			_play_buttons_intro(_gameplay_panel)
 		"audio":
 			_play_buttons_intro(_audio_panel)
 		"controls":
 			_play_buttons_intro(_controls_panel)
+		"water":
+			_play_buttons_intro(_water_panel)
 		"statistics":
 			_play_map_intro()
 			_play_buttons_intro(_stats_panel)
 		"saves":
 			_play_buttons_intro(_saves_panel)
 			_play_preview_intro()
+		"demos":
+			_play_buttons_intro(_demos_panel)
 
 
 func _play_open_intro() -> void:
@@ -1843,33 +2046,33 @@ func _play_buttons_intro(panel: Node) -> void:
 func _play_map_intro() -> void:
 	if not _stats_map.visible:
 		return
-	var material := _stats_map.material_override as StandardMaterial3D
-	if material == null:
+	var map_material := _stats_map.material_override as StandardMaterial3D
+	if map_material == null:
 		return
 	if is_instance_valid(_map_tween):
 		_map_tween.kill()
 
 	_stats_map.scale = _stats_rest_scale * 0.96
-	material.albedo_color.a = 0.0
+	map_material.albedo_color.a = 0.0
 	_stats_text.modulate.a = 0.0
 	_map_tween = create_tween().set_parallel(true)
 	_map_tween.tween_property(_stats_map, "scale", _stats_rest_scale, 0.32) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_map_tween.tween_property(material, "albedo_color:a", 1.0, 0.26)
+	_map_tween.tween_property(map_material, "albedo_color:a", 1.0, 0.26)
 	_map_tween.tween_property(_stats_text, "modulate:a", 1.0, 0.3).set_delay(0.06)
 
 
 func _play_preview_intro() -> void:
 	if not _thumbnail.visible:
 		return
-	var material := _thumbnail.material_override as StandardMaterial3D
-	if material == null:
+	var preview_material := _thumbnail.material_override as StandardMaterial3D
+	if preview_material == null:
 		return
 	if is_instance_valid(_preview_tween):
 		_preview_tween.kill()
 
 	_thumbnail.scale = _thumbnail_rest_scale * 0.97
-	material.albedo_color.a = 0.0
+	preview_material.albedo_color.a = 0.0
 	_save_details.modulate.a = 0.0
 	_preview_tween = create_tween().set_parallel(true)
 	_preview_tween.tween_property(
@@ -1878,7 +2081,7 @@ func _play_preview_intro() -> void:
 		_thumbnail_rest_scale,
 		0.28
 	).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_preview_tween.tween_property(material, "albedo_color:a", 1.0, 0.24)
+	_preview_tween.tween_property(preview_material, "albedo_color:a", 1.0, 0.24)
 	_preview_tween.tween_property(
 		_save_details,
 		"modulate:a",
@@ -1889,9 +2092,29 @@ func _play_preview_intro() -> void:
 
 ## Subtle parallax: the panel leans toward the hovered entry and the camera
 ## offsets a hair, so the whole menu feels alive without moving much.
-func _sway_to(button: Area3D) -> void:
+func _set_cursor_sway(screen_position: Vector2) -> void:
+	var viewport_size := get_viewport().get_visible_rect().size
+
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+
+	_cursor_nx = clampf((screen_position.x / viewport_size.x) * 2.0 - 1.0, -1.0, 1.0)
+	_cursor_ny = clampf((screen_position.y / viewport_size.y) * 2.0 - 1.0, -1.0, 1.0)
+
+
+## `button` is intentionally untyped: it can be a hovered entry that the Saves
+## or Settings rebuild just freed, and a typed Area3D parameter would throw a
+## "previously freed" type error before the validity check below could run.
+func _sway_to(button: Variant) -> void:
 	if not _paused:
 		return
+
+	if not is_instance_valid(button):
+		button = null
+
+		if _hovered != null and not is_instance_valid(_hovered):
+			_hovered = null
+
 	if is_instance_valid(_sway_tween):
 		_sway_tween.kill()
 
@@ -1900,7 +2123,16 @@ func _sway_to(button: Area3D) -> void:
 	var target_h: float = _camera_h_rest
 	var target_v: float = _camera_v_rest
 
-	if is_instance_valid(button):
+	target_position += Vector3(-_cursor_nx * 0.016, -_cursor_ny * 0.013, 0.0)
+	target_rotation += Vector3(
+		deg_to_rad(_cursor_ny * 0.35),
+		deg_to_rad(_cursor_nx * 0.45),
+		0.0
+	)
+	target_h += -_cursor_nx * 0.03
+	target_v += -_cursor_ny * 0.026
+
+	if is_instance_valid(button) and button is Node3D:
 		var local: Vector3 = _panel.to_local(button.global_position)
 		var nx: float = clampf(local.x / 1.1, -1.0, 1.0)
 		var ny: float = clampf(local.y / 0.9, -1.0, 1.0)
@@ -1921,6 +2153,27 @@ func _sway_to(button: Area3D) -> void:
 		_sway_tween.tween_property(_camera, "h_offset", target_h, 0.4)
 		_sway_tween.tween_property(_camera, "v_offset", target_v, 0.4)
 
+	if _title_root != null:
+		# The title is a child of the panel, so it already travels with every
+		# button. Keep its anchor pinned and only add a small cursor tilt, which
+		# reads as the title following the mouse without sliding out of sync.
+		_sway_tween.tween_property(
+			_title_root,
+			"position",
+			_title_rest_position,
+			0.4
+		)
+		_sway_tween.tween_property(
+			_title_root,
+			"rotation",
+			_title_rest_rotation + Vector3(
+				deg_to_rad(-_cursor_ny * 1.4),
+				deg_to_rad(-_cursor_nx * 2.2),
+				0.0
+			),
+			0.4
+		)
+
 
 func _reset_sway() -> void:
 	if is_instance_valid(_sway_tween):
@@ -1930,6 +2183,9 @@ func _reset_sway() -> void:
 	if _camera != null:
 		_camera.h_offset = _camera_h_rest
 		_camera.v_offset = _camera_v_rest
+	if _title_root != null:
+		_title_root.position = _title_rest_position
+		_title_root.rotation = _title_rest_rotation
 
 
 func _refresh_labels() -> void:
@@ -1952,34 +2208,14 @@ func _dynamic_caption(action: String) -> String:
 			return "Agents: " + PerformanceSettings.agent_cap_name()
 		"shadows":
 			return "Shadows: " + PerformanceSettings.shadows_name()
+		"shadow_distance":
+			return "Shadow Dist: " + PerformanceSettings.shadow_distance_name()
+		"foliage_distance":
+			return "Foliage: " + PerformanceSettings.foliage_scale_name()
 		"ao":
 			return "AO: " + PerformanceSettings.occlusion_name()
 		"clouds":
 			return "Clouds: " + PerformanceSettings.clouds_name()
-<<<<<<< Updated upstream
-		"water":
-			return "Water FX: " + PerformanceSettings.water_name()
-		"water_flow":
-			return "Flow: " + PerformanceSettings.water_flow_name()
-		"water_equalize":
-			return "Equalize: " + PerformanceSettings.water_equalize_name()
-		"water_budget":
-			return "Budget: " + PerformanceSettings.water_budget_name()
-		"water_mesh":
-			return "Mesh: " + PerformanceSettings.water_mesh_rate_name()
-		"water_wave_detail":
-			return "Wave Size: " + PerformanceSettings.water_wave_detail_name()
-		"water_wave_cap":
-			return "Samples: " + PerformanceSettings.water_wave_cap_name()
-		"water_waves":
-			return "Waves: " + PerformanceSettings.water_waves_name()
-		"water_splashes":
-			return "Splashes: " + PerformanceSettings.water_splashes_name()
-		"water_surface_drops":
-			return "Drops: " + PerformanceSettings.water_surface_particles_name()
-		"water_wake":
-			return "Wake: " + PerformanceSettings.water_wake_name()
-=======
 		"sky_time":
 			return "Time: " + PerformanceSettings.sky_time_name()
 		"sky_sun":
@@ -2002,20 +2238,84 @@ func _dynamic_caption(action: String) -> String:
 			return "Cloud Speed: " + PerformanceSettings.cloud_speed_name()
 		"cloud_coverage":
 			return "Coverage: " + PerformanceSettings.cloud_coverage_name()
->>>>>>> Stashed changes
+		"water":
+			return "Water FX: " + PerformanceSettings.water_name()
+		"water_flow":
+			return "Flow: " + PerformanceSettings.water_flow_name()
+		"water_equalize":
+			return "Equalize: " + PerformanceSettings.water_equalize_name()
+		"water_budget":
+			return "Budget: " + PerformanceSettings.water_budget_name()
+		"water_mesh":
+			return "Mesh: " + PerformanceSettings.water_mesh_rate_name()
+		"water_wave_detail":
+			return "Wave Size: " + PerformanceSettings.water_wave_detail_name()
+		"water_wave_cap":
+			return "Samples: " + PerformanceSettings.water_wave_cap_name()
+		"water_waves":
+			return "Waves: " + PerformanceSettings.water_waves_name()
+		"water_splashes":
+			return "Splashes: " + PerformanceSettings.water_splashes_name()
+		"water_surface_drops":
+			return "Drops: " + PerformanceSettings.water_surface_particles_name()
+		"water_wake":
+			return "Wake: " + PerformanceSettings.water_wake_name()
 		"world_type":
-			return (
-				"World: Blank Platform"
-				if _new_map_world_type == "blank"
-				else "World: Proc Gen (Soon)"
+			return _world_caption()
+		"save_sort":
+			return "Sort: " + (
+				"Last Played"
+				if _save_manager == null
+				else String(_save_manager.sort_mode_label())
 			)
+		"demo_folder_filter":
+			return "Folder: " + (_demo_folder_filter if not _demo_folder_filter.is_empty() else "All")
 		"volume":
 			return "Volume: " + PerformanceSettings.volume_name()
+		"music":
+			return "Music: " + PerformanceSettings.music_volume_name()
 		"fps":
 			return "FPS Cap: " + PerformanceSettings.fps_name()
 		"view_roll":
 			return "View Roll: " + PerformanceSettings.view_roll_name()
 	return ""
+
+
+func _world_size_label(size_name: String) -> String:
+	match size_name:
+		"small":
+			return "Small (128)"
+		"large":
+			return "Large (384)"
+		_:
+			return "Medium (256)"
+
+
+func _world_size_short(size_name: String) -> String:
+	match size_name:
+		"small":
+			return "128"
+		"large":
+			return "384"
+		_:
+			return "256"
+
+
+func _generator_label(generator_id: String) -> String:
+	return WORLD_GENERATORS.label(generator_id)
+
+
+## One-line caption for the shared World Type button.
+func _world_caption() -> String:
+	if _new_map_world_type == "blank":
+		return "World: Blank Platform"
+
+	var label := WORLD_GENERATORS.label(_new_map_generator_id)
+
+	if WORLD_GENERATORS.supports_sizes(_new_map_generator_id):
+		return "World: %s %s" % [label, _world_size_short(_new_map_world_size)]
+
+	return "World: %s" % label
 
 
 func _all_buttons() -> Array:
@@ -2031,7 +2331,7 @@ func _collect_buttons(node: Node, result: Array) -> void:
 		_collect_buttons(child, result)
 
 
-func _button_at(position: Vector2) -> Area3D:
+func _button_at(screen_position: Vector2) -> Area3D:
 	if (
 		not is_inside_tree()
 		or _camera == null
@@ -2040,8 +2340,8 @@ func _button_at(position: Vector2) -> Area3D:
 	):
 		return null
 
-	var from: Vector3 = _camera.project_ray_origin(position)
-	var to: Vector3 = from + _camera.project_ray_normal(position) * 10.0
+	var from: Vector3 = _camera.project_ray_origin(screen_position)
+	var to: Vector3 = from + _camera.project_ray_normal(screen_position) * 10.0
 	var query := PhysicsRayQueryParameters3D.create(from, to, MENU_LAYER)
 	query.collide_with_areas = true
 	query.collide_with_bodies = false
@@ -2056,7 +2356,12 @@ func _button_at(position: Vector2) -> Area3D:
 	return null
 
 
-func _set_hover(button: Area3D, audible: bool = false) -> void:
+## Untyped for the same reason as `_sway_to`: the ray can report a collider that
+## a list rebuild freed a frame earlier.
+func _set_hover(button: Variant, audible: bool = false) -> void:
+	if not is_instance_valid(button):
+		button = null
+
 	if _hovered == button:
 		return
 	if is_instance_valid(_hovered):
@@ -2069,8 +2374,8 @@ func _set_hover(button: Area3D, audible: bool = false) -> void:
 	_sway_to(button)
 
 
-func _click_at(position: Vector2) -> void:
-	var button := _button_at(position)
+func _click_at(screen_position: Vector2) -> void:
+	var button := _button_at(screen_position)
 	if button == null:
 		return
 
@@ -2102,11 +2407,22 @@ func _click_at(position: Vector2) -> void:
 			_show_view("statistics")
 		"saves":
 			_show_view("saves")
+		"demos":
+			_show_view("demos")
 		"back_main":
-			_show_view("main")
+			if saves_only:
+				close_saves_only()
+			else:
+				_show_view("main")
 		"back_settings":
 			_show_view("settings")
+		"water_tuning":
+			_show_view("water")
 		"settings_graphics":
+			_show_view("graphics")
+		"sky_clouds":
+			_show_view("sky_clouds")
+		"back_graphics":
 			_show_view("graphics")
 		"settings_gameplay":
 			_show_view("gameplay")
@@ -2114,12 +2430,47 @@ func _click_at(position: Vector2) -> void:
 			_show_view("audio")
 		"settings_controls":
 			_show_view("controls")
+		"export_defaults":
+			_open_export_defaults()
 		"keybinds":
 			_show_view("controls")
 		"back_controls":
 			_show_view("settings")
 		"view_roll":
 			PerformanceSettings.cycle_view_roll()
+			_refresh_labels()
+		"water_flow":
+			PerformanceSettings.cycle_water_flow()
+			_refresh_labels()
+		"water_equalize":
+			PerformanceSettings.cycle_water_equalize()
+			_refresh_labels()
+		"water_budget":
+			PerformanceSettings.cycle_water_budget()
+			_refresh_labels()
+		"water_mesh":
+			PerformanceSettings.cycle_water_mesh()
+			_refresh_labels()
+		"water_wave_detail":
+			PerformanceSettings.cycle_water_wave_detail()
+			_refresh_labels()
+		"water_wave_cap":
+			PerformanceSettings.cycle_water_wave_cap()
+			_refresh_labels()
+		"water_waves":
+			PerformanceSettings.toggle_water_waves()
+			_refresh_labels()
+		"water_splashes":
+			PerformanceSettings.toggle_water_splashes()
+			_refresh_labels()
+		"water_surface_drops":
+			PerformanceSettings.toggle_water_surface_particles()
+			_refresh_labels()
+		"water_wake":
+			PerformanceSettings.cycle_water_wake_style()
+			_refresh_labels()
+		"water_reset":
+			PerformanceSettings.reset_water_settings()
 			_refresh_labels()
 		"mode_heat":
 			_stats_mode = "heat"
@@ -2145,16 +2496,18 @@ func _click_at(position: Vector2) -> void:
 		"shadows":
 			PerformanceSettings.toggle_shadows()
 			_refresh_labels()
+		"shadow_distance":
+			PerformanceSettings.cycle_shadow_distance()
+			_refresh_labels()
+		"foliage_distance":
+			PerformanceSettings.cycle_foliage_scale()
+			_refresh_labels()
 		"ao":
 			PerformanceSettings.toggle_occlusion()
 			_refresh_labels()
 		"clouds":
 			PerformanceSettings.toggle_clouds()
 			_refresh_labels()
-<<<<<<< Updated upstream
-		"water":
-			PerformanceSettings.toggle_water()
-=======
 		"sky_time":
 			PerformanceSettings.cycle_sky_time()
 			_refresh_labels()
@@ -2190,10 +2543,15 @@ func _click_at(position: Vector2) -> void:
 			_refresh_labels()
 		"sky_clouds_reset":
 			PerformanceSettings.reset_sky_clouds()
->>>>>>> Stashed changes
+			_refresh_labels()
+		"water":
+			PerformanceSettings.toggle_water()
 			_refresh_labels()
 		"volume":
 			PerformanceSettings.cycle_volume()
+			_refresh_labels()
+		"music":
+			PerformanceSettings.cycle_music_volume()
 			_refresh_labels()
 		"fps":
 			PerformanceSettings.cycle_fps()
@@ -2210,10 +2568,9 @@ func _click_at(position: Vector2) -> void:
 		"rename":
 			_prompt_rename()
 		"world_type":
-			_new_map_world_type = (
-				"procgen" if _new_map_world_type == "blank" else "blank"
-			)
-			_refresh_labels()
+			_prompt_world_settings()
+		"save_sort":
+			_cycle_save_sort()
 		"load":
 			_on_load()
 		"duplicate":
@@ -2222,6 +2579,29 @@ func _click_at(position: Vector2) -> void:
 			_confirm_delete()
 		"load_save":
 			_select_save(button.payload)
+		"select_demo":
+			_select_demo(String(button.payload))
+		"play_demo":
+			_play_selected_demo()
+		"compare_demo":
+			_toggle_demo_compare()
+		"rename_demo":
+			_prompt_demo_rename()
+		"describe_demo":
+			_prompt_demo_description()
+		"folder_demo":
+			_prompt_demo_folder()
+		"demo_folder_filter":
+			_cycle_demo_folder()
+		"duplicate_demo":
+			_prompt_demo_duplicate()
+		"delete_demo":
+			_confirm_demo_delete()
+		"back_demos":
+			if _demo_compare_mode:
+				_cancel_demo_compare()
+			else:
+				_show_view("main")
 
 
 func _refresh_statistics(pop: bool = true) -> void:
@@ -2230,9 +2610,9 @@ func _refresh_statistics(pop: bool = true) -> void:
 		return
 
 	var image: Image = MAP_RENDERER.render_top_down(grid, _stats_mode, 256)
-	var material := _stats_map.material_override as StandardMaterial3D
-	if material != null:
-		material.albedo_texture = (
+	var stats_material := _stats_map.material_override as StandardMaterial3D
+	if stats_material != null:
+		stats_material.albedo_texture = (
 			ImageTexture.create_from_image(image) if image != null else null
 		)
 	_stats_map.visible = image != null
@@ -2263,9 +2643,21 @@ func _display_name(slug: String) -> String:
 	return String(_save_manager.display_name(slug))
 
 
+func _cycle_save_sort() -> void:
+	if _save_manager == null:
+		return
+	_save_manager.cycle_sort_mode()
+	_refresh_labels()
+	_set_status("Sorted by " + _save_manager.sort_mode_label())
+
+
 func _refresh_save_list() -> void:
 	for child in _save_list.get_children():
 		child.free()
+
+	# Rows are freed immediately, so any hover reference to them is dead now.
+	if _hovered != null and not is_instance_valid(_hovered):
+		_hovered = null
 
 	if _save_manager == null:
 		_page_label.text = "Save system unavailable"
@@ -2292,30 +2684,44 @@ func _refresh_save_list() -> void:
 
 	for index in range(_save_start, last):
 		var entry: Dictionary = _saves[index]
+		var raw_name := String(entry.get("name", "Save"))
+		var list_name := raw_name
+		var list_label_size := 22
+
+		# Long save names overflow the narrower list rows. Keep the list tidy
+		# and show the full name in the details panel.
+		if raw_name.length() > 32:
+			list_name = raw_name.substr(0, 29).strip_edges() + "..."
+			list_label_size = 18
+		elif raw_name.length() > 25:
+			list_label_size = 20
+
 		var button := _button_scene.instantiate()
 		button.action = &"load_save"
-		button.caption = String(entry.get("name", "Save"))
+		button.caption = list_name
 		button.payload = String(entry.get("slug", ""))
 		button.position = Vector3(0, -save_row_step * (index - _save_start), 0)
-		button.label_size = 22
+		button.scale = Vector3(0.9, 0.85, 1.0)
+		button.label_size = list_label_size
 		button.label_pixel = 0.0019
+		button.keep_label_aspect = true
 		_save_list.add_child(button)
 		if String(entry.get("slug", "")) == _selected_slug:
 			button.set_selected(true)
 
-	var page := int(_save_start / save_rows_per_page) + 1
+	var page := int(float(_save_start) / float(save_rows_per_page)) + 1
 	var pages := int(ceil(float(_saves.size()) / float(save_rows_per_page)))
 	_page_label.text = "Page %d/%d  ·  wheel to scroll" % [page, pages]
 	_update_save_preview()
 
 
 func _update_save_preview() -> void:
-	var material := _thumbnail.material_override as StandardMaterial3D
-	if material == null:
+	var thumbnail_material := _thumbnail.material_override as StandardMaterial3D
+	if thumbnail_material == null:
 		return
 
 	if _save_manager == null or _selected_slug.is_empty():
-		material.albedo_texture = null
+		thumbnail_material.albedo_texture = null
 		_thumbnail.visible = false
 		_save_details.text = "Select a save"
 		_preview_slug = ""
@@ -2324,15 +2730,22 @@ func _update_save_preview() -> void:
 	var selection_changed: bool = _selected_slug != _preview_slug
 	_preview_slug = _selected_slug
 	var texture: Texture2D = _save_manager.get_thumbnail(_selected_slug)
-	material.albedo_texture = texture
+	thumbnail_material.albedo_texture = texture
 	_thumbnail.visible = texture != null
 
 	var modified := 0.0
 	var world_type := "existing"
+	var world_generator := ""
+	var world_seed := 0
+	var world_size := ""
+
 	for entry: Dictionary in _saves:
 		if String(entry.get("slug", "")) == _selected_slug:
 			modified = float(entry.get("modified", 0.0))
 			world_type = String(entry.get("world_type", "existing"))
+			world_generator = String(entry.get("world_generator", ""))
+			world_seed = int(entry.get("world_seed", 0))
+			world_size = String(entry.get("world_size", ""))
 			break
 
 	var lines: Array[String] = [
@@ -2344,6 +2757,18 @@ func _update_save_preview() -> void:
 			else ("Procedural" if world_type == "procgen" else "Existing map")
 		),
 	]
+
+	if world_type == "procgen":
+		var detail := "%s · seed %d" % [
+			_generator_label(world_generator),
+			world_seed,
+		]
+
+		if not world_size.is_empty():
+			detail += " · " + _world_size_label(world_size)
+
+		lines.append(detail)
+
 	_save_details.text = "\n".join(PackedStringArray(lines))
 
 	if selection_changed and texture != null and _paused:
@@ -2383,7 +2808,7 @@ func _set_status(text: String) -> void:
 
 
 func _on_saves_changed() -> void:
-	if _paused and _saves_panel.visible:
+	if _saves_panel != null and _saves_panel.visible:
 		_refresh_save_list()
 
 
@@ -2413,10 +2838,10 @@ func _prompt_save_as() -> void:
 	_prompt_name("Save As", initial, _finish_save_as)
 
 
-func _finish_save_as(name: String) -> void:
+func _finish_save_as(new_name: String) -> void:
 	if _save_manager == null:
 		return
-	var slug: String = _save_manager.save_as(name)
+	var slug: String = _save_manager.save_as(new_name)
 	if slug.is_empty():
 		_set_status("Save failed")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
@@ -2427,20 +2852,140 @@ func _finish_save_as(name: String) -> void:
 	_refresh_save_list()
 
 
+func _prompt_world_settings() -> void:
+	_ensure_dialog_layer()
+	_dialog_open = true
+	_play_ui(UI_SOUND_NOTIF, -11.0)
+
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "World Settings"
+	dialog.ok_button_text = "Apply"
+	dialog.process_mode = Node.PROCESS_MODE_ALWAYS
+	dialog.theme = _dialog_theme(16)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.custom_minimum_size = Vector2(400.0, 0.0)
+
+	var type_option := OptionButton.new()
+	type_option.add_item("Blank Platform", 0)
+	var generator_entries: Array[Dictionary] = WORLD_GENERATORS.all()
+	var selected_index := 0
+
+	for index in generator_entries.size():
+		var entry: Dictionary = generator_entries[index]
+		type_option.add_item(String(entry.get("label", entry.get("id", ""))), index + 1)
+		type_option.set_item_metadata(index + 1, String(entry.get("id", "")))
+
+		if String(entry.get("id", "")) == _new_map_generator_id:
+			selected_index = index + 1
+
+	type_option.selected = 0 if _new_map_world_type == "blank" else selected_index
+	type_option.theme = _dialog_theme(16)
+	box.add_child(type_option)
+
+	var size_option := OptionButton.new()
+	size_option.add_item("Small (128)", 0)
+	size_option.add_item("Medium (256)", 1)
+	size_option.add_item("Large (384)", 2)
+
+	match _new_map_world_size:
+		"small":
+			size_option.selected = 0
+		"large":
+			size_option.selected = 2
+		_:
+			size_option.selected = 1
+
+	size_option.theme = _dialog_theme(16)
+	box.add_child(size_option)
+
+	var seed_edit := LineEdit.new()
+	seed_edit.text = "0" if _new_map_seed == 0 else str(_new_map_seed)
+	seed_edit.placeholder_text = "Seed (0 = random)"
+	seed_edit.custom_minimum_size = Vector2(400.0, 32.0)
+	seed_edit.theme = _dialog_theme(16)
+	box.add_child(seed_edit)
+
+	var procgen_selected := type_option.selected > 0
+	var supports_sizes := WORLD_GENERATORS.supports_sizes(
+		_new_map_generator_id
+	)
+	size_option.disabled = not (procgen_selected and supports_sizes)
+	seed_edit.editable = procgen_selected
+
+	type_option.item_selected.connect(func(index: int) -> void:
+		var generator_id := String(
+			type_option.get_item_metadata(index)
+		)
+		var sizes := WORLD_GENERATORS.supports_sizes(generator_id)
+		size_option.disabled = index == 0 or not sizes
+		seed_edit.editable = index > 0
+	)
+
+	dialog.add_child(box)
+
+	_dialog_layer.add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_TYPING_FINISH, -9.0)
+		_new_map_world_type = "blank" if type_option.selected == 0 else "procgen"
+
+		if type_option.selected > 0:
+			_new_map_generator_id = String(
+				type_option.get_item_metadata(type_option.selected)
+			)
+
+		match size_option.selected:
+			0:
+				_new_map_world_size = "small"
+			2:
+				_new_map_world_size = "large"
+			_:
+				_new_map_world_size = "medium"
+
+		var value := seed_edit.text.strip_edges().to_int()
+		_new_map_seed = value if value != 0 else (randi() & 0x7FFFFFFF)
+
+		dialog.queue_free()
+		_refresh_labels()
+	)
+	dialog.canceled.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_CLICK, -11.0)
+		dialog.queue_free()
+	)
+	dialog.popup_centered(Vector2i(500, 280))
+
+
 func _prompt_new_map() -> void:
-	if _new_map_world_type != "blank":
-		_set_status("Procedural generation is not available yet")
-		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
-		return
+	if _new_map_world_type == "procgen" and _new_map_seed == 0:
+		_new_map_seed = randi() & 0x7FFFFFFF
+		_refresh_labels()
+
 	_prompt_name("New Map", "New Map", _request_new_map_confirm)
 
 
-func _request_new_map_confirm(name: String) -> void:
-	_pending_new_map_name = name
+func _request_new_map_confirm(new_name: String) -> void:
+	_pending_new_map_name = new_name
+	var world_line := "Blank platform"
+
+	if _new_map_world_type == "procgen":
+		var generator_label := WORLD_GENERATORS.label(_new_map_generator_id)
+
+		if WORLD_GENERATORS.supports_sizes(_new_map_generator_id):
+			world_line = "%s, %s, seed %d" % [
+				generator_label,
+				_world_size_label(_new_map_world_size),
+				_new_map_seed,
+			]
+		else:
+			world_line = "%s, seed %d" % [generator_label, _new_map_seed]
+
 	_confirm(
 		"Create New Map",
-		"Create \"%s\"?\nUnsaved changes to the current map will be lost."
-		% name,
+		"Create \"%s\"?\nWorld: %s\nUnsaved changes to the current map will be lost."
+		% [new_name, world_line],
 		_finish_new_map,
 		"Create"
 	)
@@ -2451,22 +2996,33 @@ func _finish_new_map() -> void:
 		_set_status("Save system unavailable")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
 		return
-	if _new_map_world_type != "blank":
-		_set_status("Procedural generation is not available yet")
-		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
-		return
 
-	set_paused(false)
-	_save_manager.new_blank_map(
-		_pending_new_map_name,
-		{
-			"type": "blank",
-			"generator": "",
-			"seed": 0,
-			"size": "small",
+	var world_options: Dictionary = {
+		"type": _new_map_world_type,
+		"generator": "",
+		"seed": 0,
+		"size": "small",
+		"options": {},
+	}
+
+	if _new_map_world_type == "procgen":
+		if _new_map_seed == 0:
+			_new_map_seed = randi() & 0x7FFFFFFF
+
+		world_options = {
+			"type": "procgen",
+			"generator": _new_map_generator_id,
+			"seed": _new_map_seed,
+			"size": _new_map_world_size,
 			"options": {},
 		}
-	)
+
+	if saves_only:
+		close_saves_only()
+	else:
+		set_paused(false)
+	save_loaded.emit()
+	_save_manager.new_blank_map(_pending_new_map_name, world_options)
 
 
 func _prompt_rename() -> void:
@@ -2484,16 +3040,16 @@ func _prompt_rename() -> void:
 	)
 
 
-func _finish_rename(name: String) -> void:
+func _finish_rename(new_name: String) -> void:
 	if _save_manager == null:
 		return
-	var renamed: String = _save_manager.rename_save(_selected_slug, name)
-	if renamed.is_empty():
+	var renamed_slug: String = _save_manager.rename_save(_selected_slug, new_name)
+	if renamed_slug.is_empty():
 		_set_status("Rename failed")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
 		return
-	_selected_slug = renamed
-	_set_status("Renamed: " + _display_name(renamed))
+	_selected_slug = renamed_slug
+	_set_status("Renamed: " + _display_name(renamed_slug))
 	_play_ui(UI_SOUND_ACCEPT, -8.0)
 	_refresh_save_list()
 
@@ -2506,7 +3062,11 @@ func _on_load() -> void:
 		_set_status("Save system unavailable")
 		return
 	_play_ui(UI_SOUND_ACCEPT, -7.0)
-	set_paused(false)
+	save_loaded.emit()
+	if saves_only:
+		close_saves_only()
+	else:
+		set_paused(false)
 	_save_manager.load_save(_selected_slug)
 
 
@@ -2524,10 +3084,10 @@ func _prompt_duplicate() -> void:
 	)
 
 
-func _finish_duplicate(name: String) -> void:
+func _finish_duplicate(new_name: String) -> void:
 	if _save_manager == null:
 		return
-	var slug: String = _save_manager.duplicate_save(_selected_slug, name)
+	var slug: String = _save_manager.duplicate_save(_selected_slug, new_name)
 	if slug.is_empty():
 		_set_status("Duplicate failed")
 		_play_ui(UI_SOUND_NOTIF_SHARP, -8.0)
@@ -2644,6 +3204,41 @@ func _prompt_name(title: String, initial: String, callback: Callable) -> void:
 	edit.caret_column = edit.text.length()
 
 
+func _prompt_text(title: String, initial: String, callback: Callable) -> void:
+	_ensure_dialog_layer()
+	_dialog_open = true
+	_play_ui(UI_SOUND_NOTIF, -11.0)
+
+	var dialog := ConfirmationDialog.new()
+	dialog.title = title
+	dialog.ok_button_text = "Save"
+	dialog.process_mode = Node.PROCESS_MODE_ALWAYS
+	dialog.theme = _dialog_theme(16)
+
+	var edit := TextEdit.new()
+	edit.text = initial
+	edit.custom_minimum_size = Vector2(460, 140)
+	edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	edit.theme = _dialog_theme(16)
+	dialog.add_child(edit)
+
+	_dialog_layer.add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_TYPING_FINISH, -9.0)
+		var value := edit.text
+		dialog.queue_free()
+		callback.call(value)
+	)
+	dialog.canceled.connect(func() -> void:
+		_dialog_open = false
+		_play_ui(UI_SOUND_CLICK, -11.0)
+		dialog.queue_free()
+	)
+	dialog.popup_centered(Vector2i(500, 230))
+	edit.grab_focus()
+
+
 func _confirm(
 	title: String,
 	message: String,
@@ -2690,3 +3285,249 @@ func _dialog_theme(font_size: int = 16) -> Theme:
 	theme.default_font_size = font_size
 	theme.default_base_scale = 1.0
 	return theme
+
+
+# ---------------------------------------------------------------------------
+# Export defaults (Settings > Gameplay)
+# ---------------------------------------------------------------------------
+
+func _open_export_defaults() -> void:
+	_ensure_defaults_layer()
+	_sync_export_defaults_fields()
+	_defaults_layer.visible = true
+	_play_ui(UI_SOUND_TRANSITION, -10.0)
+
+
+func _ensure_defaults_layer() -> void:
+	if _defaults_layer != null and is_instance_valid(_defaults_layer):
+		return
+
+	_defaults_layer = CanvasLayer.new()
+	_defaults_layer.name = "ExportDefaults"
+	_defaults_layer.layer = 24
+	_defaults_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_defaults_layer)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.02, 0.02, 0.74)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_defaults_layer.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_defaults_layer.add_child(center)
+
+	var view := get_viewport().get_visible_rect().size
+	var panel := PanelContainer.new()
+	panel.theme = _dialog_theme(15)
+	panel.custom_minimum_size = Vector2(
+		minf(780.0, view.x * 0.92),
+		minf(620.0, view.y * 0.88)
+	)
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 16)
+	margin.add_theme_constant_override("margin_right", 16)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	panel.add_child(margin)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	margin.add_child(column)
+
+	var title := Label.new()
+	title.text = "SIMULATION DEFAULTS"
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color(1.0, 0.84, 0.32))
+	column.add_child(title)
+
+	var info := Label.new()
+	info.text = (
+		"New saves start from these values. An existing save keeps the exports "
+		+ "stored in its own save file, so changing a default does not rewrite it."
+	)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_theme_font_size_override("font_size", 14)
+	info.add_theme_color_override("font_color", Color(0.75, 0.75, 0.7))
+	column.add_child(info)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 6)
+	scroll.add_child(content)
+
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 4)
+	content.add_child(grid)
+
+	_defaults_cap = _defaults_spin(grid, "Active Cap", 1, 100000, 1)
+	_defaults_quota = _defaults_spin(grid, "Spawn Quota", -1, 100000, 1)
+	_defaults_seed = _defaults_spin(grid, "Seed", 0, 2147483647, 1)
+
+	_defaults_evac = _defaults_check(grid, "Evacuation Mode")
+	_defaults_record = _defaults_check(grid, "Record On Start")
+
+	_defaults_cap.value_changed.connect(func(_v: float) -> void: _save_global_defaults())
+	_defaults_quota.value_changed.connect(func(_v: float) -> void: _save_global_defaults())
+	_defaults_seed.value_changed.connect(func(_v: float) -> void: _save_global_defaults())
+	_defaults_evac.toggled.connect(func(_v: bool) -> void: _save_global_defaults())
+	_defaults_record.toggled.connect(func(_v: bool) -> void: _save_global_defaults())
+
+	var separator := HSeparator.new()
+	content.add_child(separator)
+
+	var agent_info := Label.new()
+	agent_info.text = (
+		"Simulation defaults are the runtime exports new saves start from: "
+		+ "active cap, spawn quota, seed, evacuation/recording flags, Random "
+		+ "Populate, optimizer and the Member properties below. "
+		+ "Use Current Session captures all of them at once."
+	)
+	agent_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	agent_info.add_theme_font_size_override("font_size", 13)
+	agent_info.add_theme_color_override("font_color", Color(0.75, 0.75, 0.7))
+	content.add_child(agent_info)
+
+	var agent_scene: PackedScene = load("res://scenes/inventory/AgentPanel.tscn")
+	_defaults_agent_panel = agent_scene.instantiate()
+	_defaults_agent_panel.set("defaults_mode", true)
+	_defaults_agent_panel.custom_minimum_size = Vector2(0, 340)
+	_defaults_agent_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(_defaults_agent_panel)
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	column.add_child(actions)
+
+	var capture := Button.new()
+	capture.text = "Use Current Session"
+	capture.pressed.connect(_capture_export_defaults)
+	actions.add_child(capture)
+
+	var reset := Button.new()
+	reset.text = "Reset All Defaults"
+	reset.pressed.connect(_reset_export_defaults)
+	actions.add_child(reset)
+
+	var close := Button.new()
+	close.text = "Close"
+	close.pressed.connect(func() -> void: _defaults_layer.visible = false)
+	actions.add_child(close)
+
+
+func _defaults_spin(
+	grid: GridContainer, label_text: String, minimum: float,
+	maximum: float, step: float
+) -> SpinBox:
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 14)
+	grid.add_child(label)
+
+	var spin := SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.step = step
+	spin.allow_greater = true
+	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(spin)
+	return spin
+
+
+func _defaults_check(grid: GridContainer, label_text: String) -> CheckBox:
+	var label := Label.new()
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 14)
+	grid.add_child(label)
+
+	var check := CheckBox.new()
+	check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(check)
+	return check
+
+
+func _sync_export_defaults_fields() -> void:
+	if _defaults_cap == null:
+		return
+
+	_defaults_cap.set_value_no_signal(
+		float(
+			RuntimeExports.get_default(
+				"global", "global_unit_cap", GlobalData.global_unit_cap
+			)
+		)
+	)
+	_defaults_quota.set_value_no_signal(
+		float(
+			RuntimeExports.get_default(
+				"global", "global_spawn_quota", GlobalData.global_spawn_quota
+			)
+		)
+	)
+	_defaults_seed.set_value_no_signal(
+		float(RuntimeExports.get_default("global", "rng_seed", GlobalData.rng_seed))
+	)
+	_defaults_evac.set_pressed_no_signal(
+		bool(
+			RuntimeExports.get_default(
+				"global", "evacuation_mode", GlobalData.evacuation_mode
+			)
+		)
+	)
+	_defaults_record.set_pressed_no_signal(
+		bool(
+			RuntimeExports.get_default(
+				"global",
+				"recording_enabled",
+				SimRecorder.recording_enabled
+			)
+		)
+	)
+
+	if (
+		_defaults_agent_panel != null
+		and _defaults_agent_panel.has_method("rebuild")
+	):
+		_defaults_agent_panel.call("rebuild")
+
+
+func _save_global_defaults() -> void:
+	if _defaults_cap == null:
+		return
+
+	RuntimeExports.set_default(
+		"global", "global_unit_cap", int(_defaults_cap.value)
+	)
+	RuntimeExports.set_default(
+		"global", "global_spawn_quota", int(_defaults_quota.value)
+	)
+	RuntimeExports.set_default("global", "rng_seed", int(_defaults_seed.value))
+	RuntimeExports.set_default(
+		"global", "evacuation_mode", _defaults_evac.button_pressed
+	)
+	RuntimeExports.set_default(
+		"global", "recording_enabled", _defaults_record.button_pressed
+	)
+
+
+func _reset_export_defaults() -> void:
+	RuntimeExports.clear_all_defaults()
+	_sync_export_defaults_fields()
+	_play_ui(UI_SOUND_ACCEPT, -9.0)
+
+
+func _capture_export_defaults() -> void:
+	RuntimeExports.save_live_as_defaults()
+	_sync_export_defaults_fields()
+	_play_ui(UI_SOUND_ACCEPT, -9.0)

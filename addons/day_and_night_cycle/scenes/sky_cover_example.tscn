@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3 uid="uid://c73icuobtxhyv"]
+[gd_scene format=3 uid="uid://c73icuobtxhyv"]
 
 [ext_resource type="Script" uid="uid://sqer1ykwxtg5" path="res://addons/day_and_night_cycle/scripts/cycle_controller.gd" id="1_cl2nm"]
 [ext_resource type="Resource" uid="uid://cvxw651qwja6o" path="res://addons/day_and_night_cycle/presets/sky_cover/sky_cover_day_cycle.tres" id="2_cl2nm"]
@@ -26,9 +26,9 @@ metallic_specular = 0.0
 [sub_resource type="BoxMesh" id="BoxMesh_pssa7"]
 size = Vector3(1, 2, 1)
 
-[node name="EXAMPLE" type="Node3D"]
+[node name="EXAMPLE" type="Node3D" unique_id=1912053649]
 
-[node name="CycleController" type="Node3D" parent="." node_paths=PackedStringArray("world_environment", "sun_light")]
+[node name="CycleController" type="Node3D" parent="." unique_id=1573956735 node_paths=PackedStringArray("world_environment", "sun_light")]
 script = ExtResource("1_cl2nm")
 day_data = ExtResource("2_cl2nm")
 night_data = ExtResource("3_33csn")
@@ -36,23 +36,23 @@ world_environment = NodePath("WorldEnvironment")
 sun_light = NodePath("DirectionalLight3D")
 metadata/_custom_type_script = "uid://sqer1ykwxtg5"
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="CycleController"]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="CycleController" unique_id=1917684127]
 environment = SubResource("Environment_ucs8h")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="CycleController"]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="CycleController" unique_id=569776302]
 transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
 shadow_enabled = true
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="Camera3D" type="Camera3D" parent="." unique_id=766313963]
 transform = Transform3D(0.64456344, 0.0790249, -0.76045585, 0, 0.9946439, 0.10336121, 0.76455086, -0.06662286, 0.6411111, -9.609212, 3.6144786, 2.1959615)
 
-[node name="Environment" type="Node3D" parent="."]
+[node name="Environment" type="Node3D" parent="." unique_id=1622362463]
 
-[node name="Ground" type="MeshInstance3D" parent="Environment"]
+[node name="Ground" type="MeshInstance3D" parent="Environment" unique_id=1739906955]
 mesh = SubResource("PlaneMesh_pssa7")
 skeleton = NodePath("../..")
 surface_material_override/0 = SubResource("StandardMaterial3D_pssa7")
 
-[node name="Cube" type="MeshInstance3D" parent="Environment"]
+[node name="Cube" type="MeshInstance3D" parent="Environment" unique_id=1884471751]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 mesh = SubResource("BoxMesh_pssa7")

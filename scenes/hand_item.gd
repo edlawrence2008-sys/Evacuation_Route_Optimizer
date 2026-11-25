@@ -278,12 +278,7 @@ func show_placeable(scene: PackedScene) -> void:
 		clear_item()
 		return
 
-	_finish_model(
-		holder,
-		float(holder.get_meta("hand_size", PLACEABLE_SIZE)),
-		PLACEABLE_TILT,
-		key
-	)
+	_finish_model(holder, PLACEABLE_SIZE, PLACEABLE_TILT, key)
 
 
 ## Removes the held model (empty slot / build mode off).
@@ -477,10 +472,6 @@ func _build_voxel_item_holder(mesh: ArrayMesh) -> Node3D:
 func _build_placeable_holder(scene: PackedScene) -> Node3D:
 	var temp: Node = scene.instantiate()
 	var holder := Node3D.new()
-	holder.set_meta(
-		"hand_size",
-		float(temp.get_meta("hand_size", PLACEABLE_SIZE))
-	)
 
 	_copy_visuals(temp, holder, Transform3D.IDENTITY)
 	temp.free()

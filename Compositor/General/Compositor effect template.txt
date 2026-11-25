@@ -1,0 +1,47 @@
+@tool
+extends R_BaseCompositorEffect
+class_name YourEffectClassName
+
+
+@export var some_property: float = 1: 
+	set(v):
+		some_property = v
+		update_push_constant()
+
+
+const shader_path = "shader file path goes here"
+var shader: RID
+var pipeline: RID
+
+var push_constant: PackedByteArray
+
+
+func _initialize_resource() -> void:
+	pass
+
+
+func _initialize_render() -> void:
+	shader = create_shader(shader_path)
+	pipeline = create_pipeline(shader)
+	
+	update_push_constant()
+
+
+func _render_setup() -> void:
+	pass
+
+
+func _render_view(view : int) -> void:
+	run_compute_shader("Your shader", shader, pipeline,
+		[[
+			get_color_image_uniform(view, 0),
+		]],
+		push_constant)
+
+
+func _render_size_changed() -> void:
+	update_push_constant()
+
+
+func update_push_constant() -> void:
+	push_constant = create_push_constant([Vector2(render_size), some_property])

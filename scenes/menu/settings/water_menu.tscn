@@ -1,0 +1,79 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="1_btn"]
+
+[node name="WaterPanel" type="Node3D"]
+visible = false
+
+[node name="LeftColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
+
+[node name="FlowStep" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.47, 0)
+action = &"water_flow"
+caption = "Flow Step"
+
+[node name="Equalize" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.265, 0)
+action = &"water_equalize"
+caption = "Equalize"
+
+[node name="UpdateBudget" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.06, 0)
+action = &"water_budget"
+caption = "Update Budget"
+
+[node name="MeshRate" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.145, 0)
+action = &"water_mesh"
+caption = "Mesh Rate"
+
+[node name="WaveDetail" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.35, 0)
+action = &"water_wave_detail"
+caption = "Wave Size"
+
+[node name="WaveCap" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.555, 0)
+action = &"water_wave_cap"
+caption = "Wave Samples"
+
+[node name="RightColumn" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
+
+[node name="Waves" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.47, 0)
+action = &"water_waves"
+caption = "Waves"
+
+[node name="Splashes" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.265, 0)
+action = &"water_splashes"
+caption = "Splashes"
+
+[node name="SurfaceDrops" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.06, 0)
+action = &"water_surface_drops"
+caption = "Surface Drops"
+
+[node name="WakeStyle" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.145, 0)
+action = &"water_wake"
+caption = "Wake Style"
+
+[node name="ResetWater" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.35, 0)
+action = &"water_reset"
+caption = "Reset Water"
+
+[node name="Water" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.555, 0)
+action = &"water"
+caption = "Water FX"
+
+[node name="WaterBack" parent="." instance=ExtResource("1_btn")]
+transform = Transform3D(1.9, 0, 0, 0, 1.2, 0, 0, 0, 1, 0, -0.79, 0.035)
+action = &"back_settings"
+caption = "Back"
+label_size = 24
+keep_label_aspect = true

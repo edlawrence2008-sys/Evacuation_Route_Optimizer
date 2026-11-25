@@ -1,0 +1,141 @@
+[gd_scene format=3 uid="uid://oe8ynnqo844b"]
+
+[ext_resource type="Script" uid="uid://dmklgqbpcjoc7" path="res://scenes/menu/credits.gd" id="1_credits"]
+[ext_resource type="PackedScene" uid="uid://dth7evi1dnfpi" path="res://scenes/menu/pause_button_3d.tscn" id="2_btn"]
+[ext_resource type="Script" uid="uid://renbv5dbvfff" path="res://scenes/menu/menu_backdrop.gd" id="3_backdrop"]
+[ext_resource type="PackedScene" uid="uid://qitsetuv8wla" path="res://scenes/ui/bgm_popup.tscn" id="4_bgm"]
+[ext_resource type="FontFile" uid="uid://bncul3w2dl6p" path="res://font/Pixelta.ttf" id="5_pixel"]
+[ext_resource type="FontFile" uid="uid://ck7sm3xakovrl" path="res://font/dogicapixel.ttf" id="6_dogi"]
+
+[sub_resource type="Environment" id="Env_credits"]
+background_mode = 1
+background_color = Color(0.008, 0.01, 0.016, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.18, 0.22, 0.3, 1)
+ambient_light_energy = 0.35
+
+[sub_resource type="StandardMaterial3D" id="Mat_dim"]
+render_priority = 3
+transparency = 1
+cull_mode = 2
+no_depth_test = true
+shading_mode = 0
+albedo_color = Color(0, 0, 0, 0.72)
+
+[sub_resource type="QuadMesh" id="QuadMesh_dim"]
+size = Vector2(32, 32)
+
+[node name="Credits" type="Node3D" unique_id=34324384]
+script = ExtResource("1_credits")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=2096425413]
+environment = SubResource("Env_credits")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=962963182]
+current = true
+
+[node name="Backdrop" type="Node3D" parent="." unique_id=1266504358]
+script = ExtResource("3_backdrop")
+
+[node name="Dim" type="MeshInstance3D" parent="." unique_id=8199152]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.6)
+material_override = SubResource("Mat_dim")
+cast_shadow = 0
+mesh = SubResource("QuadMesh_dim")
+
+[node name="Panel" type="Node3D" parent="." unique_id=2019700066]
+transform = Transform3D(0.9961947, 0.0030416911, -0.087102644, 0, 0.99939084, 0.034899496, 0.08715574, -0.034766693, 0.9955879, 0, 0, -1.9)
+
+[node name="MainTitle" type="Label3D" parent="Panel" unique_id=1809156065]
+transform = Transform3D(1, 0, 0, 0, 1.0000001, 3.7252903e-09, 0, 0, 1.0000001, 0, 0.9846835, 0.05225873)
+pixel_size = 0.002
+no_depth_test = true
+render_priority = 5
+modulate = Color(1, 0.84, 0.32, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "CREDITS"
+font = ExtResource("5_pixel")
+font_size = 160
+outline_size = 8
+
+[node name="Subtitle" type="Label3D" parent="Panel" unique_id=736702407]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0.05)
+pixel_size = 0.0012
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.62, 0.68, 0.78, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "EVACUATION ROUTE OPTIMIZER"
+font = ExtResource("6_dogi")
+font_size = 48
+outline_size = 5
+
+[node name="NowPlaying" type="Label3D" parent="Panel" unique_id=1027801430]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.68, 0.05)
+pixel_size = 0.0014
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.93, 0.95, 0.98, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "NOW PLAYING"
+font = ExtResource("6_dogi")
+font_size = 30
+outline_size = 4
+
+[node name="CreditsList" type="Node3D" parent="Panel" unique_id=1677227960]
+
+[node name="MusicTitle" type="Label3D" parent="Panel" unique_id=1740038996]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.66, 0.56, 0.05)
+pixel_size = 0.0016
+no_depth_test = true
+render_priority = 5
+modulate = Color(1, 0.84, 0.32, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "MUSIC CREDITS"
+font = ExtResource("5_pixel")
+outline_size = 6
+
+[node name="MusicList" type="Node3D" parent="Panel" unique_id=1261229685]
+
+[node name="SearchLabel" type="Label3D" parent="Panel" unique_id=765801748]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.84, 0.05)
+pixel_size = 0.0018
+no_depth_test = true
+render_priority = 5
+modulate = Color(1, 0.8392157, 0.32156864, 0.039215688)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "TYPE TO SEARCH MUSIC"
+font = ExtResource("5_pixel")
+font_size = 36
+outline_size = 5
+
+[node name="Hint" type="Label3D" parent="Panel" unique_id=1541206393]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.66, -0.7, 0.05)
+pixel_size = 0.0015
+no_depth_test = true
+render_priority = 5
+modulate = Color(0.62, 0.68, 0.78, 1)
+outline_modulate = Color(0, 0, 0, 0.85)
+text = "WHEEL: SCROLL  |  ESC: BACK"
+font = ExtResource("6_dogi")
+font_size = 28
+outline_size = 4
+
+[node name="BackButton" parent="Panel" unique_id=769028159 instance=ExtResource("2_btn")]
+transform = Transform3D(1, 0, 0, 0, 1.5, 0, 0, 0, 1, 0.68, -0.7, 0.035)
+action = &"back"
+caption = "BACK"
+label_font = ExtResource("5_pixel")
+label_size = 48
+label_pixel = 0.0024
+label_left = true
+dim_unselected = true
+base_color = Color(0.14, 0.11, 0.06, 0)
+hover_color = Color(0.35, 0.26, 0.04, 0.28)
+selected_color = Color(0.55, 0.42, 0.06, 0.35)
+
+[node name="BgmLayer" type="CanvasLayer" parent="." unique_id=219576776]
+layer = 100
+
+[node name="BgmPopup" parent="BgmLayer" unique_id=70262195 instance=ExtResource("4_bgm")]
+z_index = 20

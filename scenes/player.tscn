@@ -40,6 +40,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
 [node name="CameraSmooth" type="Node3D" parent="head" unique_id=1772439988]
 
 [node name="Camera3D" type="Camera3D" parent="head/CameraSmooth" unique_id=321400013]
+physics_interpolation_mode = 0
 far = 1024.0
 
 [node name="RayCast3D" type="RayCast3D" parent="head/CameraSmooth/Camera3D" unique_id=38687398]

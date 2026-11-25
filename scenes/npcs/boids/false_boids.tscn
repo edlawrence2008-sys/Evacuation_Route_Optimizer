@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://jrxjj0q6b43y"]
+
+[ext_resource type="Script" uid="uid://byvqf6rim4utk" path="res://scripts/world/false_boid_flock.gd" id="1_jxwmk"]
+
+[node name="FalseBoids" type="Node3D" unique_id=1862701325]
+script = ExtResource("1_jxwmk")

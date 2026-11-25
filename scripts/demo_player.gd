@@ -2032,8 +2032,7 @@ func _environment_summary(event: Dictionary) -> String:
 		"placeable_removed":
 			text = "placeable removed"
 		"water_placed":
-			# Legacy water recordings only; the core no longer emits this.
-			text = "legacy water placed"
+			text = "water placed"
 		"exit_added":
 			text = "exit added"
 		"exit_removed":

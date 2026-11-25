@@ -18,6 +18,8 @@ const CLOUD_SHADER: Shader = preload(
 @export_range(0.005, 0.2, 0.001) var noise_frequency: float = 0.052
 @export_range(0.05, 0.8, 0.01) var noise_gain: float = 0.5
 @export var night_tint: Color = Color(0.18, 0.21, 0.32)
+## Global playback speed multiplier used by Graphics > Sky & Clouds.
+@export_range(0.0, 4.0, 0.01) var speed_scale: float = 1.0
 ## Clouds are fully opaque before this view distance and invisible after it.
 @export var distance_fade_start: float = 250.0
 @export var distance_fade_end: float = 1000.0
@@ -47,7 +49,45 @@ var _layers: Array[Dictionary] = []
 func _ready() -> void:
 	add_to_group("minecraft_clouds")
 	_sun = get_node_or_null(sun_path) as DirectionalLight3D
+	_build_layers()
+	_update_colors(1.0)
 
+
+## Rebuilds both cloud layers from the current exported coverage/height/speed
+## values. Called by the Graphics menu when cloud coverage changes.
+func rebuild_layers() -> void:
+	for layer: Dictionary in _layers:
+		var node: Node3D = layer.get("node") as Node3D
+
+		if is_instance_valid(node):
+			remove_child(node)
+			node.queue_free()
+
+	_layers.clear()
+	_build_layers()
+	_update_colors(1.0)
+
+
+func set_coverage(primary: float, secondary: float) -> void:
+	var next_primary: float = clampf(primary, 0.05, 0.8)
+	var next_secondary: float = clampf(secondary, 0.05, 0.8)
+
+	if (
+		is_equal_approx(next_primary, primary_coverage)
+		and is_equal_approx(next_secondary, secondary_coverage)
+	):
+		return
+
+	primary_coverage = next_primary
+	secondary_coverage = next_secondary
+	rebuild_layers()
+
+
+func set_speed_scale(value: float) -> void:
+	speed_scale = maxf(value, 0.0)
+
+
+func _build_layers() -> void:
 	_add_layer(
 		"PrimaryClouds",
 		primary_height,
@@ -71,14 +111,12 @@ func _ready() -> void:
 		7919
 	)
 
-	_update_colors(1.0)
-
 
 func _process(delta: float) -> void:
 	for layer: Dictionary in _layers:
 		var node: Node3D = layer["node"]
 		var span: float = layer["span"]
-		node.position.x += float(layer["speed"]) * delta
+		node.position.x += float(layer["speed"]) * speed_scale * delta
 
 		# The field is ~1.9 km wide; wrapping happens well past the draw
 		# distance, so the change is invisible during normal play.

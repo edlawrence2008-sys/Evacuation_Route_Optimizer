@@ -13,44 +13,55 @@ action = &"quality"
 caption = "Quality"
 
 [node name="RenderScale" parent="LeftColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, 0.18, 0)
+position = Vector3(0, 0.27, 0)
 action = &"render"
 caption = "Render Scale"
 
 [node name="DrawDistance" parent="LeftColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, -0.09, 0)
+position = Vector3(0, 0.09, 0)
 action = &"distance"
 caption = "Draw Distance"
 
 [node name="Shadows" parent="LeftColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, -0.36, 0)
+position = Vector3(0, -0.09, 0)
 action = &"shadows"
 caption = "Shadows"
+
+[node name="ShadowDistance" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.27, 0)
+action = &"shadow_distance"
+caption = "Shadow Dist"
+
+[node name="Foliage" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.45, 0)
+action = &"foliage_distance"
+caption = "Foliage"
 
 [node name="RightColumn" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
 
-[node name="Clouds" parent="RightColumn" instance=ExtResource("1_btn")]
+[node name="SkyClouds" parent="RightColumn" instance=ExtResource("1_btn")]
 position = Vector3(0, 0.45, 0)
-action = &"clouds"
-caption = "Clouds"
+action = &"sky_clouds"
+caption = "Sky & Clouds"
 
 [node name="Occlusion" parent="RightColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, 0.18, 0)
+position = Vector3(0, 0.27, 0)
 action = &"ao"
 caption = "Ambient Occlusion"
 
 [node name="Fps" parent="RightColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, -0.09, 0)
+position = Vector3(0, 0.09, 0)
 action = &"fps"
 caption = "FPS Cap"
 
-[node name="Reset" parent="RightColumn" instance=ExtResource("1_btn")]
-<<<<<<< Updated upstream
-position = Vector3(0, -0.36, 0)
-=======
+[node name="WaterFx" parent="RightColumn" instance=ExtResource("1_btn")]
 position = Vector3(0, -0.09, 0)
->>>>>>> Stashed changes
+action = &"water"
+caption = "Water FX"
+
+[node name="Reset" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.27, 0)
 action = &"reset"
 caption = "Reset to Medium"
 

@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="Evacuation Route Optimizer"
 config/description="SHS Final Capstone Project"
-run/main_scene="uid://bbtjdcwal7ax6"
+run/main_scene="res://scenes/menu/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 boot_splash/show_image=false
 boot_splash/use_filter=false
@@ -27,12 +27,19 @@ buses/default_bus_layout="uid://dagd72wy2jgey"
 
 [autoload]
 
-GlobalData="*uid://cfbko60etcswu"
-CrowdManager="*uid://d1mkuyh2drlok"
-EvacuationManager="*uid://byoms34by2wh5"
+GlobalData="*res://scripts/GlobalData.gd"
+CrowdManager="*res://scripts/CrowdManager.gd"
+EvacuationManager="*res://evacuation_manager.gd"
 LogicNetwork="*res://scripts/logic/logic_network.gd"
 PerformanceSettings="*res://scripts/performance_settings.gd"
+MusicManager="*res://scripts/music_manager.gd"
 SaveManager="*res://scripts/save_manager.gd"
+DemoStore="*res://scripts/demo_store.gd"
+SimRecorder="*res://scripts/sim_recorder.gd"
+RuntimeExports="*res://scripts/runtime_exports.gd"
+DemoPlayer="*res://scripts/demo_player.gd"
+DemoComparer="*res://scripts/demo_comparer.gd"
+UIFocus="*res://scripts/ui_focus.gd"
 
 [debug]
 
@@ -46,7 +53,7 @@ mouse_cursor/custom_image="uid://q4uijdgfug2i"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/crt/plugin.cfg", "res://addons/day_and_night_cycle/plugin.cfg")
+enabled=PackedStringArray("res://addons/crt/plugin.cfg", "res://addons/day_and_night_cycle/plugin.cfg", "res://addons/content_generators/plugin.cfg")
 
 [global_group]
 

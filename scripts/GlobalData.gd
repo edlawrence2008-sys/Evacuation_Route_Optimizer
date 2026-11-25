@@ -8,6 +8,25 @@ var npcs_spawned: int = 0
 ## Default evacuation behaviour inherited by newly spawned members.
 var evacuation_mode: bool = true
 var is_spawning_enabled: bool = false # Default to false so they don't spawn directly on start
+## Paused is distinct from stopped: counters, quotas, and the current run stay
+## intact, but spawners stop emitting until resumed.
+var is_spawning_paused: bool = false
+
+## Run mode for the optimizer. False is the baseline: agents choose exits with
+## the local logit model. The bridge sets this; Member instances only honour an
+## explicit per-agent assignment.
+var optimizer_enabled: bool = false
+
+## Last optimizer estimate, for the results panel's predicted-vs-measured line.
+## Predicted values are never written into the measured summary fields.
+var optimizer_last_estimate: float = 0.0
+var optimizer_last_algorithm: String = ""
+var optimizer_last_mode: String = ""
+
+## Bumped whenever the world or an exit changes in a way that invalidates an
+## optimizer result. A result whose source version differs is applied only after
+## re-solving. Chunk streaming does not bump it.
+var environment_version: int = 0
 
 ## Exported Agent/Member properties applied to every new spawn and, on Apply,
 ## to every live agent. Owned by the Agents category in the inventory.
@@ -15,6 +34,52 @@ var agent_overrides: Dictionary = {}
 
 ## Persistent dialogue/story flags, e.g. whether Consul's intro was seen.
 var dialogue_flags: Dictionary = {}
+
+# ============================================================
+# SIMULATION CLOCK & DETERMINISM
+# ============================================================
+
+## Monotonic physics time for the current session. Advancing this only in
+## _physics_process means pausing the game, a menu, or a frame hitch cannot
+## inflate measured evacuation times. All run metrics must use sim_now().
+var sim_time: float = 0.0
+
+## Seed used for the current run. Change it (or call reset_determinism) to
+## reproduce a run exactly. Agent-local streams are derived from
+## (rng_seed, agent_serial), so spawn order no longer depends on instance IDs.
+@export var rng_seed: int = 12345
+var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+var _agent_serial: int = 0
+
+
+func _ready() -> void:
+	rng.seed = rng_seed
+	seed(rng_seed) # legacy randf_range() callers become reproducible too
+
+
+func _physics_process(delta: float) -> void:
+	# Paused trees do not tick, so sim_time stops while the game is paused.
+	sim_time += delta
+
+
+func sim_now() -> float:
+	return sim_time
+
+
+## Monotonic serial assigned on agent spawn. Used as the deterministic
+## right-of-way tie-break instead of the engine instance id.
+func claim_agent_serial() -> int:
+	_agent_serial += 1
+	return _agent_serial
+
+
+func reset_determinism(seed_value: int = -1) -> void:
+	if seed_value >= 0:
+		rng_seed = seed_value
+
+	_agent_serial = 0
+	rng.seed = rng_seed
+	seed(rng_seed)
 
 
 ## Release static scene caches while the rendering server is still alive.
@@ -36,24 +101,63 @@ var _section_quotas: Dictionary = {}
 
 signal npc_evacuated(total_count: int)
 signal npc_spawned(total_count: int)
-<<<<<<< Updated upstream
-=======
 ## Emitted with the spawned node so measurement/replay tooling can attach to it.
 signal agent_spawned(npc: Node)
 ## Any runtime environment edit that can change navigation or the scenario.
 ## `change_type` is one of: block_added, block_removed, placeable_added,
-## placeable_removed, exit_added, exit_removed, exit_enabled, exit_disabled.
-## Old demo files may also contain `water_placed` from the archived legacy water
-## system. `detail` carries recorder-specific fields (cells, scene, item).
+## placeable_removed, water_placed, exit_added, exit_removed, exit_enabled,
+## exit_disabled. `detail` carries recorder-specific fields (cells, scene, item).
 signal environment_changed(location: Vector3, change_type: String, detail: Dictionary)
->>>>>>> Stashed changes
 signal spawning_reset() # Signal to reset local spawner states
 signal spawning_started()
 signal spawning_stopped()
+signal spawning_paused()
+signal spawning_resumed()
 
-func register_npc_spawned() -> void:
+func register_npc_spawned(npc: Node = null) -> void:
 	npcs_spawned += 1
 	npc_spawned.emit(npcs_spawned)
+
+	if npc != null and is_instance_valid(npc):
+		agent_spawned.emit(npc)
+
+
+## Announces an agent that was created outside a spawner (demo import, debug
+## spawn) to recorder/listener code without touching the run counters. The
+## caller is responsible for restoring npcs_spawned/npcs_evacuated, because an
+## imported agent was already counted in the recording.
+func notify_agent_spawned(npc: Node) -> void:
+	if npc != null and is_instance_valid(npc):
+		agent_spawned.emit(npc)
+
+
+## Keeps future serials strictly above an imported population so a new spawn
+## cannot collide with a recorded agent's right-of-way tie-break id.
+func set_agent_serial_floor(value: int) -> void:
+	_agent_serial = maxi(_agent_serial, value)
+
+
+## Public entry point for systems that modify the world after load. The recorder
+## listens to this; gameplay code may ignore it.
+func report_environment_change(
+	location: Vector3,
+	change_type: String,
+	detail: Dictionary = {}
+) -> void:
+	bump_environment_version()
+	environment_changed.emit(location, change_type, detail)
+
+
+## Invalidates any optimizer result that was computed against the previous
+## world state. Exit availability changes call this too.
+func bump_environment_version() -> void:
+	environment_version += 1
+
+
+## Sets the run's assignment mode. The optimizer bridge owns the decision; this
+## flag makes the mode visible to the recorder and the panels.
+func set_optimizer_enabled(enabled: bool) -> void:
+	optimizer_enabled = enabled
 
 
 ## Cross-spawner spawn-slot reservation. Physics bodies spawned in the same
@@ -214,7 +318,18 @@ func increment_section_spawn_count(section: String) -> void:
 	var current: int = get_section_spawn_count(section)
 	_section_spawn_counts[section] = current + 1
 
+
+## Restores a shared section's spawn count after importing a recorded state.
+## Without this, reloading a mid-run demo would let every section re-spend its
+## full quota.
+func set_section_spawn_count(section: String, count: int) -> void:
+	if section.is_empty():
+		return
+
+	_section_spawn_counts[section] = maxi(0, count)
+
 func reset_all() -> void:
+	kill_all_npcs()
 	_independent_quotas.clear()
 	_section_registrations.clear()
 	_section_spawn_counts.clear()
@@ -223,26 +338,99 @@ func reset_all() -> void:
 	npcs_spawned = 0
 	npcs_evacuated = 0
 	is_spawning_enabled = false
+	is_spawning_paused = false
+
+## Pauses or resumes spawning without changing quotas, counters, determinism,
+## or the live crowd. A paused run is still "started"; Start clears the pause.
+func set_spawning_paused(paused: bool) -> void:
+	if is_spawning_paused == paused:
+		return
+
+	is_spawning_paused = paused
+
+	if paused:
+		spawning_paused.emit()
+	else:
+		spawning_resumed.emit()
+
+
+## Removes every live NPC from the scene. The group is cleared immediately so
+## counters and spawners see the empty crowd on the same frame; queue_free then
+## releases the nodes at the end of the frame.
+func kill_all_npcs() -> int:
+	var tree: SceneTree = get_tree()
+
+	if tree == null:
+		return 0
+
+	var killed: int = 0
+
+	for npc: Node in tree.get_nodes_in_group("npc"):
+		if npc == null or not is_instance_valid(npc):
+			continue
+
+		npc.remove_from_group("npc")
+		npc.queue_free()
+		killed += 1
+
+	# Retained evacuated agents are outside the npc group by design, but a full
+	# kill must still remove them and free their receiving slots.
+	var manager := get_node_or_null("/root/EvacuationManager")
+
+	if manager != null and manager.has_method("clear_retained_agents"):
+		manager.clear_retained_agents(true)
+
+	return killed
+
 
 func start_spawning() -> void:
+	var was_paused: bool = is_spawning_paused
+	is_spawning_paused = false
+
+	if was_paused:
+		spawning_resumed.emit()
+
 	if is_spawning_enabled:
 		return
+	# Every run starts from the same seed and agent numbering, so a repeated
+	# run on an unchanged layout is bit-for-bit reproducible. If agents from a
+	# previous run are still alive, keep the serial counter monotonic instead:
+	# two live agents must never share the right-of-way tie-break id.
+	var tree: SceneTree = get_tree()
+
+	if tree == null or tree.get_nodes_in_group("npc").is_empty():
+		reset_determinism()
+	else:
+		rng.seed = rng_seed
+		seed(rng_seed)
+
+	clear_spawn_reservations()
 	is_spawning_enabled = true
 	spawning_started.emit()
 
 func stop_spawning() -> void:
+	var was_paused: bool = is_spawning_paused
+	is_spawning_paused = false
+
+	if was_paused:
+		spawning_resumed.emit()
+
 	if not is_spawning_enabled:
 		return
 	is_spawning_enabled = false
 	spawning_stopped.emit()
 
 func reset_spawning() -> void:
-	# Keeps sections and quotas intact, but resets current spawn counters and state
+	# A reset is a new run: stop spawning, remove every live NPC, and reset
+	# counters. Quotas and section registrations stay intact.
+	bump_environment_version()
+	kill_all_npcs()
 	_section_spawn_counts.clear()
 	clear_spawn_reservations()
 	npcs_spawned = 0
 	npcs_evacuated = 0
 	is_spawning_enabled = false
+	is_spawning_paused = false
 	spawning_reset.emit()
 
 func _registration_key(spawner: Object) -> int:

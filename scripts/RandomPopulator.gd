@@ -17,6 +17,25 @@ extends Node
 @export var member_scene: PackedScene = preload("res://scenes/npcs/Member.tscn")
 
 
+func _ready() -> void:
+	add_to_group("random_populator")
+	# New maps start from the Settings > Gameplay defaults. A save load
+	# overrides these through RuntimeExports.apply_live().
+	var defaults: Dictionary = RuntimeExports.get_default_section("populator")
+
+	if defaults.is_empty():
+		return
+
+	if defaults.has("member_count"):
+		member_count = maxi(1, int(defaults["member_count"]))
+	if defaults.has("start_evacuating"):
+		start_evacuating = bool(defaults["start_evacuating"])
+	if defaults.has("only_pathfindable_blocks"):
+		only_pathfindable_blocks = bool(defaults["only_pathfindable_blocks"])
+	if defaults.has("spawn_clearance"):
+		spawn_clearance = maxf(0.0, float(defaults["spawn_clearance"]))
+
+
 func populate() -> Dictionary:
 	var tree := get_tree()
 	if tree == null:
@@ -43,7 +62,7 @@ func populate() -> Dictionary:
 			}
 
 	var candidates: Array[Vector3i] = []
-	for cell: Vector3i in grid.get_used_cells():
+	for cell: Vector3i in grid.get_used_block_cells():
 		if grid.is_nav_cell_valid(cell):
 			candidates.append(cell)
 
@@ -97,7 +116,7 @@ func populate() -> Dictionary:
 		if member.has_method("set_evacuation_mode"):
 			member.set_evacuation_mode(start_evacuating)
 
-		GlobalData.register_npc_spawned()
+		GlobalData.register_npc_spawned(member)
 
 		var manager := tree.root.get_node_or_null("EvacuationManager")
 		if manager and manager.has_method("register_npc"):

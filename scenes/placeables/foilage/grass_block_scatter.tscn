@@ -1,0 +1,26 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/placeables/grass_block_scatter.gd" id="1_script"]
+[ext_resource type="ArrayMesh" path="res://resources/placeables/grass_block_mesh.tres" id="2_block"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_select"]
+size = Vector3(1, 1, 1)
+
+[node name="GrassBlockScatter" type="Node3D" groups=["placeables", "foliage"]]
+script = ExtResource("1_script")
+
+[node name="Block" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.5, 0)
+mesh = ExtResource("2_block")
+
+[node name="Scatter" type="MultiMeshInstance3D" parent="."]
+position = Vector3(0, 1.0, 0)
+
+[node name="SelectionArea" type="Area3D" parent="."]
+collision_layer = 7
+collision_mask = 3
+monitoring = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SelectionArea"]
+position = Vector3(0, 0.5, 0)
+shape = SubResource("BoxShape3D_select")

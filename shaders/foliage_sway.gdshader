@@ -14,6 +14,16 @@ uniform bool flip_backface_normals = false;
 // Grass-only stable lighting: use a world-up normal and view direction so the
 // brightness depends on the sun, not on which crossed card faces the camera.
 uniform bool stable_grass_shading = false;
+// Blend between the card normal and world-up. Fully up is stable but flat;
+// 0.75 keeps light from flipping between crossed cards while preserving shape.
+uniform float normal_up_bias : hint_range(0.0, 1.0, 0.01) = 0.75;
+// Small additive lift so shaded foliage does not collapse to black.
+uniform float ambient_lift : hint_range(0.0, 1.0, 0.01) = 0.18;
+uniform vec4 ambient_lift_tint : source_color = vec4(0.55, 0.70, 0.55, 1.0);
+// Coherent gust noise over world XZ, layered on top of the per-card sway.
+uniform float gust_strength : hint_range(0.0, 2.0, 0.01) = 0.35;
+uniform float gust_scale : hint_range(0.001, 0.5, 0.001) = 0.05;
+uniform float gust_speed : hint_range(0.0, 5.0, 0.01) = 0.35;
 
 // Green-masked subsurface scattering for foliage. Only pixels where green is
 // the dominant albedo channel receive the extra translucency term.
@@ -45,6 +55,23 @@ float world_phase(vec3 world_origin) {
 		* 6.2831853;
 }
 
+float foliage_hash21(vec2 p) {
+	p = fract(p * vec2(123.34, 456.21));
+	p += dot(p, p + 45.32);
+	return fract(p.x * p.y);
+}
+
+float foliage_value_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	float a = foliage_hash21(i);
+	float b = foliage_hash21(i + vec2(1.0, 0.0));
+	float c = foliage_hash21(i + vec2(0.0, 1.0));
+	float d = foliage_hash21(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 void vertex() {
 	float height_factor = clamp(1.0 - UV.y, 0.0, 1.0);
 	height_factor = height_factor * height_factor;
@@ -55,6 +82,13 @@ void vertex() {
 
 	float bend = sin(t) * 0.65 + sin(t * 2.17 + 1.3) * 0.25;
 	float sideways = cos(t * 0.73 + 0.4) * 0.4;
+
+	// Coherent gust: sampled at the unbent world origin so neighbouring cards
+	// lean together instead of each card inventing its own wind.
+	vec2 gust_uv = MODEL_MATRIX[3].xz * gust_scale
+		- vec2(1.0, 0.35) * TIME * gust_speed;
+	float gust = (foliage_value_noise(gust_uv) - 0.5) * 2.0 * gust_strength;
+	bend += gust;
 
 	vec3 world_offset = vec3(bend, 0.0, sideways);
 	world_offset *= sway_height * sway_strength * height_factor;
@@ -73,10 +107,15 @@ void fragment() {
 	SPECULAR = 0.0;
 
 	if (stable_grass_shading) {
-		NORMAL = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+		vec3 up_view = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+		NORMAL = normalize(mix(NORMAL, up_view, normal_up_bias));
 	} else if (flip_backface_normals && !FRONT_FACING) {
 		NORMAL = -NORMAL;
 	}
+
+	// Additive lift for green foliage only; trunks and brown cards stay dark.
+	EMISSION = ALBEDO * ambient_lift_tint.rgb
+		* ambient_lift * foliage_green_mask(ALBEDO);
 }
 
 void light() {
@@ -85,8 +124,10 @@ void light() {
 	vec3 v = stable_grass_shading ? up_view : normalize(VIEW);
 	vec3 l = normalize(LIGHT);
 	// Bias the card normal upward so thin, vertical foliage still catches light.
+	// NORMAL was already biased toward up for stable grass in fragment(); use it
+	// directly here so the bias is not applied twice.
 	vec3 n2 = stable_grass_shading
-		? up_view
+		? n
 		: normalize(vec3(0.0, 1.0, 0.0) + 0.5 * n);
 	float kd = max(dot(l, n2), 0.0);
 	float ndl = max(dot(n, l), 0.0);

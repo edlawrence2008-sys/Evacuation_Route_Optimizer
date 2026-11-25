@@ -18,9 +18,9 @@ static func collect_columns(grid: NavGridMap) -> Dictionary:
 	var columns: Dictionary = {}
 
 	for chunk: Vector2i in grid.get_populated_chunks():
-		var cells: Dictionary = grid.get_chunk_cells(chunk)
+		var cells: Array[Vector3i] = grid.get_chunk_cell_list(chunk)
 		for cell: Vector3i in cells:
-			var item: int = grid.get_cell_item(cell)
+			var item: int = grid.get_block_item(cell)
 			if item == -1:
 				continue
 			var key := Vector2i(cell.x, cell.z)
@@ -148,7 +148,6 @@ static func render_isometric(grid: NavGridMap, image_size: int = 256) -> Image:
 	if columns.is_empty():
 		return null
 
-	var bounds: Rect2i = get_bounds(columns)
 	var heights: Vector2i = get_height_range(columns)
 	var tw: int = 4
 	var th: int = 2
@@ -290,6 +289,16 @@ static func format_statistics(grid: NavGridMap) -> String:
 	var stuck_time: float = float(summary.get("total_stuck_time", 0.0))
 	var stuck_strikes: int = int(summary.get("total_stuck_strikes", 0))
 
+	var receiving_occupancy: int = int(summary.get("receiving_occupancy", 0))
+	var peak_receiving: int = int(summary.get("peak_receiving_occupancy", 0))
+	var receiving_capacity: int = int(summary.get("receiving_capacity", 0))
+	var receiving_queue: int = int(summary.get("receiving_queue", 0))
+	var capacity_events: int = (
+		int(summary.get("capacity_waits", 0))
+		+ int(summary.get("capacity_rejections", 0))
+		+ int(summary.get("queue_full_rejections", 0))
+	)
+
 	var lines: Array[String] = [
 		"POPULATION",
 		"Alive %d / %d" % [alive, cap],
@@ -298,13 +307,41 @@ static func format_statistics(grid: NavGridMap) -> String:
 		"Avg evac %s   P95 %s" % [_format_time(average_time), _format_time(p95_time)],
 		"Peak density %.1f" % peak_density,
 		"Distance %.0f m   Stuck %s (%d)" % [total_distance, _format_time(stuck_time), stuck_strikes],
+	]
+
+	if (
+		receiving_occupancy > 0
+		or receiving_queue > 0
+		or capacity_events > 0
+		or receiving_capacity > 0
+	):
+		var capacity_text: String = "unlimited"
+
+		if not bool(summary.get("receiving_unlimited", true)):
+			capacity_text = str(receiving_capacity)
+
+			if int(summary.get("receiving_unlimited_exits", 0)) > 0:
+				capacity_text += " + unlimited"
+
+		lines.append("")
+		lines.append(
+			"RECEIVING AREA   %d / %s occupied   Peak %d"
+			% [receiving_occupancy, capacity_text, peak_receiving]
+		)
+		lines.append(
+			"Queue %d   Capacity events %d"
+			% [receiving_queue, capacity_events]
+		)
+
+	var map_lines: Array[String] = [
 		"",
 		"MAP",
 		"Columns %d   Height %d..%d" % [columns.size(), heights.x, heights.y],
 		"Exits %d   Spawners %d" % [exits.size(), spawners.size()],
 		"Heat %d cells   Peak %.2f" % [heat_map.size(), max_heat],
-		"Ideal routes %d   Avg %.0f m" % [route_count, route_total / maxf(float(route_count), 1.0)],
+		"Ideal routes (nearest exit) %d   Avg %.0f m" % [route_count, route_total / maxf(float(route_count), 1.0)],
 	]
+	lines.append_array(map_lines)
 	return "\n".join(PackedStringArray(lines))
 
 
@@ -438,8 +475,8 @@ static func _fit_square(source: Image, image_size: int) -> Image:
 		resized,
 		Rect2i(0, 0, width, height),
 		Vector2i(
-			(image_size - width) / 2,
-			(image_size - height) / 2
+			int((image_size - width) / 2.0),
+			int((image_size - height) / 2.0)
 		)
 	)
 	return square

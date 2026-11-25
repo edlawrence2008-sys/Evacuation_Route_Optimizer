@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scenes/inventory/OptimizerPanel.gd" id="1_panel"]
+[ext_resource type="Texture2D" path="res://textures/menu/tab.png" id="2_bg"]
+
+[node name="OptimizerPanel" type="Control"]
+layout_mode = 3
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_right = 246.0
+offset_bottom = -352.0
+grow_vertical = 2
+visible = false
+script = ExtResource("1_panel")
+
+[node name="InventoryBgMain" type="Sprite2D" parent="."]
+z_index = -1
+texture_filter = 1
+texture_repeat = 1
+position = Vector2(123, 148)
+scale = Vector2(2.3238342, 1.184)
+texture = ExtResource("2_bg")

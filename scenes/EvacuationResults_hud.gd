@@ -89,6 +89,40 @@ func _refresh() -> void:
 			_format_duration(float(summary.get("max_time", 0.0))),
 		]
 	)
+
+	var late_agents: Array = summary.get("late_agents", [])
+
+	if not late_agents.is_empty():
+		var late_parts: Array[String] = []
+
+		for index: int in range(mini(3, late_agents.size())):
+			var entry: Dictionary = late_agents[index]
+			late_parts.append(
+				"#%d %s · %.2f m/s · pre %s · stuck %s · %d changes"
+				% [
+					int(entry.get("agent_serial", -1)),
+					_format_duration(float(entry.get("evacuation_time", 0.0))),
+					float(entry.get("desired_speed", 0.0)),
+					_format_duration(float(entry.get("pre_movement_wait", 0.0))),
+					_format_duration(float(entry.get("stuck_time", 0.0))),
+					int(entry.get("route_changes", 0)),
+				]
+			)
+
+		lines.append("Latest: " + "  |  ".join(late_parts))
+
+	if GlobalData.optimizer_last_estimate > 0.0:
+		var measured_max: float = float(summary.get("max_time", 0.0))
+		lines.append(
+			"Optimizer: %s/%s · predicted T %.1f s · measured max %.1f s (%+.1f s)"
+			% [
+				GlobalData.optimizer_last_algorithm,
+				GlobalData.optimizer_last_mode,
+				GlobalData.optimizer_last_estimate,
+				measured_max,
+				measured_max - GlobalData.optimizer_last_estimate,
+			]
+		)
 	lines.append(
 		"Failed paths: %d   Deaths: %d   Peak density: %.1f"
 		% [
@@ -97,6 +131,26 @@ func _refresh() -> void:
 			float(summary.get("peak_density", 0.0)),
 		]
 	)
+	var contact: Dictionary = summary.get("contact_force_stats", {})
+
+	if not contact.is_empty() and int(contact.get("samples", 0)) > 0:
+		var above: Dictionary = contact.get("agent_seconds_above", {})
+		lines.append(
+			"Contact: peak %.2f kN at %.1f s   p99 loaded: %.2f kN"
+			% [
+				float(contact.get("peak_force", 0.0)) / 1000.0,
+				float(contact.get("peak_time", 0.0)),
+				float(contact.get("p99_loaded", 0.0)) / 1000.0,
+			]
+		)
+		lines.append(
+			"Compression: >2 kN %.2f agent-s, >3 kN %.2f agent-s (%.3f%% samples in contact)"
+			% [
+				float(above.get("2000", 0.0)),
+				float(above.get("3000", 0.0)),
+				float(contact.get("nonzero_fraction", 0.0)) * 100.0,
+			]
+		)
 	lines.append(
 		"Distance: %.0f m total (%.1f m avg)   Stuck: %s (%d strikes)"
 		% [
@@ -125,6 +179,83 @@ func _refresh() -> void:
 					float(exit.get("throughput_per_minute", 0.0)),
 				]
 			)
+
+			var details: Array[String] = []
+			var service_rate: float = float(exit.get("service_rate", 0.0))
+			var capacity: int = int(exit.get("receiving_capacity", 0))
+			var occupancy: int = int(exit.get("receiving_occupancy", 0))
+			var queue: int = int(exit.get("current_queue", 0))
+			var average_wait: float = float(exit.get("average_wait", 0.0))
+			var capacity_rejections: int = int(
+				exit.get("capacity_rejections", 0)
+			)
+			var capacity_waits: int = int(exit.get("capacity_waits", 0))
+
+			if service_rate > 0.0:
+				details.append("%.2f/s service" % service_rate)
+			if capacity > 0:
+				details.append("%d/%d safe area" % [occupancy, capacity])
+			elif occupancy > 0:
+				details.append("%d in safe area" % occupancy)
+			if queue > 0:
+				details.append("%d waiting" % queue)
+			if average_wait >= 0.1:
+				details.append("wait %s" % _format_duration(average_wait))
+			if capacity_waits + capacity_rejections > 0:
+				details.append(
+					"%d full waits / %d rejections"
+					% [capacity_waits, capacity_rejections]
+				)
+
+			if not details.is_empty():
+				lines.append(
+					"   [color=gray]%s[/color]"
+					% " · ".join(PackedStringArray(details))
+				)
+
+	var receiving_occupancy: int = int(
+		summary.get("receiving_occupancy", 0)
+	)
+	var receiving_capacity: int = int(summary.get("receiving_capacity", 0))
+	var receiving_queue: int = int(summary.get("receiving_queue", 0))
+	var capacity_events: int = (
+		int(summary.get("capacity_waits", 0))
+		+ int(summary.get("capacity_rejections", 0))
+		+ int(summary.get("queue_full_rejections", 0))
+	)
+
+	if (
+		receiving_occupancy > 0
+		or receiving_queue > 0
+		or capacity_events > 0
+		or receiving_capacity > 0
+	):
+		var capacity_text: String = "unlimited"
+
+		if not bool(summary.get("receiving_unlimited", true)):
+			capacity_text = str(receiving_capacity)
+
+			if int(summary.get("receiving_unlimited_exits", 0)) > 0:
+				capacity_text += " + unlimited"
+
+		lines.append("")
+		lines.append(
+			"Receiving areas: [b]%d[/b] / %s occupied (peak %d)   Queue: %d"
+			% [
+				receiving_occupancy,
+				capacity_text,
+				int(summary.get("peak_receiving_occupancy", 0)),
+				receiving_queue,
+			]
+		)
+		lines.append(
+			"Capacity events: %d waits, %d rejections   Retained: %d"
+			% [
+				int(summary.get("capacity_waits", 0)),
+				int(summary.get("capacity_rejections", 0)),
+				int(summary.get("retained_agents", 0)),
+			]
+		)
 
 	lines.append("")
 	lines.append("[color=gray]F4: toggle results · F3: statistics[/color]")
