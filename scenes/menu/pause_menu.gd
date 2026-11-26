@@ -735,16 +735,32 @@ func _ensure_settings_ui() -> void:
 	_move_settings_button("Fps", graphics_right, -0.09)
 	_move_settings_button("Reset", graphics_right, -0.36)
 
-	_move_settings_button("AgentLimit", gameplay_left, 0.35)
+	_move_settings_button("AgentLimit", gameplay_left, 0.45)
 	_ensure_water_button(
-		gameplay_left, "ViewRoll", "view_roll", "View Roll", 0.05
+		gameplay_left, "ViewRoll", "view_roll", "View Roll", 0.22
+	)
+	_ensure_water_button(
+		gameplay_left, "Stability", "stability", "Stability", -0.01
+	)
+	_ensure_water_button(
+		gameplay_left, "Destruction", "destruction", "Destruction", -0.24
 	)
 	_ensure_water_button(
 		gameplay_right,
 		"ExportDefaults",
 		"export_defaults",
 		"Simulation Defaults",
-		0.35
+		0.45
+	)
+	_ensure_water_button(
+		gameplay_right, "PhysicsLevel", "physics_level", "Physics", 0.22
+	)
+	_ensure_water_button(
+		gameplay_right,
+		"StabilityOverlay",
+		"stability_debug",
+		"Stability Overlay",
+		-0.01
 	)
 
 	_move_settings_button("Volume", audio_left, 0.10)
@@ -779,7 +795,7 @@ func _ensure_settings_ui() -> void:
 
 	for entry in [
 		[_graphics_panel, "GraphicsBack", -0.62],
-		[_gameplay_panel, "GameplayBack", -0.25],
+		[_gameplay_panel, "GameplayBack", -0.62],
 		[_audio_panel, "AudioBack", -0.15],
 		[_controls_panel, "ControlsBack", -0.15],
 	]:
@@ -2206,6 +2222,14 @@ func _dynamic_caption(action: String) -> String:
 			return "Distance: %d chunks" % PerformanceSettings.mesh_radius
 		"agents":
 			return "Agents: " + PerformanceSettings.agent_cap_name()
+		"stability":
+			return "Stability: " + PerformanceSettings.stability_name()
+		"destruction":
+			return "Destruction: " + PerformanceSettings.destruction_name()
+		"physics_level":
+			return "Physics: " + PerformanceSettings.physics_level_name()
+		"stability_debug":
+			return "Stability Overlay: " + PerformanceSettings.stability_debug_name()
 		"shadows":
 			return "Shadows: " + PerformanceSettings.shadows_name()
 		"shadow_distance":
@@ -2492,6 +2516,18 @@ func _click_at(screen_position: Vector2) -> void:
 			_refresh_labels()
 		"agents":
 			PerformanceSettings.cycle_agent_cap()
+			_refresh_labels()
+		"stability":
+			PerformanceSettings.toggle_stability()
+			_refresh_labels()
+		"destruction":
+			PerformanceSettings.toggle_destruction()
+			_refresh_labels()
+		"physics_level":
+			PerformanceSettings.cycle_physics_level()
+			_refresh_labels()
+		"stability_debug":
+			PerformanceSettings.toggle_stability_debug()
 			_refresh_labels()
 		"shadows":
 			PerformanceSettings.toggle_shadows()

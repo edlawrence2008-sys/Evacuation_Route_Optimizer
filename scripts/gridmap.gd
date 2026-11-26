@@ -57,6 +57,13 @@ var authored_route_cells: Dictionary = {}
 @export var min_block_y: int = -256
 @export var max_block_y: int = 255
 
+## Structural settings, mirrored from PerformanceSettings.apply_all().
+## `stability_enabled` computes the support field; `physics_level` decides what
+## happens when a cell loses support (0 off, 1 remove, 2 remove + debris).
+@export var stability_enabled: bool = true
+@export var physics_level: int = 1
+@export var stability_debug: bool = false
+
 @export var debug_greedy_colors: bool = false:
 	set(value):
 		debug_greedy_colors = value

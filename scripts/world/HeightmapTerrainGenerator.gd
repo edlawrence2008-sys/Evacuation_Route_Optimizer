@@ -39,7 +39,11 @@ const SIZE_CHUNK: int = 16
 
 @export_group("Blocks")
 @export var surface_item: int = 44
+## Optional block name override for the top layer ("grass_normal"). Resolved
+## through BlockIds; empty means `surface_item` is used.
+@export var surface_block: String = ""
 @export var subsurface_item: int = 44
+@export var subsurface_block: String = ""
 @export var column_depth: int = 3
 ## Bottom slab placed on the low side of every one-block terrain step. It splits
 ## the riser into two half-block steps and softens the dark terrace contour.
@@ -59,7 +63,7 @@ func get_id() -> String:
 
 
 func get_version() -> int:
-	return 1
+	return 2
 
 
 func get_params() -> Dictionary:
@@ -76,10 +80,15 @@ func get_params() -> Dictionary:
 		"ridge_amount": ridge_amount,
 		"coarse_spacing": coarse_spacing,
 		"surface_item": surface_item,
+		"surface_block": surface_block,
 		"subsurface_item": subsurface_item,
+		"subsurface_block": subsurface_block,
 		"column_depth": column_depth,
 		"step_slab_item": step_slab_item,
 		"step_slabs_enabled": step_slabs_enabled,
+		"bedrock_enabled": bedrock_enabled,
+		"bedrock_item": bedrock_item,
+		"bedrock_block": bedrock_block,
 	}
 
 
@@ -103,13 +112,30 @@ func apply_params(params: Dictionary) -> void:
 	ridge_amount = clampf(float(params.get("ridge_amount", ridge_amount)), 0.0, 1.0)
 	coarse_spacing = maxi(1, int(params.get("coarse_spacing", coarse_spacing)))
 	surface_item = int(params.get("surface_item", surface_item))
+	surface_block = String(params.get("surface_block", surface_block))
 	subsurface_item = int(params.get("subsurface_item", subsurface_item))
+	subsurface_block = String(params.get("subsurface_block", subsurface_block))
 	column_depth = maxi(1, int(params.get("column_depth", column_depth)))
 	step_slab_item = int(params.get("step_slab_item", step_slab_item))
 	step_slabs_enabled = bool(
 		params.get("step_slabs_enabled", step_slabs_enabled)
 	)
 	invalidate()
+
+
+## `surface_block` wins when set; otherwise the explicit item id is used.
+func _surface_item_id() -> int:
+	if not surface_block.strip_edges().is_empty():
+		return BLOCK_IDS.id_for_name(surface_block)
+	return surface_item
+
+
+func _subsurface_item_id() -> int:
+	if not subsurface_block.strip_edges().is_empty():
+		return BLOCK_IDS.id_for_name(subsurface_block)
+	if subsurface_item >= 0:
+		return subsurface_item
+	return _surface_item_id()
 
 
 ## Call after changing exported fields directly (the inspector does not know
@@ -166,8 +192,8 @@ func sample_column(x: int, z: int) -> Dictionary:
 	var top: int = _height_at(x, z)
 	return {
 		"height": top,
-		"surface_item": surface_item,
-		"subsurface_item": subsurface_item,
+		"surface_item": _surface_item_id(),
+		"subsurface_item": _subsurface_item_id(),
 		"depth": maxi(1, column_depth),
 	}
 
@@ -182,6 +208,8 @@ func generate_column(
 	var max_y: int = int(context.get("max_y", 255))
 	var origin: Vector2i = chunk * chunk_size
 	var depth: int = maxi(1, column_depth)
+	var surface: int = _surface_item_id()
+	var subsurface: int = _subsurface_item_id()
 
 	_ensure_coarse()
 
@@ -220,9 +248,18 @@ func generate_column(
 
 				result.append({
 					"position": Vector3i(world_x, y, world_z),
-					"item": surface_item if step == 0 else subsurface_item,
+					"item": surface if step == 0 else subsurface,
 					"orientation": 0,
 				})
+
+			_append_bedrock(
+				result,
+				world_x,
+				world_z,
+				top - depth,
+				min_y,
+				max_y
+			)
 
 			if not step_slabs_enabled or step_slab_item < 0:
 				continue

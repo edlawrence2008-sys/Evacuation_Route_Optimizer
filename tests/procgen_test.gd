@@ -364,27 +364,42 @@ func _test_flat_generator() -> void:
 			var cell: Vector3i = entry["position"]
 			cells[cell] = int(entry["item"])
 
-	_check(cells.size() == 80, "flat generator produces 80 cells")
+	_check(cells.size() == 160, "flat generator produces 80 surface + 80 bedrock cells")
 	_check(
 		generator.generate_column(Vector2i(5, 5), {}).is_empty(),
 		"flat generator is bounded"
 	)
 
+	var surface_cells: int = 0
+	var bedrock_cells: int = 0
 	var valid: bool = true
+	var bedrock_item: int = generator.resolved_bedrock_item()
 
 	for cell: Vector3i in cells:
+		var item: int = cells[cell]
+
+		if item == bedrock_item:
+			bedrock_cells += 1
+			if cell.y != -1:
+				valid = false
+				break
+			continue
+
+		surface_cells += 1
 		if (
 			cell.y != 0
 			or cell.x < -5
 			or cell.x > 4
 			or cell.z < -3
 			or cell.z > 4
-			or cells[cell] != 44
+			or item != 44
 		):
 			valid = false
 			break
 
-	_check(valid, "flat generator matches the shipped 10 x 8 platform")
+	_check(surface_cells == 80, "flat generator surface count")
+	_check(bedrock_cells == 80, "flat generator anchors every column")
+	_check(valid, "flat generator matches the shipped 10 x 8 platform, bedrock one block below")
 	_check(generator.get_id() == "flat_v1", "flat generator identity")
 
 
@@ -401,7 +416,7 @@ func _test_world_recipe() -> void:
 		Vector2i(0, 0),
 		data["sections"]
 	)
-	_check(decoded.size() == 25, "recipe chunk cell count")
+	_check(decoded.size() == 50, "recipe chunk cell count (25 surface + 25 bedrock)")
 
 	var again: Dictionary = recipe.generate_chunk_data(Vector2i(0, 0))
 	_check(

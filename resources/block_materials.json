@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "description": "Base properties for block materials. Each material owns the values shown in the Property tab; a block group (one texture's normal block plus its slabs, stairs and panels) inherits them and applies the variant modifiers below.",
+  "version": 2,
+  "description": "Base properties for block materials. Each material owns the values shown in the Property tab; a block group (one texture's normal block plus its slabs, stairs and panels) inherits them and applies the variant modifiers below. base_stability is the 0..1 inspector value; stability_reach is the integer horizontal span the structural pass uses, where 255 means anchored (never unsupported).",
   "materials": [
     {
       "id": "backrooms",
@@ -8,6 +8,7 @@
       "prefixes": ["backrooms"],
       "properties": {
         "base_stability": 0.7,
+        "stability_reach": 6,
         "base_durability": 0.65,
         "base_weight": 0.8,
         "buoyancy": 0.0,
@@ -16,11 +17,27 @@
       }
     },
     {
+      "id": "bedrock",
+      "label": "Bedrock",
+      "prefixes": ["bedrock"],
+      "anchored": true,
+      "properties": {
+        "base_stability": 1.0,
+        "stability_reach": 255,
+        "base_durability": 1.0,
+        "base_weight": 1.0,
+        "buoyancy": 0.0,
+        "base_path_cost": 1.0,
+        "flammability": 0.0
+      }
+    },
+    {
       "id": "concrete",
       "label": "Concrete",
       "prefixes": ["concrete"],
       "properties": {
         "base_stability": 0.95,
+        "stability_reach": 8,
         "base_durability": 0.9,
         "base_weight": 1.0,
         "buoyancy": 0.0,
@@ -34,6 +51,7 @@
       "prefixes": ["debug"],
       "properties": {
         "base_stability": 1.0,
+        "stability_reach": 8,
         "base_durability": 1.0,
         "base_weight": 1.0,
         "buoyancy": 0.0,
@@ -47,6 +65,7 @@
       "prefixes": ["dirt"],
       "properties": {
         "base_stability": 0.5,
+        "stability_reach": 4,
         "base_durability": 0.35,
         "base_weight": 0.85,
         "buoyancy": 0.0,
@@ -60,6 +79,7 @@
       "prefixes": ["echidna"],
       "properties": {
         "base_stability": 0.9,
+        "stability_reach": 7,
         "base_durability": 0.8,
         "base_weight": 0.75,
         "buoyancy": 0.0,
@@ -73,6 +93,7 @@
       "prefixes": ["floortile"],
       "properties": {
         "base_stability": 0.7,
+        "stability_reach": 6,
         "base_durability": 0.55,
         "base_weight": 0.65,
         "buoyancy": 0.0,
@@ -86,6 +107,7 @@
       "prefixes": ["grass"],
       "properties": {
         "base_stability": 0.55,
+        "stability_reach": 4,
         "base_durability": 0.35,
         "base_weight": 0.85,
         "buoyancy": 0.0,
@@ -99,6 +121,7 @@
       "prefixes": ["planks", "plank"],
       "properties": {
         "base_stability": 0.8,
+        "stability_reach": 4,
         "base_durability": 0.65,
         "base_weight": 0.5,
         "buoyancy": 0.05,
@@ -112,6 +135,7 @@
       "prefixes": ["water"],
       "properties": {
         "base_stability": 0.05,
+        "stability_reach": 1,
         "base_durability": 0.05,
         "base_weight": 1.0,
         "buoyancy": 1.0,
@@ -125,6 +149,7 @@
       "prefixes": ["window"],
       "properties": {
         "base_stability": 0.45,
+        "stability_reach": 3,
         "base_durability": 0.25,
         "base_weight": 0.4,
         "buoyancy": 0.0,

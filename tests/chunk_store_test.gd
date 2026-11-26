@@ -182,6 +182,9 @@ func _test_v1_migration() -> void:
 func _test_recipe_to_grid() -> void:
 	var generator = FlatGen.new()
 	generator.surface_item = 0  # the fixture MeshLibrary only has item 0
+	# The fixture library has no bedrock item, so this test stays about the
+	# recipe -> grid plumbing instead of the structural anchor.
+	generator.bedrock_enabled = false
 
 	var recipe = Recipe.new()
 	recipe.generator = generator

@@ -28,6 +28,11 @@ const SHADOW_DISTANCES: Array[float] = [20.0, 40.0, 60.0, 90.0, 120.0, 160.0]
 const FOLIAGE_SCALES: Array[float] = [0.5, 0.75, 1.0, 1.25]
 const FOG_OFFSETS: Array[float] = [0.0, 8.0, 16.0, 24.0, 32.0, 48.0, 64.0]
 
+## Structural physics tiers. Stability is independent of this: a world can
+## compute support without ever collapsing. `Collapse` removes unsupported
+## blocks; `Debris` also detaches disconnected islands as rigid bodies.
+const PHYSICS_LEVELS: Array[String] = ["Off", "Collapse", "Debris"]
+
 const WATER_FLOW_STEPS: Array[float] = [0.067, 0.1, 0.15, 0.22, 0.3]
 const WATER_EQUALIZE_STEPS: Array[float] = [0.25, 0.5, 0.75, 1.0, 1.5]
 const WATER_UPDATE_BUDGETS: Array[int] = [96, 192, 384, 512, 768, 1024]
@@ -82,6 +87,15 @@ var water_wake_style: int = 1
 var water_splashes: bool = true
 var water_surface_particles: bool = true
 
+# Structural systems. Stability computes the per-cell support field; physics
+# level decides what happens when a cell loses support.
+var stability_enabled: bool = true
+var physics_level: int = 1
+var stability_debug: bool = false
+## Restored by the Destruction toggle so turning collapse back on keeps the
+## tier the player last chose in the Physics row.
+var last_physics_level: int = 1
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -135,6 +149,7 @@ func apply_preset(index: int, save: bool = true) -> void:
 			max_fps = 0
 
 	_apply_water_preset(quality)
+	_apply_physics_preset(quality)
 
 	if save:
 		save_settings()
@@ -181,6 +196,14 @@ func _apply_water_preset(index: int) -> void:
 			water_surface_particles = true
 
 
+## Structural defaults for a quality preset. Low skips collapse, Medium removes
+## unsupported blocks, High also spawns island debris.
+func _apply_physics_preset(index: int) -> void:
+	stability_enabled = true
+	stability_debug = false
+	physics_level = clampi(index, 0, PHYSICS_LEVELS.size() - 1)
+
+
 func apply_all() -> void:
 	var tree := get_tree()
 	if tree == null:
@@ -204,6 +227,13 @@ func apply_all() -> void:
 	var grid := tree.get_first_node_in_group("grid_map")
 	if grid != null:
 		grid.baked_ao_enabled = ambient_occlusion
+
+		if "stability_enabled" in grid:
+			grid.stability_enabled = stability_enabled
+		if "physics_level" in grid:
+			grid.physics_level = physics_level
+		if "stability_debug" in grid:
+			grid.stability_debug = stability_debug
 
 		var mesher = grid.get_mesher()
 		if mesher != null:
@@ -529,6 +559,56 @@ func reset_water_settings() -> void:
 	_commit()
 
 
+func stability_name() -> String:
+	return "On" if stability_enabled else "Off"
+
+
+func destruction_name() -> String:
+	return physics_level_name()
+
+
+func physics_level_name() -> String:
+	return PHYSICS_LEVELS[clampi(physics_level, 0, PHYSICS_LEVELS.size() - 1)]
+
+
+func stability_debug_name() -> String:
+	return "On" if stability_debug else "Off"
+
+
+func destruction_enabled() -> bool:
+	return stability_enabled and physics_level > 0
+
+
+func toggle_stability() -> void:
+	stability_enabled = not stability_enabled
+	_commit()
+
+
+func toggle_destruction() -> void:
+	if physics_level > 0:
+		last_physics_level = physics_level
+		physics_level = 0
+	else:
+		physics_level = clampi(last_physics_level, 1, PHYSICS_LEVELS.size() - 1)
+		stability_enabled = true
+	_commit()
+
+
+func cycle_physics_level() -> void:
+	# Collapse needs the support field; turning destruction on turns stability
+	# back on rather than silently doing nothing.
+	physics_level = (physics_level + 1) % PHYSICS_LEVELS.size()
+	if physics_level > 0:
+		last_physics_level = physics_level
+		stability_enabled = true
+	_commit()
+
+
+func toggle_stability_debug() -> void:
+	stability_debug = not stability_debug
+	_commit()
+
+
 func quality_name() -> String:
 	return QUALITY_NAMES[quality]
 
@@ -711,6 +791,9 @@ func save_settings() -> void:
 	config.set_value("water", "surface_particles", water_surface_particles)
 	config.set_value("audio", "master_volume", master_volume)
 	config.set_value("audio", "music_volume", music_volume)
+	config.set_value("structure", "stability", stability_enabled)
+	config.set_value("structure", "physics_level", physics_level)
+	config.set_value("structure", "debug", stability_debug)
 	config.set_value("system", "agent_cap", agent_cap)
 	config.set_value("system", "max_fps", max_fps)
 	config.set_value("camera", "view_roll", view_roll_index)
@@ -783,6 +866,18 @@ func load_settings() -> void:
 		_apply_water_preset(quality)
 	master_volume = float(config.get_value("audio", "master_volume", 0.8))
 	music_volume = float(config.get_value("audio", "music_volume", 0.75))
+	stability_enabled = bool(
+		config.get_value("structure", "stability", stability_enabled)
+	)
+	physics_level = clampi(
+		int(config.get_value("structure", "physics_level", physics_level)),
+		0,
+		PHYSICS_LEVELS.size() - 1
+	)
+	stability_debug = bool(
+		config.get_value("structure", "debug", stability_debug)
+	)
+	last_physics_level = maxi(1, physics_level)
 	agent_cap = int(config.get_value("system", "agent_cap", 120))
 	max_fps = int(config.get_value("system", "max_fps", 60))
 	view_roll_index = int(config.get_value("camera", "view_roll", 1))

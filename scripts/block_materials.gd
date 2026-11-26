@@ -38,6 +38,15 @@ const FALLBACK_PROPERTIES := {
 	"flammability": 0.0,
 }
 
+## Structural stability is an integer reach, not the 0..1 `base_stability`
+## inspector value. A cell that reaches 0 is unsupported and falls.
+##
+## Vertical propagation (pillar stacking) never decrements: a column keeps the
+## reach of its anchor/neighbour. Each horizontal step costs 1.
+const STABILITY_ANCHORED: int = 255
+const STABILITY_UNSUPPORTED: int = 0
+const FALLBACK_STABILITY_REACH: int = 4
+
 ## Longest prefixes first so "stairs_upsidedown_" wins over "stairs_".
 const SHAPE_PREFIXES: Array[String] = [
 	"stairs_upsidedown_",
@@ -235,3 +244,43 @@ static func properties_for_item(item_name: String) -> Dictionary:
 ## Convenience for the Property tab and tooltips.
 static func default_properties() -> Dictionary:
 	return FALLBACK_PROPERTIES.duplicate()
+
+
+## True when the material can never become unsupported (Bedrock). Anchored
+## materials are the roots the structural pass floods from.
+static func is_anchored(item_name: String) -> bool:
+	var definition := material_for(item_name)
+	return bool(definition.get("anchored", false))
+
+
+## Integer horizontal reach for the structural pass. 255 = anchored/infinite.
+## Variants scale the material reach with the same `base_stability` modifier
+## that shapes their inspector stability, so a concrete slab reaches slightly
+## less far than a concrete block.
+static func stability_reach_for_item(item_name: String) -> int:
+	var definition := material_for(item_name)
+	if definition.is_empty():
+		return FALLBACK_STABILITY_REACH
+	if bool(definition.get("anchored", false)):
+		return STABILITY_ANCHORED
+
+	var base: Dictionary = definition.get("properties", {})
+	var reach: int = int(base.get("stability_reach", FALLBACK_STABILITY_REACH))
+	var variant := variant_of(item_name)
+	if variant == "block":
+		return maxi(1, reach)
+
+	var modifier_value: Variant = _variants.get(variant, {})
+	var modifier := 1.0
+	if modifier_value is Dictionary:
+		modifier = float((modifier_value as Dictionary).get("base_stability", 1.0))
+	return maxi(1, roundi(float(reach) * modifier))
+
+
+## Display helper for the Property tab and diagnostics.
+static func stability_reach_name(value: int) -> String:
+	if value >= STABILITY_ANCHORED:
+		return "Infinite"
+	if value <= STABILITY_UNSUPPORTED:
+		return "0 (falls)"
+	return str(value)

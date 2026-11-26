@@ -326,6 +326,8 @@ func _test_generation_cost() -> void:
 	var store_bytes: int = store.memory_bytes()
 	var bytes_per_cell: float = float(store_bytes) / float(maxi(cells, 1))
 	var expected_cells: int = size.x * size.y * generator.column_depth
+	if generator.bedrock_enabled and generator.resolved_bedrock_item() >= 0:
+		expected_cells += size.x * size.y
 
 	_expect("cost: all chunks generated", chunks == chunks_per_axis * chunks_per_axis, str(chunks))
 	_expect("cost: decoded entries", decoded_entries == expected_cells, str(decoded_entries))

@@ -4,6 +4,7 @@ extends Node
 
 const CHUNK_STORE = preload("res://scripts/world/ChunkFileStore.gd")
 const VoxelSectionStoreScript := preload("res://scripts/world/VoxelSectionStore.gd")
+const BLOCK_IDS = preload("res://scripts/world/block_ids.gd")
 
 ## Budgeted chunk streaming around the player.
 ##
@@ -79,6 +80,9 @@ var _grid: NavGridMap = null
 var _mesher: ChunkMesher = null
 var _store = null
 var _floor_item: int = 44
+## Bedrock sits directly under the generated flat floor so a fallback chunk is
+## anchored even after the structural system lands.
+var _bedrock_item: int = -1
 var _editor_preview: GridMap = null
 var _editor_chunk_signatures: Dictionary = {}
 var _editor_preview_ready: bool = false
@@ -121,6 +125,7 @@ func _ready() -> void:
 	_saved = _store.list_chunks()
 	_mesher = _grid.get_mesher()
 	_floor_item = _resolve_floor_item()
+	_bedrock_item = BLOCK_IDS.bedrock_id()
 
 	for chunk: Vector2i in _grid.get_populated_chunks():
 		# A saved chunk is the authoritative version of that chunk. This lets
@@ -951,6 +956,18 @@ func _make_flat_chunk(chunk: Vector2i) -> Dictionary:
 				0
 			)
 
+			var bedrock_y: int = floor_y - 1
+			if (
+				_bedrock_item >= 0
+				and bedrock_y >= min_block_y
+				and bedrock_y <= max_block_y
+			):
+				store.set_cell(
+					Vector3i(origin.x + x, bedrock_y, origin.y + z),
+					_bedrock_item,
+					0
+				)
+
 	return {
 		"version": NavGridMap.CHUNK_DATA_VERSION,
 		"chunk_x": chunk.x,
@@ -968,6 +985,8 @@ func _fill_floor(chunk: Vector2i) -> void:
 
 	var origin: Vector2i = NavGridMap.chunk_origin(chunk)
 	var missing: Array[Vector3i] = []
+	var missing_bedrock: Array[Vector3i] = []
+	var bedrock_y: int = floor_y - 1
 
 	for x in NavGridMap.CHUNK_SIZE:
 		for z in NavGridMap.CHUNK_SIZE:
@@ -980,8 +999,20 @@ func _fill_floor(chunk: Vector2i) -> void:
 			if not _grid.has_block(cell):
 				missing.append(cell)
 
+			if (
+				_bedrock_item >= 0
+				and bedrock_y >= min_block_y
+				and bedrock_y <= max_block_y
+			):
+				var bedrock := Vector3i(origin.x + x, bedrock_y, origin.y + z)
+				if not _grid.has_block(bedrock):
+					missing_bedrock.append(bedrock)
+
 	if not missing.is_empty():
 		_grid.place_blocks(missing, _floor_item, 0)
+
+	if not missing_bedrock.is_empty():
+		_grid.place_blocks(missing_bedrock, _bedrock_item, 0)
 
 
 func _chunk_distance_sq(a: Vector2i, b: Vector2i) -> int:

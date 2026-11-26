@@ -483,6 +483,18 @@ func _click_at(screen_position: Vector2) -> void:
 		"agents":
 			PerformanceSettings.cycle_agent_cap()
 			_refresh_labels()
+		"stability":
+			PerformanceSettings.toggle_stability()
+			_refresh_labels()
+		"destruction":
+			PerformanceSettings.toggle_destruction()
+			_refresh_labels()
+		"physics_level":
+			PerformanceSettings.cycle_physics_level()
+			_refresh_labels()
+		"stability_debug":
+			PerformanceSettings.toggle_stability_debug()
+			_refresh_labels()
 		"shadows":
 			PerformanceSettings.toggle_shadows()
 			_refresh_labels()
@@ -636,6 +648,14 @@ func _dynamic_caption(action: String) -> String:
 			return "Distance: %d chunks" % PerformanceSettings.mesh_radius
 		"agents":
 			return "Agents: " + PerformanceSettings.agent_cap_name()
+		"stability":
+			return "Stability: " + PerformanceSettings.stability_name()
+		"destruction":
+			return "Destruction: " + PerformanceSettings.destruction_name()
+		"physics_level":
+			return "Physics: " + PerformanceSettings.physics_level_name()
+		"stability_debug":
+			return "Stability Overlay: " + PerformanceSettings.stability_debug_name()
 		"shadows":
 			return "Shadows: " + PerformanceSettings.shadows_name()
 		"shadow_distance":

@@ -730,11 +730,17 @@ func _generator_params(world: Dictionary) -> Dictionary:
 			],
 			"footprint_size": [extent.x, extent.y],
 			"column_depth": 3,
+			"surface_block": "grass_normal",
+			"subsurface_block": "dirt_normal",
+			"bedrock_enabled": true,
+			"bedrock_block": "bedrock",
 		}
 	elif generator_id == "flat_v1":
 		params = {
 			"noise_seed": int(world.get("seed", 0)),
 			"floor_y": 0,
+			"bedrock_enabled": true,
+			"bedrock_block": "bedrock",
 		}
 
 	var options: Variant = world.get("options", {})

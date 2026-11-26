@@ -9,24 +9,44 @@ visible = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.68, 0, 0.035)
 
 [node name="AgentLimit" parent="LeftColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, 0.35, 0)
+position = Vector3(0, 0.45, 0)
 action = &"agents"
 caption = "Agents"
 
 [node name="ViewRoll" parent="LeftColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, 0.05, 0)
+position = Vector3(0, 0.22, 0)
 action = &"view_roll"
 caption = "View Roll"
+
+[node name="Stability" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.01, 0)
+action = &"stability"
+caption = "Stability"
+
+[node name="Destruction" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.24, 0)
+action = &"destruction"
+caption = "Destruction"
 
 [node name="RightColumn" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
 
 [node name="ExportDefaults" parent="RightColumn" instance=ExtResource("1_btn")]
-position = Vector3(0, 0.35, 0)
+position = Vector3(0, 0.45, 0)
 action = &"export_defaults"
 caption = "Simulation & Agent Defaults"
 
+[node name="PhysicsLevel" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, 0.22, 0)
+action = &"physics_level"
+caption = "Physics"
+
+[node name="StabilityOverlay" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.01, 0)
+action = &"stability_debug"
+caption = "Stability Overlay"
+
 [node name="GameplayBack" parent="." instance=ExtResource("1_btn")]
-position = Vector3(0, -0.25, 0.035)
+position = Vector3(0, -0.62, 0.035)
 action = &"back_settings"
 caption = "Back"

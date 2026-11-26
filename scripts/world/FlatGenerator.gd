@@ -11,6 +11,13 @@ enum Fill { SINGLE_LAYER, SOLID_COLUMN }
 
 @export var floor_y: int = 0
 @export var surface_item: int = 44
+## Optional block name override for the top layer ("grass_normal"). Resolved
+## through BlockIds; empty means `surface_item` is used.
+@export var surface_block: String = ""
+## Block used under the surface when filling a solid column. -1 keeps the
+## surface block all the way down.
+@export var subsurface_item: int = -1
+@export var subsurface_block: String = ""
 @export var origin_x: int = -5
 @export var origin_z: int = -3
 @export var size_x: int = 10
@@ -25,7 +32,7 @@ func get_id() -> String:
 
 
 func get_version() -> int:
-	return 1
+	return 2
 
 
 func get_params() -> Dictionary:
@@ -33,6 +40,9 @@ func get_params() -> Dictionary:
 		"noise_seed": noise_seed,
 		"floor_y": floor_y,
 		"surface_item": surface_item,
+		"surface_block": surface_block,
+		"subsurface_item": subsurface_item,
+		"subsurface_block": subsurface_block,
 		"origin_x": origin_x,
 		"origin_z": origin_z,
 		"size_x": size_x,
@@ -40,6 +50,9 @@ func get_params() -> Dictionary:
 		"infinite": infinite,
 		"fill": int(fill),
 		"column_depth": column_depth,
+		"bedrock_enabled": bedrock_enabled,
+		"bedrock_item": bedrock_item,
+		"bedrock_block": bedrock_block,
 	}
 
 
@@ -47,6 +60,9 @@ func apply_params(params: Dictionary) -> void:
 	super.apply_params(params)
 	floor_y = int(params.get("floor_y", floor_y))
 	surface_item = int(params.get("surface_item", surface_item))
+	surface_block = String(params.get("surface_block", surface_block))
+	subsurface_item = int(params.get("subsurface_item", subsurface_item))
+	subsurface_block = String(params.get("subsurface_block", subsurface_block))
 	origin_x = int(params.get("origin_x", origin_x))
 	origin_z = int(params.get("origin_z", origin_z))
 	size_x = int(params.get("size_x", size_x))
@@ -54,6 +70,23 @@ func apply_params(params: Dictionary) -> void:
 	infinite = bool(params.get("infinite", infinite))
 	fill = int(params.get("fill", fill)) as Fill
 	column_depth = maxi(1, int(params.get("column_depth", column_depth)))
+
+
+## `surface_block` wins when set; otherwise the explicit item id is used.
+## Resolution is a dictionary lookup inside BlockIds, so it is cheap enough to
+## do per chunk and never goes stale after an inspector edit.
+func _surface_item_id() -> int:
+	if not surface_block.strip_edges().is_empty():
+		return BLOCK_IDS.id_for_name(surface_block)
+	return surface_item
+
+
+func _subsurface_item_id() -> int:
+	if not subsurface_block.strip_edges().is_empty():
+		return BLOCK_IDS.id_for_name(subsurface_block)
+	if subsurface_item >= 0:
+		return subsurface_item
+	return _surface_item_id()
 
 
 func covers(x: int, z: int) -> bool:
@@ -99,7 +132,7 @@ func sample_column(x: int, z: int) -> Dictionary:
 	# `height` is the top of the column: the walkable block.
 	return {
 		"height": floor_y,
-		"surface_item": surface_item,
+		"surface_item": _surface_item_id(),
 		"orientation": 0,
 		"depth": column_depth if fill == Fill.SOLID_COLUMN else 1,
 	}
@@ -118,6 +151,8 @@ func generate_column(
 	var max_y: int = int(context.get("max_y", 255))
 	var origin: Vector2i = chunk * chunk_size
 	var depth: int = column_depth if fill == Fill.SOLID_COLUMN else 1
+	var surface: int = _surface_item_id()
+	var subsurface: int = _subsurface_item_id()
 
 	for local_x in chunk_size:
 		for local_z in chunk_size:
@@ -135,8 +170,17 @@ func generate_column(
 
 				result.append({
 					"position": Vector3i(world_x, y, world_z),
-					"item": surface_item,
+					"item": surface if step == 0 else subsurface,
 					"orientation": 0,
 				})
+
+			_append_bedrock(
+				result,
+				world_x,
+				world_z,
+				floor_y - depth,
+				min_y,
+				max_y
+			)
 
 	return result
