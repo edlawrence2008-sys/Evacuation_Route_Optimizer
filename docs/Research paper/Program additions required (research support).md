@@ -6,6 +6,14 @@
 
 > **Coordination note.** Another workstream is editing the water/hazard systems. This backlog deliberately avoids `scripts/world/water_world.gd`, `scripts/world/hazard_world.gd`, `shaders/water_surface.gdshader`, and the legacy water addon. If an item touches those files, it is marked **[coordinate]** and must not be started without the other workstream's agreement.
 
+> **Implementation status (2026-11-25).** P0.1-P0.6 and P1.1-P1.5/P1.7 are
+> implemented in `scripts/experiment/`, `scripts/optimization/`,
+> `scripts/sim_recorder.gd`, `scripts/demo_player.gd`,
+> `scripts/demo_comparer.gd` and `scripts/console_text.gd`; P1.6 has
+> `experiments/analyze_export.py`. The exact feature map, commands and output
+> layout are in [`../EXPERIMENTS.md`](../EXPERIMENTS.md). Remaining work is data
+> collection/analysis, not harness construction.
+
 ---
 
 ## 1. Why this list exists

@@ -815,7 +815,7 @@ adds **7**, the comparer/player layout test adds **28**,
 `demo_restore_test.tscn` adds **22**, and `recording_control_test.tscn` adds
 **31**. `optimizer_feedback_test.tscn` adds **11** for the overlay, periodic
 re-solve, late-spawn coverage and the console `opt_overlay` toggle.
-Total coverage is **542 assertions** across thirteen harnesses.
+Total coverage is **587 assertions** across fourteen harnesses.
 
 ### 8.5 Late arrivals: measured cause and fixes (2026-11-20)
 
@@ -1018,7 +1018,41 @@ The old demos are still useful for diagnosis, but they were recorded before the
 speed-tail fix; their `late_agents` block explains their tail. Re-run for a
 post-fix comparison.
 
-### 11.2 Editable demos
+### 11.2 Reusable plans, hysteresis and first-solve policy
+
+A plan is an optimizer decision plus the routes that were actually walked. It is
+captured by **Optimizer panel -> Saved plans -> Save plan** or console
+`plan_save`, and can be rebuilt from an old recording with
+`EvacuationPlan.from_recording()`. Plans are stored per save at
+`user://saves/<save_slug>/plans/<id>.json` and applied with **Apply**,
+**Arm at Start**, or `plan_apply <id>`. The application path uses
+`Member.request_evacuation_route()` / `NavGridMap.request_path_via()`, so the
+saved corridor is A*-filled; a blocked leg falls back to the direct exit path.
+
+The bridge now implements the guards the design document promised:
+
+- **Hysteresis:** `hysteresis_ratio` (default 0.10). An existing valid exit is
+  only replaced when the new estimated cost improves by that fraction, the
+  environment changed, or the old exit is unavailable. Held agents are recorded
+  in `detail.apply.held` and `summary.coverage.hysteresis_held`; the 4 m
+  commitment-radius skips are counted separately in
+  `summary.coverage.commitment_skipped`.
+- **First-solve policy:** `first_solve_delay` (default 1 s) replaces the fixed
+  delay. `solve_on_spawn_complete` waits for a finite spawn quota instead. Both
+  are written into the manifest.
+- **Cohort routes:** `OptimizationResult.cohorts` carries a `route` array of the
+  representative member's path, and the event carries `cohorts`/`assignments`.
+  The live overlay draws the polyline when present and the straight stem when
+  the run used flow fields.
+
+The summary now aggregates `solve_count`, `total_solver_usec`,
+`mean_solver_usec`, `max_solver_usec`, `total_pipeline_usec`, `rejected`,
+`timed_out`, and `evaluations`; solver time and capture+solve+apply pipeline
+time are separate. See [`EXPERIMENTS.md`](EXPERIMENTS.md) for the export tables
+and batch runner.
+
+
+### 11.3 Editable demos
 
 The Demo Player adds **Load State**:
 
@@ -1082,9 +1116,11 @@ while open; closing it leaves the property tab untouched.
 - The method descriptions are intentionally plain: they name the control
   condition and the limitation, not only the algorithm.
 
-Not yet shown: weight sliders (the mode presets are used), a convergence chart,
-a predicted-vs-measured panel, route visualisation, and a late-spawn adoption
-counter. The planned homes for the read-only views remain:
+Shown now: Saved plans (save/apply/arm/delete), first-solve delay and
+wait-for-spawn-quota, hysteresis toggle/threshold, and the live overlay's actual
+cohort route polyline plus exit legend. Not yet shown: weight sliders, a
+convergence chart, a dedicated predicted-vs-measured panel, and a late-spawn
+adoption counter. The planned homes for the read-only views remain:
 
 | View | Where | Why |
 |---|---|---|

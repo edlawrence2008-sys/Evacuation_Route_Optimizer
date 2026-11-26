@@ -120,6 +120,24 @@ func _draw_cohorts(exits: Dictionary) -> void:
 		_mesh.surface_set_color(color)
 		_mesh.surface_add_vertex(finish)
 
+		var route: Array = cohort.get("route", [])
+
+		if route.size() >= 2:
+			var previous := _point(route[0], Vector3.ZERO)
+
+			for index: int in range(1, route.size()):
+				var current := _point(route[index], Vector3.ZERO)
+
+				if previous == Vector3.ZERO or current == Vector3.ZERO:
+					previous = current
+					continue
+
+				_mesh.surface_set_color(color)
+				_mesh.surface_add_vertex(previous + Vector3.UP * 1.05)
+				_mesh.surface_set_color(color)
+				_mesh.surface_add_vertex(current + Vector3.UP * 1.05)
+				previous = current
+
 	if started:
 		_mesh.surface_end()
 
@@ -278,3 +296,13 @@ func _live_exits() -> Dictionary:
 func _exit_color(exit_id: String) -> Color:
 	var hue: float = fmod(abs(float(hash(exit_id))) * 0.61803398875, 1.0)
 	return Color.from_hsv(hue, 0.72, 1.0, 1.0)
+
+
+func _point(value: Variant, fallback: Vector3) -> Vector3:
+	if value is Vector3:
+		return value
+
+	if value is Array and (value as Array).size() >= 3:
+		return Vector3(float(value[0]), float(value[1]), float(value[2]))
+
+	return fallback

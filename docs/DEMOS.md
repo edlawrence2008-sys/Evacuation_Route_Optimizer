@@ -79,7 +79,9 @@ Controls:
 | View: Density heat | Colour by recorded local density. |
 | View: Contact force | Colour by recorded contact force. |
 | View: Exit assignment | Colour by the agent's assigned exit id. |
+| Optimizer plan | Draw the recorded cohort -> exit lines and the actual route polyline where the run stored one. `Plan routes` toggles the polylines; flow-field runs show an assignment-only stem. |
 | Route | Toggle the selected agent's route polyline at the current time. |
+| Export Data | Write `runs.csv`, `agents.csv`, `exits.csv`, `solves.csv`, `convergence.csv`, `data_dictionary.md` and the raw files to `user://exports`. |
 | Load State | Replace the live crowd with the agents at the current playback time (confirmation required). Restores agent state, evacuation history, exit totals and spawner counts; spawners keep spawning. Use this to edit a scenario or run the optimizer from a recorded moment. |
 
 The bottom transport bar scrolls horizontally when the controls exceed the
@@ -157,7 +159,9 @@ position and angle without toggling.
 
 The comparer reports differences; it does not optimize. There is no automatic
 baseline selection, no layout-geometry diff, no export, and no per-agent
-side-by-side timeline beyond the divergence summary.
+side-by-side timeline beyond the divergence summary. The **Optimizer plans** and
+**Plan routes** toggles draw each recording's reconstructed assignment/route
+overlay on the shared timeline (coloured by exit); it is a view, not a re-solve.
 
 **Optimizer experiments.** The comparison workflow is the evaluation harness for
 the decision layer. [`OPTIMIZER.md`](OPTIMIZER.md) section 11 maps the six intended

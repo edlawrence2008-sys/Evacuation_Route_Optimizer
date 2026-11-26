@@ -13,6 +13,8 @@
 [ext_resource type="Texture2D" path="res://textures/moon.png" id="15_moon"]
 [ext_resource type="PackedScene" path="res://scenes/placeables/env/env_false_boid_emitter.tscn" id="11_false_boids"]
 [ext_resource type="PackedScene" path="res://scenes/placeables/env/env_false_boid_perch.tscn" id="12_false_boid_perch"]
+[ext_resource type="Script" path="res://scripts/world/water_world.gd" id="19_water"]
+[ext_resource type="Script" path="res://scripts/world/hazard_world.gd" id="20_hazard"]
 
 [node name="Test" type="Node3D" unique_id=495423455]
 
@@ -47,6 +49,12 @@ metadata/_editor_floor_ = Vector3(0, 1, 0)
 
 [node name="Player" parent="." unique_id=854614395 instance=ExtResource("2_mtgl8")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 0)
+
+[node name="WaterWorld" type="Node3D" parent="."]
+script = ExtResource("19_water")
+
+[node name="HazardWorld" type="Node" parent="."]
+script = ExtResource("20_hazard")
 
 [node name="ChunkStreamer" type="Node" parent="." unique_id=1720111111]
 script = ExtResource("9_streamer")

@@ -41,6 +41,9 @@ const SPAWN_DEBOUNCE: float = 1.5
 ## solve between periodic intervals.
 const QUEUE_TRIGGER_DELTA: int = 4
 const LIVE_POLL_INTERVAL: float = 0.5
+## Saved-plan application waits this long after Start so spawners/importers have
+## created the agents the plan refers to. A plan can also be applied manually.
+const PLAN_APPLY_DELAY: float = 0.5
 
 var enabled: bool = false
 var auto_solve: bool = true
@@ -48,6 +51,17 @@ var auto_solve: bool = true
 var re_solve_enabled: bool = true
 ## Periodic interval in seconds. Ignored when `re_solve_enabled` is false.
 var re_solve_interval: float = 15.0
+## Wait this long after Start before the first solve. Previously fixed at 1 s,
+## which planned before pre-movement delays had expired.
+var first_solve_delay: float = AUTO_SOLVE_DELAY
+## When true, the first solve waits until the configured spawn quota is met
+## instead of using `first_solve_delay`. Useful for 600-agent spawner fixtures.
+var solve_on_spawn_complete: bool = false
+## Do not replace an existing exit assignment unless the new plan improves the
+## estimated cost by at least this fraction. Prevents cohort oscillation between
+## near-tied exits across periodic solves.
+var hysteresis_enabled: bool = true
+var hysteresis_ratio: float = 0.10
 ## Draw cohort -> exit lines, agent exit colours and exit load labels.
 var overlay_enabled: bool = false
 var algorithm: String = OptimizationRequest.ALGORITHM_GREEDY
@@ -70,9 +84,21 @@ var last_applied: int = 0
 var last_skipped: int = 0
 var last_unchanged: int = 0
 var last_changed: int = 0
+var last_held: int = 0
+var last_commitment_skipped: int = 0
 var last_rejection: String = ""
 var solve_count: int = 0
 var adopted_spawns: int = 0
+var plan_active: bool = false
+var last_plan_name: String = ""
+
+var _startup_plan: EvacuationPlan = null
+var _active_plan: EvacuationPlan = null
+var _plan_pending: bool = false
+var _plan_apply_at: float = 0.0
+var _last_applied_cost: float = INF
+var _last_applied_environment: int = -1
+var _spawn_complete_solved: bool = false
 
 var _solving: bool = false
 var _auto_pending: bool = false
@@ -119,6 +145,14 @@ func _apply_runtime_defaults() -> void:
 		max_cohorts = clampi(int(defaults["max_cohorts"]), 1, 400)
 	if defaults.has("auto_solve"):
 		auto_solve = bool(defaults["auto_solve"])
+	if defaults.has("first_solve_delay"):
+		first_solve_delay = clampf(float(defaults["first_solve_delay"]), 0.0, 120.0)
+	if defaults.has("solve_on_spawn_complete"):
+		solve_on_spawn_complete = bool(defaults["solve_on_spawn_complete"])
+	if defaults.has("hysteresis_enabled"):
+		hysteresis_enabled = bool(defaults["hysteresis_enabled"])
+	if defaults.has("hysteresis_ratio"):
+		hysteresis_ratio = clampf(float(defaults["hysteresis_ratio"]), 0.0, 0.9)
 	if defaults.has("re_solve_enabled"):
 		re_solve_enabled = bool(defaults["re_solve_enabled"])
 	if defaults.has("re_solve_interval"):
@@ -151,6 +185,13 @@ func _process(_delta: float) -> void:
 
 	var now: float = GlobalData.sim_now()
 
+	if _plan_pending:
+		if now >= _plan_apply_at:
+			_plan_pending = false
+
+			if _startup_plan != null:
+				apply_plan(_startup_plan)
+
 	if _auto_pending:
 		if now >= _auto_at:
 			_auto_pending = false
@@ -161,6 +202,16 @@ func _process(_delta: float) -> void:
 		return
 
 	_poll_live_state(now)
+
+	if (
+		solve_on_spawn_complete
+		and not _spawn_complete_solved
+		and _pending_spawns == 0
+		and _spawners_complete()
+	):
+		_spawn_complete_solved = true
+		request_solve()
+		return
 
 	if _should_re_solve(now):
 		request_solve()
@@ -175,6 +226,17 @@ func _poll_live_state(now: float) -> void:
 	_poll_at = now + LIVE_POLL_INTERVAL
 	_exit_signature_cached = _exit_signature()
 	_queue_total_cached = _queue_total()
+
+
+## True when a finite spawn quota has been reached. Unlimited runs never report
+## complete, so the delay policy stays in charge.
+func _spawners_complete() -> bool:
+	var total: int = GlobalData.get_total_max_spawns()
+
+	if total <= 0:
+		return false
+
+	return GlobalData.npcs_spawned >= total
 
 
 func _should_re_solve(now: float) -> bool:
@@ -259,6 +321,429 @@ func set_auto_solve(value: bool) -> void:
 	_sync_recorder_configuration()
 
 
+func set_first_solve_delay(value: float) -> void:
+	first_solve_delay = clampf(value, 0.0, 120.0)
+	_sync_recorder_configuration()
+
+
+func set_solve_on_spawn_complete(value: bool) -> void:
+	solve_on_spawn_complete = value
+	_sync_recorder_configuration()
+
+
+func set_hysteresis_enabled(value: bool) -> void:
+	hysteresis_enabled = value
+	_sync_recorder_configuration()
+
+
+func set_hysteresis_ratio(value: float) -> void:
+	hysteresis_ratio = clampf(value, 0.0, 0.9)
+	_sync_recorder_configuration()
+
+
+## Batch runner/console entry point: merge method parameters without replacing
+## keys the caller does not mention.
+func set_parameters(values: Dictionary) -> void:
+	for key: Variant in values.keys():
+		parameters[String(key)] = values[key]
+
+	_sync_recorder_configuration()
+
+
+# ---------------------------------------------------------------------------
+# Saved plans
+# ---------------------------------------------------------------------------
+
+## Capture the current assignment and the actual route each agent is following.
+## Prefer the last optimizer result; if the user has not solved yet, capture the
+## agents' current exits (a plan of the local-choice baseline).
+func capture_plan(plan_name: String = "") -> EvacuationPlan:
+	var tree := get_tree()
+
+	if tree == null:
+		return null
+
+	var layout: Dictionary = EvacuationPlan.capture_layout_signature()
+	var plan := EvacuationPlan.new()
+	plan.name = plan_name if not plan_name.is_empty() else "Plan %s" % Time.get_time_string_from_system()
+	plan.created_at = Time.get_datetime_string_from_system(true, true)
+	plan.source = "live"
+	plan.scene = String(tree.current_scene.scene_file_path) if tree.current_scene != null else ""
+	var demo_store := get_node_or_null("/root/DemoStore")
+	plan.save_slug = String(demo_store.call("active_save_slug")) if demo_store != null else ""
+	plan.rng_seed = GlobalData.rng_seed
+	plan.layout_signature = String(layout.get("signature", ""))
+	plan.environment_version = GlobalData.environment_version
+	plan.exits = layout.get("exits", [])
+
+	if last_result != null:
+		plan.algorithm = last_result.algorithm
+		plan.mode = last_result.mode
+		plan.weights = last_result.detail.get("weights", weights).duplicate(true)
+		plan.estimated_cost = last_result.estimated_cost
+		plan.estimated_completion_time = last_result.estimated_completion_time
+		plan.estimated_average_time = last_result.estimated_average_time
+		plan.cohorts = last_result.cohorts.duplicate(true)
+
+		for cohort_value: Variant in plan.cohorts:
+			if not cohort_value is Dictionary:
+				continue
+
+			var cohort: Dictionary = cohort_value
+			cohort["position"] = EvacuationPlan._point_to_array(cohort.get("position", []))
+			var members: Array = cohort.get("members", [])
+			cohort["route"] = _route_for_serial(int(members[0]) if not members.is_empty() else -1)
+
+		for serial_value: Variant in last_result.agent_exit_assignments.keys():
+			var serial := int(serial_value)
+			var exit_id := String(last_result.agent_exit_assignments[serial_value])
+			var target: Vector3 = last_result.agent_targets.get(serial, _exit_position(exit_id))
+			plan.assignments.append(_assignment_row(serial, exit_id, target, _route_for_serial(serial)))
+	else:
+		var seen: Dictionary = {}
+
+		for node: Node in tree.get_nodes_in_group("npc"):
+			if node == null or not is_instance_valid(node) or node.has_meta("evacuated"):
+				continue
+
+			if not node.has_method("get_measurement_state"):
+				continue
+
+			var state: Dictionary = node.call("get_measurement_state")
+			var status := String(state.get("status", ""))
+			var exit_id := String(state.get("exit_id", ""))
+
+			if exit_id.is_empty() or status in ["dead", "evacuated"]:
+				continue
+
+			var serial := int(state.get("serial", -1))
+			seen[serial] = true
+			plan.assignments.append(_assignment_row(
+				serial,
+				exit_id,
+				state.get("destination", _exit_position(exit_id)),
+				_route_for_serial(serial)
+			))
+
+		plan.algorithm = "local_choice"
+		plan.mode = "baseline"
+
+		if plan.assignments.is_empty():
+			return null
+
+		plan.cohorts = _cohorts_from_assignments(plan.assignments)
+
+	for assignment_value: Variant in plan.assignments:
+		if assignment_value is Dictionary:
+			var assignment: Dictionary = assignment_value
+			assignment["target"] = EvacuationPlan._point_to_array(assignment.get("target", []))
+
+	if plan.assignments.is_empty():
+		return null
+
+	plan.notes = "Captured from the live crowd. Routes are the paths active at capture time."
+	return plan
+
+
+## Apply a saved plan now. Returns {ok, applied, skipped, missing, error}.
+## A plan made on a different layout is refused unless `force` is true.
+func apply_plan(plan: EvacuationPlan, force: bool = false) -> Dictionary:
+	if plan == null:
+		return {"ok": false, "error": "no plan loaded"}
+
+	var tree := get_tree()
+
+	if tree == null:
+		return {"ok": false, "error": "no scene"}
+
+	var current_signature := String(
+		EvacuationPlan.capture_layout_signature().get("signature", "")
+	)
+	var signature_ok := plan.layout_signature.is_empty() or plan.layout_signature == current_signature
+
+	if not signature_ok and not force:
+		return {
+			"ok": false,
+			"error": "plan was captured on a different layout or exit set",
+			"layout_mismatch": true,
+		}
+
+	var live_exits := _live_exit_ids()
+	var live_positions: Dictionary = _live_exit_positions()
+	var nodes: Dictionary = {}
+	var used_serials: Dictionary = {}
+	var authored_cells := 0
+
+	if not plan.authored_route_cells.is_empty():
+		authored_cells = RoutePainter.set_cells(plan.authored_route_cells)
+
+	for node: Node in tree.get_nodes_in_group("npc"):
+		if node == null or not is_instance_valid(node):
+			continue
+
+		if node.has_method("get_measurement_state"):
+			var state: Dictionary = node.call("get_measurement_state")
+			nodes[int(state.get("serial", -1))] = node
+
+	var applied := 0
+	var skipped := 0
+	var missing := 0
+
+	for assignment_value: Variant in plan.assignments:
+		if not assignment_value is Dictionary:
+			continue
+
+		var assignment: Dictionary = assignment_value
+		var serial := int(assignment.get("serial", -1))
+		var exit_id := String(assignment.get("exit_id", ""))
+
+		if exit_id.is_empty() or not live_exits.has(exit_id):
+			skipped += 1
+			continue
+
+		var target: Vector3 = live_positions.get(exit_id, Vector3.ZERO)
+
+		if target == Vector3.ZERO:
+			skipped += 1
+			continue
+
+		var node: Node = nodes.get(serial)
+
+		if node == null and assignment.has("spawn_position"):
+			node = _nearest_agent_to(
+				EvacuationPlan._point_array(assignment.get("spawn_position", [])),
+				3.0,
+				used_serials
+			)
+
+		if node == null or not is_instance_valid(node):
+			missing += 1
+			continue
+
+		var state: Dictionary = node.call("get_measurement_state")
+		var status := String(state.get("status", ""))
+
+		if status in ["arrived", "queued", "evacuated", "dead"] or bool(state.get("evacuated", false)):
+			skipped += 1
+			continue
+
+		var route_points: Array = EvacuationPlan._point_array_list(assignment.get("route", []))
+		var accepted := false
+
+		if route_points.size() >= 2 and node.has_method("request_evacuation_route"):
+			accepted = bool(node.call(
+				"request_evacuation_route",
+				exit_id,
+				target,
+				route_points,
+				"plan"
+			))
+		elif node.has_method("set_optimizer_assignment"):
+			accepted = bool(node.call("set_optimizer_assignment", exit_id, target))
+
+		if accepted:
+			applied += 1
+			used_serials[int(state.get("serial", -1))] = true
+		else:
+			skipped += 1
+
+	plan_active = applied > 0 or authored_cells > 0
+	_active_plan = plan if not plan.assignments.is_empty() else null
+	last_plan_name = plan.name
+
+	if not plan.assignments.is_empty():
+		GlobalData.set_optimizer_enabled(true)
+	_publish_state("plan applied: %d agents, %d painted cells | %s" % [applied, authored_cells, plan.name])
+
+	var recorder := get_node_or_null("/root/SimRecorder")
+
+	if recorder != null and recorder.has_method("record_plan_application"):
+		recorder.call("record_plan_application", plan.name, 0, {
+			"algorithm": plan.algorithm,
+			"mode": plan.mode,
+			"estimated_cost": plan.estimated_cost,
+			"estimated_completion_time": plan.estimated_completion_time,
+			"agent_count": applied,
+			"cohort_count": plan.cohorts.size(),
+			"applied": applied,
+			"skipped": skipped,
+			"missing": missing,
+			"authored_cells": authored_cells,
+			"environment_version": GlobalData.environment_version,
+			"layout_signature": plan.layout_signature,
+		})
+
+	return {
+		"ok": applied > 0 or authored_cells > 0,
+		"applied": applied,
+		"authored_cells": authored_cells,
+		"skipped": skipped,
+		"missing": missing,
+		"error": "" if (applied > 0 or authored_cells > 0) else "no live agent matched the plan",
+	}
+
+
+func set_startup_plan(plan: EvacuationPlan) -> void:
+	_startup_plan = plan
+	_active_plan = plan if plan != null and not plan.assignments.is_empty() else null
+
+
+func get_startup_plan() -> EvacuationPlan:
+	return _startup_plan
+
+
+func clear_startup_plan() -> void:
+	_startup_plan = null
+	_plan_pending = false
+
+
+func _nearest_agent_to(position: Array, radius: float, used: Dictionary) -> Node:
+	if position.size() < 3:
+		return null
+
+	var target := Vector3(float(position[0]), float(position[1]), float(position[2]))
+	var tree := get_tree()
+
+	if tree == null:
+		return null
+
+	var best: Node = null
+	var best_distance := radius * radius
+
+	for node: Node in tree.get_nodes_in_group("npc"):
+		if node == null or not is_instance_valid(node) or not node is Node3D:
+			continue
+
+		if node.has_method("get_measurement_state"):
+			var serial := int(node.call("get_measurement_state").get("serial", -1))
+
+			if used.has(serial):
+				continue
+
+			var distance := (node as Node3D).global_position.distance_squared_to(target)
+
+			if distance < best_distance:
+				best_distance = distance
+				best = node
+
+	return best
+
+
+func _live_exit_positions() -> Dictionary:
+	var result: Dictionary = {}
+	var tree := get_tree()
+
+	if tree == null:
+		return result
+
+	for node: Node in tree.get_nodes_in_group("EvacPoint"):
+		if node == null or not is_instance_valid(node) or not node.has_method("get_exit_status"):
+			continue
+
+		var status: Dictionary = node.call("get_exit_status")
+		result[String(status.get("exit_id", ""))] = (node as Node3D).global_position
+
+	return result
+
+
+func _route_for_serial(serial: int) -> Array:
+	var node: Variant = _serial_to_node.get(serial)
+
+	if node == null or not is_instance_valid(node):
+		var tree := get_tree()
+
+		if tree != null:
+			for candidate: Node in tree.get_nodes_in_group("npc"):
+				if candidate != null and is_instance_valid(candidate) and int(candidate.get("agent_serial")) == serial:
+					node = candidate
+					break
+
+	if node == null or not is_instance_valid(node) or not node.has_method("get_route_snapshot"):
+		return []
+
+	var snapshot: Dictionary = node.call("get_route_snapshot")
+	return EvacuationPlan._point_array_list(snapshot.get("path", []))
+
+
+func _assignment_row(
+	serial: int,
+	exit_id: String,
+	target: Vector3,
+	route_points: Array
+) -> Dictionary:
+	var node: Variant = _serial_to_node.get(serial)
+	var spawn_position: Array = []
+
+	if node == null or not is_instance_valid(node):
+		var tree := get_tree()
+
+		if tree != null:
+			for candidate: Node in tree.get_nodes_in_group("npc"):
+				if candidate != null and is_instance_valid(candidate) and int(candidate.get("agent_serial")) == serial:
+					node = candidate
+					break
+
+	if node != null and is_instance_valid(node) and node is Node3D:
+		if node.has_method("get_measurement_state"):
+			var state: Dictionary = node.call("get_measurement_state")
+			spawn_position = EvacuationPlan._point_to_array(
+				state.get("spawn_position", (node as Node3D).global_position)
+			)
+		else:
+			spawn_position = EvacuationPlan._point_to_array((node as Node3D).global_position)
+
+	return {
+		"serial": serial,
+		"exit_id": exit_id,
+		"target": EvacuationPlan._point_to_array(target),
+		"spawn_position": spawn_position,
+		"route": route_points,
+		"route_source": "live" if route_points.size() >= 2 else "straight",
+		"reason": "optimizer" if last_result != null else "local_choice",
+	}
+
+
+func _cohorts_from_assignments(assignments: Array) -> Array:
+	var groups: Dictionary = {}
+
+	for assignment_value: Variant in assignments:
+		if not assignment_value is Dictionary:
+			continue
+
+		var assignment: Dictionary = assignment_value
+		var exit_id := String(assignment.get("exit_id", ""))
+		var position := EvacuationPlan._point_array(assignment.get("spawn_position", []))
+		var key := exit_id
+
+		if position.size() >= 3:
+			key = "%s:%d:%d" % [
+				exit_id,
+				int(floor(float(position[0]) / 4.0)),
+				int(floor(float(position[2]) / 4.0)),
+			]
+
+		if not groups.has(key):
+			groups[key] = {
+				"cohort_id": groups.size(),
+				"position": position,
+				"exit_id": exit_id,
+				"count": 0,
+				"members": [],
+				"route": assignment.get("route", []),
+			}
+
+		var group: Dictionary = groups[key]
+		group["count"] = int(group["count"]) + 1
+		(group["members"] as Array).append(int(assignment.get("serial", -1)))
+
+	var result: Array = []
+
+	for key: Variant in groups.keys():
+		result.append(groups[key])
+
+	return result
+
+
 func set_re_solve_enabled(value: bool) -> void:
 	re_solve_enabled = value
 
@@ -325,6 +810,14 @@ func _on_run_started() -> void:
 	last_skipped = 0
 	last_rejection = ""
 	adopted_spawns = 0
+	plan_active = false
+	last_plan_name = ""
+	last_held = 0
+	last_commitment_skipped = 0
+	_last_applied_cost = INF
+	_last_applied_environment = -1
+	_spawn_complete_solved = false
+	_plan_pending = false
 	GlobalData.optimizer_last_estimate = 0.0
 	GlobalData.optimizer_last_algorithm = ""
 	GlobalData.optimizer_last_mode = ""
@@ -340,10 +833,18 @@ func _on_run_started() -> void:
 	_spawn_solve_at = 0.0
 	_poll_at = 0.0
 
+	if _startup_plan != null:
+		_plan_pending = true
+		_plan_apply_at = GlobalData.sim_now() + PLAN_APPLY_DELAY
+		_publish_state("plan armed: %s" % _startup_plan.name)
+
 	if auto_solve:
-		_auto_pending = true
-		_auto_at = GlobalData.sim_now() + AUTO_SOLVE_DELAY
-		_publish_state("auto-solve in %.1f s" % AUTO_SOLVE_DELAY)
+		if solve_on_spawn_complete:
+			_publish_state("waiting for spawn quota before the first solve")
+		else:
+			_auto_pending = true
+			_auto_at = GlobalData.sim_now() + maxf(0.0, first_solve_delay)
+			_publish_state("auto-solve in %.1f s" % maxf(0.0, first_solve_delay))
 
 
 func _on_run_reset() -> void:
@@ -355,8 +856,16 @@ func _on_run_reset() -> void:
 	last_skipped = 0
 	last_unchanged = 0
 	last_changed = 0
+	last_held = 0
+	last_commitment_skipped = 0
 	last_rejection = ""
 	adopted_spawns = 0
+	plan_active = false
+	last_plan_name = ""
+	_plan_pending = false
+	_last_applied_cost = INF
+	_last_applied_environment = -1
+	_spawn_complete_solved = false
 	_last_solved_at = -INF
 	_next_resolve_at = 0.0
 	_last_exit_signature = ""
@@ -378,6 +887,10 @@ func _on_agent_spawned(agent: Node) -> void:
 	if not enabled:
 		return
 
+	if _active_plan != null:
+		call_deferred("_adopt_plan_spawn", agent)
+		return
+
 	if (
 		last_result != null
 		and last_result.source_environment_version
@@ -394,6 +907,77 @@ func _queue_spawn_for_solve() -> void:
 
 	_pending_spawns += 1
 	_spawn_solve_at = GlobalData.sim_now() + SPAWN_DEBOUNCE
+
+
+func _adopt_plan_spawn(agent: Node) -> void:
+	if not enabled or _active_plan == null:
+		return
+
+	if agent == null or not is_instance_valid(agent) or not agent.is_inside_tree():
+		return
+
+	if not agent.is_in_group("npc") or agent.has_meta("evacuated"):
+		return
+
+	if not bool(agent.get("is_evacuee")):
+		return
+
+	var state: Dictionary = agent.call("get_measurement_state")
+	var status := String(state.get("status", ""))
+
+	if status in ["arrived", "queued", "evacuated", "dead"]:
+		return
+
+	var serial := int(state.get("serial", -1))
+	var assignment: Dictionary = {}
+
+	for candidate: Variant in _active_plan.assignments:
+		if candidate is Dictionary and int((candidate as Dictionary).get("serial", -1)) == serial:
+			assignment = candidate
+			break
+
+	if assignment.is_empty():
+		var position: Vector3 = agent.global_position
+		var best_distance := INF
+
+		for candidate: Variant in _active_plan.assignments:
+			if not candidate is Dictionary or not (candidate as Dictionary).has("spawn_position"):
+				continue
+
+			var point := EvacuationPlan._point_array((candidate as Dictionary).get("spawn_position", []))
+
+			if point.size() < 3:
+				continue
+
+			var distance := position.distance_squared_to(
+				Vector3(float(point[0]), float(point[1]), float(point[2]))
+			)
+
+			if distance < best_distance and distance <= 36.0:
+				best_distance = distance
+				assignment = candidate
+
+	if assignment.is_empty():
+		if auto_solve:
+			_queue_spawn_for_solve()
+
+		return
+
+	var exit_id := String(assignment.get("exit_id", ""))
+	var target := _exit_position(exit_id)
+
+	if exit_id.is_empty() or target == Vector3.ZERO or not _live_exit_ids().has(exit_id):
+		return
+
+	var route: Array = EvacuationPlan._point_array_list(assignment.get("route", []))
+
+	if route.size() >= 2 and agent.has_method("request_evacuation_route"):
+		if bool(agent.call("request_evacuation_route", exit_id, target, route, "plan")):
+			adopted_spawns += 1
+			return
+
+	if agent.call("set_optimizer_assignment", exit_id, target):
+		adopted_spawns += 1
 
 
 func _adopt_spawned_agent(agent: Node) -> void:
@@ -527,6 +1111,7 @@ func _run_solve() -> void:
 
 	var result: OptimizationResult = OptimizerManager.solve(snapshot, request)
 	last_result = result
+	_attach_cohort_routes(result)
 	GlobalData.optimizer_last_estimate = result.estimated_completion_time
 	GlobalData.optimizer_last_algorithm = result.algorithm
 	GlobalData.optimizer_last_mode = result.mode
@@ -535,12 +1120,16 @@ func _run_solve() -> void:
 	var applied: int = 0
 	var skipped: int = 0
 	var unchanged: int = 0
+	var held: int = 0
+	var commitment_skipped: int = 0
 
 	if rejection.is_empty():
 		var outcome: Dictionary = _apply(result)
 		applied = int(outcome.get("applied", 0))
 		skipped = int(outcome.get("skipped", 0))
 		unchanged = int(outcome.get("unchanged", 0))
+		held = int(outcome.get("held", 0))
+		commitment_skipped = int(outcome.get("commitment_skipped", 0))
 		last_rejection = ""
 	else:
 		last_rejection = rejection
@@ -550,10 +1139,16 @@ func _run_solve() -> void:
 	last_changed = applied
 	last_skipped = skipped
 	last_unchanged = unchanged
+	last_held = held
+	last_commitment_skipped = commitment_skipped
 	result.detail["apply"] = {
 		"changed": applied,
 		"unchanged": unchanged,
 		"skipped": skipped,
+		"held": held,
+		"commitment_skipped": commitment_skipped,
+		"hysteresis_enabled": hysteresis_enabled,
+		"hysteresis_ratio": hysteresis_ratio,
 	}
 
 	_record(result, applied, skipped, rejection, Time.get_ticks_usec() - started_usec)
@@ -858,6 +1453,23 @@ func _apply(result: OptimizationResult) -> Dictionary:
 	var applied: int = 0
 	var skipped: int = 0
 	var unchanged: int = 0
+	var held: int = 0
+	var commitment_skipped: int = 0
+	var live_exits: Dictionary = _live_exit_ids()
+	var same_environment: bool = (
+		_last_applied_environment == GlobalData.environment_version
+	)
+	var improvement_ok: bool = (
+		not is_finite(_last_applied_cost)
+		or not is_finite(result.estimated_cost)
+		or result.estimated_cost <= _last_applied_cost * (1.0 - hysteresis_ratio)
+	)
+	var allow_changes: bool = (
+		not hysteresis_enabled
+		or not same_environment
+		or _last_applied_cost == INF
+		or improvement_ok
+	)
 
 	for serial_value: Variant in result.agent_exit_assignments.keys():
 		var serial: int = int(serial_value)
@@ -897,6 +1509,7 @@ func _apply(result: OptimizationResult) -> Dictionary:
 				and node.global_position.distance_to(current_target) <= COMMIT_RADIUS
 			):
 				skipped += 1
+				commitment_skipped += 1
 				continue
 
 		var exit_id: String = String(result.agent_exit_assignments[serial])
@@ -916,12 +1529,54 @@ func _apply(result: OptimizationResult) -> Dictionary:
 			unchanged += 1
 			continue
 
+		# Hysteresis: keep a valid existing assignment unless the new plan is
+		# materially better, or the old exit is no longer available. This is the
+		# guard the design document promised; it is recorded in the event.
+		if (
+			not allow_changes
+			and not previous_exit.is_empty()
+			and live_exits.has(previous_exit)
+		):
+			held += 1
+			continue
+
 		if node.call("set_optimizer_assignment", exit_id, target):
 			applied += 1
 		else:
 			skipped += 1
 
-	return {"applied": applied, "skipped": skipped, "unchanged": unchanged}
+	if applied > 0 or not same_environment:
+		_last_applied_cost = result.estimated_cost
+		_last_applied_environment = GlobalData.environment_version
+
+	return {
+		"applied": applied,
+		"skipped": skipped,
+		"unchanged": unchanged,
+		"held": held,
+		"commitment_skipped": commitment_skipped,
+	}
+
+
+func _attach_cohort_routes(result: OptimizationResult) -> void:
+	if result == null:
+		return
+
+	for cohort_value: Variant in result.cohorts:
+		if not cohort_value is Dictionary:
+			continue
+
+		var cohort: Dictionary = cohort_value
+		var members: Array = cohort.get("members", [])
+		var route: Array = []
+
+		for serial_value: Variant in members:
+			route = _route_for_serial(int(serial_value))
+
+			if route.size() >= 2:
+				break
+
+		cohort["route"] = route
 
 
 func _live_exit_ids() -> Dictionary:
@@ -997,6 +1652,10 @@ func _sync_recorder_configuration() -> void:
 		"cohort_size": cohort_size,
 		"max_cohorts": max_cohorts,
 		"auto_solve": auto_solve,
+		"first_solve_delay": first_solve_delay,
+		"solve_on_spawn_complete": solve_on_spawn_complete,
+		"hysteresis_enabled": hysteresis_enabled,
+		"hysteresis_ratio": hysteresis_ratio,
 		"re_solve_enabled": re_solve_enabled,
 		"re_solve_interval": re_solve_interval,
 		"overlay_enabled": overlay_enabled,

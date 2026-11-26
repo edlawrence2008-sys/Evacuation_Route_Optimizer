@@ -9,6 +9,8 @@ signal variants_requested(item_id: int, group_id: String, anchor_rect: Rect2)
 ## Emitted by the same plus badge on palette cells. The HUD opens the palette's
 ## 3x3 container instead of the block-variant chooser.
 signal palette_requested(palette_id: String, anchor_rect: Rect2)
+## Emitted by Useables-tab tool cards. The scene owns a held UseComponent.
+signal useable_selected(scene: PackedScene)
 
 const GROUP_PLUS := preload("res://textures/inventory/group_plus.png")
 const GROUP_MINUS := preload("res://textures/inventory/group_minus.png")
@@ -29,6 +31,8 @@ var hotbar_draggable: bool = true
 var block_group_id: String = ""
 ## Palette cells share the block-group plus badge, but open a 3x3 palette.
 var palette_id: String = ""
+## Set for a Useables-tab tool card. Clicking selects the held tool.
+var useable_scene: PackedScene = null
 
 
 func _ready() -> void:
@@ -171,6 +175,23 @@ func set_variants(group_id: String, has_variants: bool) -> void:
 	)
 
 
+## Turns this card into a Useables-tab tool entry. It reuses the normal item
+## card so it sits in the same 60x60 inventory grid as blocks and placeables.
+func set_useable(scene: PackedScene, display_name: String) -> void:
+	useable_scene = scene
+	setup(-1, display_name, null, true, scene)
+
+	if label:
+		label.text = display_name
+		label.visible = true
+
+	if texture_rect:
+		texture_rect.visible = false
+
+	if sprite_2d:
+		sprite_2d.visible = true
+
+
 ## Turns this cell into a palette entry. The plus badge is always visible and
 ## opens the palette container.
 func set_palette(id: String) -> void:
@@ -221,6 +242,10 @@ func _gui_input(event: InputEvent) -> void:
 		and not event.pressed
 		and event.button_index == MOUSE_BUTTON_LEFT
 	):
+		if useable_scene != null:
+			useable_selected.emit(useable_scene)
+			return
+
 		item_selected.emit(item_id)
 
 ## Enables dragging inventory blocks and placeables onto hotbar slots. The
@@ -228,7 +253,7 @@ func _gui_input(event: InputEvent) -> void:
 ## `_can_drop_data` / `_drop_data`.
 func _get_drag_data(_at_position: Vector2) -> Variant:
 	var is_palette := not palette_id.is_empty()
-	if item_id == -1 and not is_palette:
+	if item_id == -1 and not is_palette and placeable_scene == null:
 		return null
 
 	if not is_palette and placeable_scene == null and not hotbar_draggable:

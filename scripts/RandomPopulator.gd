@@ -6,6 +6,9 @@ extends Node
 
 @export_group("Population")
 @export var member_count: int = 50
+## Keep the population still until Start. This is the correct mode for a
+## pre-populated fixture: agents exist before time zero but do not walk.
+@export var freeze_until_start: bool = true
 @export var start_evacuating: bool = true
 @export var only_pathfindable_blocks: bool = true
 ## Reject spawn cells closer than this to another NPC or an earlier slot in the
@@ -47,6 +50,9 @@ func populate() -> Dictionary:
 
 	if member_scene == null:
 		return {"spawned": 0, "reason": "No member scene assigned."}
+
+	if freeze_until_start:
+		GlobalData.population_frozen = true
 
 	var evac_positions: Array[Vector3] = []
 	if only_pathfindable_blocks:

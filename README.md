@@ -123,13 +123,14 @@ godot --headless --path . --script res://tests/demo_ui_test.gd
 godot --headless --path . res://tests/demo_restore_test.tscn
 godot --headless --path . res://tests/recording_control_test.tscn
 godot --headless --path . res://tests/optimizer_feedback_test.tscn
+godot --headless --path . res://tests/experiment_tools_test.tscn
 ```
 
-Expected: `51`, `18`, `27`, `151`, `72`, `7`, `28`, `22`, `31` and `11`
-checks with `failures=0` - 542 optimizer/demo assertions across thirteen
-harnesses. The phase-2 test records and deletes its own demo; the restore and
-recording tests use temporary demo folders and clean them up. Details in
-[`tests/README.md`](tests/README.md).
+Expected: `51`, `18`, `27`, `151`, `72`, `7`, `28`, `22`, `31`, `11` and `45`
+checks with `failures=0` - 587 optimizer/demo/experiment assertions across
+fourteen harnesses. The phase-2 test records and deletes its own demo; the
+restore and recording tests use temporary demo folders and clean them up.
+Details in [`tests/README.md`](tests/README.md).
 
 Procgen foundation (124 assertions): `procgen_test.gd` 50,
 `chunk_store_test.gd` 38, `heightmap_generator_test.gd` 36 - run the same way
@@ -145,6 +146,8 @@ with `--script res://tests/...`.
 - [`docs/SIM_MEASUREMENTS.md`](docs/SIM_MEASUREMENTS.md) - recorded measurements and run files.
 - [`docs/DEMOS.md`](docs/DEMOS.md) - per-save demo library, in-map player and comparer.
 - [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md) - design for the missing decision layer: contracts, objective, algorithm order, roadmap.
+- [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md) - reusable saved evacuation plans, the batch runner, tidy CSV export and the new research measurements.
+- [`docs/TUTORIAL.md`](docs/TUTORIAL.md) - draft first-run tutorial flow, requirements and copy.
 - [`docs/MAIN_MENU_AND_CREDITS.md`](docs/MAIN_MENU_AND_CREDITS.md) - menu, saves, music, credits.
 - [`docs/RENDERER_AND_ENGINE.md`](docs/RENDERER_AND_ENGINE.md) - renderer/engine decision: stay on `mobile`, profiler evidence, godot_voxel and rimworld3d review.
 - [`docs/JIGSAW_STRUCTURES.md`](docs/JIGSAW_STRUCTURES.md) - feasibility study for deterministic jigsaw structures and an in-game editor (not implemented).
@@ -169,10 +172,13 @@ with `--script res://tests/...`.
 - No authored level or shipped scenario; the game scene is a starter platform.
 - The optimizer is implemented through phase 3b (assignment, baselines, ACO,
   PSO, two min-cost-flow models, recording, side panel, periodic re-solve,
-  late-spawn coverage, assignment overlay and authored waypoint routes).
+  late-spawn coverage, assignment overlay and saved reusable plans).
   Multi-objective terms, automatic disruption re-solve and hazards are not
-  implemented; a full 600-agent recorded evacuation is still a manual run.
-  Phased plan in [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md).
+  implemented. A manifest batch runner (`ExperimentRunner`) and tidy CSV export
+  (`ExperimentExporter`) now automate the 10-condition x 10-seed matrix; a full
+  600-agent run still takes real simulation time. Phased plan in
+  [`docs/OPTIMIZER.md`](docs/OPTIMIZER.md); harness details in
+  [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md).
 - Kinematic agents do not collide with the world; contact is a soft force.
 - Exit throughput/capacity are policy models, not door geometry.
 - Procgen: **New Map -> World Type -> World Settings** creates a bounded

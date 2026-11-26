@@ -21,6 +21,9 @@ and links to the code it describes.
 | [`WATER_SYSTEM_INVESTIGATION.md`](WATER_SYSTEM_INVESTIGATION.md) | Why the old voxel cellular water was archived, an evaluation of height-field/CA, position-based fluids, cloth, sphere-volume/ballpit and 3D CA options, and the recommended fast large-scale design with NPC coupling. |
 | [`DEMOS.md`](DEMOS.md) | Per-save demo library, naming/descriptions/folders/duplication, the in-map Demo Player, and the synchronized Demo Comparer. |
 | [`OPTIMIZER.md`](OPTIMIZER.md) | The decision layer: gap analysis, boundary, data contracts, objective, measured cost, roadmap and risks. **Phases 1-3 implemented** (analysis layer, bridge, ACO/PSO/flow, side panel, periodic/triggered re-solve, overlay); multi-objective terms, route selection and hazards pending. |
+| [`EXPERIMENTS.md`](EXPERIMENTS.md) | Reusable saved plans, the manifest-driven batch runner, tidy CSV export, new exposure/coverage/hardware fields, hysteresis and first-solve policy. |
+| [`TUTORIAL.md`](TUTORIAL.md) | **Draft** first-run tutorial: 13-step flow, controller/step schema, needed hooks, copy, fixture and acceptance checklist. |
+| [`AUTHORED_EVACUATION_ROUTES.md`](AUTHORED_EVACUATION_ROUTES.md) | Investigation into authored routes and optimizer usefulness; the Route Paint tool now covers the reusable-plan side. |
 | [`MAIN_MENU_AND_CREDITS.md`](MAIN_MENU_AND_CREDITS.md) | Boot menu, save browser, `MusicManager`, BGM pop-up, 3D credits and their data files. |
 
 ## Archive
@@ -106,6 +109,20 @@ and links to the code it describes.
   (`AUTHORED_EVACUATION_ROUTES.md`); the optimizer does not choose routes yet.
   Multi-objective terms and hazards are not implemented. Contracts, measured cost
   and the phased roadmap are in [`OPTIMIZER.md`](OPTIMIZER.md).
+- **Research harness (2026-11-25):** plans can be captured from a live solve or an
+  old demo, saved under `user://saves/<slug>/plans/`, listed/applied at Start,
+  and followed through `Member.request_evacuation_route` + NavGridMap route-via
+  legs. `ExperimentRunner` drives manifest batches and `ExperimentExporter` writes
+  `runs/agents/exits/solves/convergence.csv` + `data_dictionary.md`. Summary/
+  manifest now carry density exposure, contact P99/exposure, coverage, cumulative
+  solver/pipeline time, hysteresis decisions, first-solve policy, hardware
+  fingerprint and layout signature. See [`EXPERIMENTS.md`](EXPERIMENTS.md).
+- **Route Paint (2026-11-25):** the Useables tab has a held Route Paint tool. Left
+  click sets a start block, the hover preview runs an A* corridor to the block
+  under the crosshair, a second left click commits it, and right click erases.
+  Painted cells are saved per save/layout and lower nav cost, so agents and the
+  optimizer prefer the corridor. The overlay is visible only while the tool is
+  held. See [`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 ## Conventions
 

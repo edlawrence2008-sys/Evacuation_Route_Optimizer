@@ -10,7 +10,7 @@ extends UseComponent
 )
 @export_range(0.1, 10.0, 0.1) var amount: float = 1.0
 @export_range(0.5, 12.0, 0.25) var radius: float = 2.0
-@export_range(2.0, 64.0, 1.0) var range: float = 24.0
+@export_range(2.0, 64.0, 1.0) var reach: float = 24.0
 
 
 func use(actor: Node, origin: Vector3, direction: Vector3) -> void:
@@ -32,7 +32,7 @@ func alt_use(actor: Node, origin: Vector3, direction: Vector3) -> void:
 
 
 func _aim_point(actor: Node, origin: Vector3, direction: Vector3) -> Vector3:
-	var end := origin + direction.normalized() * range
+	var end := origin + direction.normalized() * reach
 	if actor is Node3D:
 		var world := (actor as Node3D).get_world_3d()
 		if world != null:

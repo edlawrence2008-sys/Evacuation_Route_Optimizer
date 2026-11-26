@@ -102,6 +102,19 @@ func _process_command(cmd_line: String) -> void:
 				out.print_to_console("  opt_overlay [on|off]    - Toggles the optimizer assignment overlay.")
 				out.print_to_console("  opt_resolve             - Requests one optimizer solve now.")
 				out.print_to_console("  opt_interval <s>        - Sets the periodic re-solve interval.")
+				out.print_to_console("  plan_save [name]        - Saves the current assignment/routes as a reusable plan.")
+				out.print_to_console("  plan_list               - Lists saved plans for the active save.")
+				out.print_to_console("  plan_apply <id>         - Applies a saved plan to the live crowd.")
+				out.print_to_console("  plan_render <id|off>    - Draws a saved plan in the live world.")
+				out.print_to_console("  plan_paint <id>         - Loads a plan's routes into the Route Paint tool.")
+				out.print_to_console("  plan_import <file>      - Imports an exported plan JSON into this save's library.")
+				out.print_to_console("  route_paint_clear       - Clears the authored painted corridor for this layout.")
+				out.print_to_console("  export [last|all|<id>]  - Writes tidy CSVs to user://exports.")
+				out.print_to_console("  experiment_start <file> - Runs a manifest-driven batch experiment.")
+				out.print_to_console("  experiment_dry_run <file> - Validates a manifest without running.")
+				out.print_to_console("  experiment_status       - Prints the runner state.")
+				out.print_to_console("  experiment_abort        - Stops after the current cell.")
+				out.print_to_console("  fixture_build <s1|s2|s3|s4|clear> - Builds a deterministic test fixture.")
 				out.print_to_console("  clear                   - Clears the console window.")
 
 				out.print_to_console("\n--- GlobalData Script Methods ---")
@@ -275,6 +288,277 @@ func _process_command(cmd_line: String) -> void:
 			else:
 				if out:
 					out.print_to_console("Usage: opt_interval <seconds>")
+
+		"plan_save", "plan_save_current":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			else:
+				var plan_name := "Console plan %s" % Time.get_time_string_from_system()
+
+				if not args.is_empty():
+					plan_name = " ".join(args)
+
+				var plan: Variant = bridge.call("capture_plan", plan_name)
+
+				if plan == null:
+					if out:
+						out.print_to_console("Nothing to save: no optimizer assignment or live route.")
+				else:
+					var plan_id: String = PlanStore.save_plan(plan, plan_name)
+
+					if out:
+						out.print_to_console(
+							"Saved plan '%s' (%d assignments, %d routes)."
+							% [plan_id, plan.assignment_count(), plan.routes_with_polylines()]
+						)
+
+		"plan_list", "plans":
+			var plans: Array = PlanStore.list_plans()
+
+			if out:
+				if plans.is_empty():
+					out.print_to_console("No saved plans for this save.")
+				else:
+					for plan: Dictionary in plans:
+						out.print_to_console(
+							"  %-32s %4d agents  seed %d  %s"
+							% [
+								String(plan.get("id", "")),
+								int(plan.get("assignments", 0)),
+								int(plan.get("seed", 0)),
+								String(plan.get("created_at", "")),
+							]
+						)
+
+		"plan_apply", "plan_load":
+			var bridge: Node = _optimizer_bridge()
+
+			if bridge == null:
+				if out:
+					out.print_to_console("Error: no optimizer bridge.")
+			elif args.is_empty():
+				if out:
+					out.print_to_console("Usage: plan_apply <plan id>")
+			else:
+				var plan: Variant = PlanStore.load_plan(String(args[0]))
+
+				if plan == null:
+					if out:
+						out.print_to_console("Plan not found: %s" % String(args[0]))
+				else:
+					var result: Dictionary = bridge.call("apply_plan", plan)
+
+					if out:
+						if bool(result.get("ok", false)):
+							out.print_to_console(
+								"Applied %s: %d applied, %d skipped, %d unmatched."
+								% [
+									String(args[0]),
+									int(result.get("applied", 0)),
+									int(result.get("skipped", 0)),
+									int(result.get("missing", 0)),
+								]
+							)
+						else:
+							out.print_to_console(
+								"Apply failed: %s" % String(result.get("error", "unknown"))
+							)
+
+		"plan_import", "plan_load_file":
+			if args.is_empty():
+				if out:
+					out.print_to_console("Usage: plan_import <plan.json>")
+			else:
+				var plan_path := String(args[0])
+
+				if not FileAccess.file_exists(plan_path):
+					for prefix: String in ["res://", "user://"]:
+						if FileAccess.file_exists(prefix + plan_path):
+							plan_path = prefix + plan_path
+							break
+
+				var plan: Variant = EvacuationPlan.load_from(plan_path)
+
+				if plan == null:
+					if out:
+						out.print_to_console("Could not read a plan from: %s" % plan_path)
+				else:
+					var plan_id: String = PlanStore.save_plan(plan)
+					var bridge: Node = _optimizer_bridge()
+
+					if bridge != null:
+						bridge.call("set_startup_plan", plan)
+
+					if out:
+						out.print_to_console(
+							"Imported %s (%d assignments, %d routes); armed for the next Start."
+							% [plan_id, plan.assignment_count(), plan.routes_with_polylines()]
+						)
+
+		"plan_render", "plan_show":
+			if args.is_empty():
+				if out:
+					out.print_to_console("Usage: plan_render <plan id|off>")
+			elif String(args[0]).to_lower() == "off":
+				LivePlanOverlay.hide_plan()
+
+				if out:
+					out.print_to_console("Live plan overlay hidden.")
+			else:
+				var plan: Variant = PlanStore.load_plan(String(args[0]))
+
+				if plan == null:
+					if out:
+						out.print_to_console("Plan not found: %s" % String(args[0]))
+				elif LivePlanOverlay.show_plan(plan):
+					if out:
+						out.print_to_console(
+							"Rendering plan '%s' (%d assignments, %d routes)."
+							% [String(args[0]), plan.assignment_count(), plan.routes_with_polylines()]
+						)
+				elif out:
+					out.print_to_console("Could not create the live plan overlay.")
+
+		"plan_paint", "plan_edit":
+			if args.is_empty():
+				if out:
+					out.print_to_console("Usage: plan_paint <plan id>")
+			else:
+				var plan: Variant = PlanStore.load_plan(String(args[0]))
+
+				if plan == null:
+					if out:
+						out.print_to_console("Plan not found: %s" % String(args[0]))
+				else:
+					var count: int = RoutePainter.set_from_plan(plan)
+
+					if out:
+						out.print_to_console(
+							"Loaded %d painted route cells from '%s'. Equip the Route Paint tool to edit."
+							% [count, String(args[0])]
+						)
+
+		"route_paint_clear", "paint_clear":
+			RoutePainter.clear_all()
+
+			if out:
+				out.print_to_console("Authored route paint cleared for this layout.")
+
+		"export":
+			var demo_id := "last"
+
+			if not args.is_empty():
+				demo_id = String(args[0])
+
+			var output_root := ExperimentExporter.output_root()
+
+			if args.size() > 1:
+				output_root = String(args[1])
+
+			var result: Dictionary = {}
+
+			if demo_id == "all":
+				result = ExperimentExporter.export_all_active_save(output_root)
+			elif demo_id == "last":
+				var last_id := SimRecorder.get_demo_id()
+
+				if last_id.is_empty():
+					var demos: Array = DemoStore.list_demos()
+
+					if not demos.is_empty():
+						last_id = String(demos[0].get("id", ""))
+
+				result = ExperimentExporter.export_demo(last_id, output_root)
+			else:
+				result = ExperimentExporter.export_demo(demo_id, output_root)
+
+			if out:
+				if bool(result.get("ok", false)):
+					out.print_to_console(
+						"Export: %d run(s) -> %s"
+						% [int(result.get("runs", 0)), String(result.get("output_display", ""))]
+					)
+				else:
+					out.print_to_console(
+						"Export failed: %s" % str(result.get("error", result.get("errors", "")))
+					)
+
+		"experiment_start":
+			if args.is_empty():
+				if out:
+					out.print_to_console("Usage: experiment_start <manifest.json>")
+			else:
+				var status: Dictionary = ExperimentRunner.status()
+
+				if bool(status.get("running", false)):
+					if out:
+						out.print_to_console("An experiment is already running.")
+				else:
+					# start_from_file() is a coroutine; defer it so the console
+					# does not need to await the whole batch.
+					ExperimentRunner.call_deferred("start_from_file", String(args[0]))
+
+					if out:
+						out.print_to_console("Experiment start requested: %s" % String(args[0]))
+
+		"experiment_dry_run", "experiment_check":
+			if args.is_empty():
+				if out:
+					out.print_to_console("Usage: experiment_dry_run <manifest.json>")
+			else:
+				var result: Dictionary = ExperimentRunner.dry_run(String(args[0]))
+
+				if out:
+					if bool(result.get("ok", false)):
+						out.print_to_console(
+							"Manifest OK: %d cell(s), %d scenario(s), output %s"
+							% [
+								int(result.get("cells", 0)),
+								int(result.get("scenarios", 0)),
+								String(result.get("output_display", "")),
+							]
+						)
+					else:
+						out.print_to_console("Manifest invalid: %s" % str(result.get("errors", [])))
+
+		"experiment_status":
+			if out:
+				var status: Dictionary = ExperimentRunner.status()
+				out.print_to_console(
+					"Runner: %s %s (%d/%d) - %s"
+					% [
+						"running" if bool(status.get("running", false)) else "idle",
+						String(status.get("experiment", "")),
+						int(status.get("index", 0)),
+						int(status.get("total", 0)),
+						String(status.get("status", "")),
+					]
+				)
+
+		"experiment_abort":
+			ExperimentRunner.abort()
+
+			if out:
+				out.print_to_console("Experiment abort requested.")
+
+		"fixture_build", "fixture":
+			if args.is_empty():
+				if out:
+					out.print_to_console("Usage: fixture_build <s1|s2|s3|s4|clear>")
+			else:
+				var result: Dictionary = ExperimentFixture.build_preset(String(args[0]))
+
+				if out:
+					if bool(result.get("ok", false)):
+						out.print_to_console(
+							"Fixture built: %d exits, %s cells."
+							% [int(result.get("exits", 0)), str(result.get("cells", 0))]
+						)
+					else:
+						out.print_to_console("Fixture failed: %s" % String(result.get("error", "")))
 
 		"clear":
 			if out and out.has_method("clear_console"):

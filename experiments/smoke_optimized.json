@@ -1,0 +1,37 @@
+{
+	"experiment": "smoke_optimized",
+	"_notes": "Tiny one-cell optimized run for verifying the runner + solver + export.",
+	"scenarios": [
+		{
+			"id": "S1_smoke",
+			"fixture_preset": "s1",
+			"expected_exits": 4,
+			"population": 12,
+			"prepopulate": true,
+			"agent_cap": 700,
+			"quota": 12,
+			"horizon_s": 20
+		}
+	],
+	"conditions": ["greedy"],
+	"seeds": [42],
+	"repeat": 1,
+	"objective": "balanced",
+	"cohort_size": 4.0,
+	"max_cohorts": 60,
+	"time_budget_ms": 250,
+	"horizon_s": 20,
+	"sampling_interval": 0.25,
+	"prepopulate": true,
+	"population_count": 12,
+	"agent_cap": 700,
+	"quota": 12,
+	"first_solve_delay": 1.0,
+	"re_solve": false,
+	"hysteresis_enabled": true,
+	"hysteresis_ratio": 0.1,
+	"abort_on_failure": true,
+	"require_complete": false,
+	"resume": false,
+	"output_root": "user://experiments"
+}

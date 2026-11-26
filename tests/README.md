@@ -20,6 +20,7 @@ godot --headless --path . --script res://tests/procgen_test.gd
 godot --headless --path . --script res://tests/chunk_store_test.gd
 godot --headless --path . --script res://tests/heightmap_generator_test.gd
 godot --headless --path . res://tests/optimizer_feedback_test.tscn
+godot --headless --path . res://tests/experiment_tools_test.tscn
 godot --headless --path . --script res://tests/optimizer_benchmark.gd
 godot --headless --path . --script res://tests/water_pipe_benchmark.gd
 ```
@@ -39,10 +40,11 @@ godot --headless --path . --script res://tests/water_pipe_benchmark.gd
 | `chunk_store_test.gd` | Real `NavGridMap` v2 section round-trip, v1 legacy load and upgrade-on-save, `WorldRecipe` -> `load_chunk`, `ChunkFileStore` disk round-trip, section-index memory, dropped runtime GridMap mirror, per-chunk collision body and physics ray, compressed section fast import (dense and sparse), cells+items read, and the `/slabs` retrofit (placement and idempotence) | `checks=38 failures=0` |
 | `heightmap_generator_test.gd` | Heightmap terrain: hard one-block-per-cell slope guarantee, half-step bottom-slab placement on every lower side of a step, footprint bounds, determinism across instances and repeated calls, `get_params`/`apply_params` round-trip, 256x256 generation cost, store size, per-chunk collision cost on a real grid, render LOD levels and far-collision gating, cross-chunk navigation, and end-to-end `ChunkStreamer.world_recipe` generation | `checks=36 failures=0`; prints generation, store and collision timings |
 | `optimizer_feedback_test.tscn` | Real agents/exits/bridge: auto-solve, overlay with one label per exit, periodic re-solve with unchanged skipping, far late-spawn queueing/assignment, and the console `opt_overlay` toggle | `checks=11 failures=0` |
+| `experiment_tools_test.tscn` | Live plan capture/save/reload/apply, reconstruction of a plan from a recording, and the six tidy tables + dictionary + raw copies | `checks=45 failures=0` |
 | `optimizer_benchmark.gd` | Timing only: 600 agents in 40 cohorts against 4 exits | Prints setup/algorithm timings; no assertions |
 | `water_pipe_benchmark.gd` | Timing only: proposed 2.5D pipe-model update over 1,024 / 4,096 / 16,384 / 65,536 packed cells (two-axis flux + two apply passes) | Prints ms/step and average ms/frame at 10 Hz; no assertions |
 
-Total: **542 assertions** across thirteen harnesses.
+Total: **587 assertions** across fourteen harnesses.
 
 Notes:
 

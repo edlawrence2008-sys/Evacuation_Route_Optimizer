@@ -11,9 +11,9 @@ extends Control
 
 @onready var blocks_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Blocks
 @onready var placeables_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Placeables
+@onready var useables_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Useables
 @onready var simulation_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Simulation
 @onready var agents_button: Button = $Inventory/ItemCategoryScroll/ItemCategoryHbox/Agents
-@onready var category_arrow: Sprite2D = $Inventory/CategoryArrow
 @onready var simulation_panel: Control = $Inventory/SimulationPanel
 @onready var agent_panel: Control = $Inventory/AgentPanel
 
@@ -42,6 +42,14 @@ const PLACEABLE_FOLDERS := [
 	"res://scenes/placeables/env/",
 ]
 
+## Non-block tools live in the Useables tab. Add future held/used scenes here;
+## each scene owns a UseComponent that BuildController drives while selected.
+const USEABLE_SCENE_PATHS := [
+	"res://scenes/useables/water_tool.tscn",
+	"res://scenes/useables/gas_tool.tscn",
+	"res://scenes/useables/route_paint_tool.tscn",
+]
+
 ## Property-tab row labels -> canonical BlockMaterials keys.
 const BLOCK_PROPERTY_KEYS := {
 	"Base Stability": "base_stability",
@@ -53,8 +61,6 @@ const BLOCK_PROPERTY_KEYS := {
 }
 
 # --- OFFSET CONTROLS ---
-@export var arrow_x_offset: float = 10.0
-@export var arrow_y_offset: float = 0.0
 
 @onready var property_tab: Control = $Inventory/Property_tab
 var adjustable_vars_container: VBoxContainer = null
@@ -112,7 +118,7 @@ var _property_spin_t: float = 0.0
 ## label text (used as the data key), value Label, and scene-authored default.
 var _property_block_rows: Array[Dictionary] = []
 
-enum Category { BLOCKS, PLACEABLES, SIMULATION, AGENTS }
+enum Category { BLOCKS, PLACEABLES, USEABLES, SIMULATION, AGENTS }
 var _current_category: Category = Category.BLOCKS
 
 # Active filter tracking
@@ -187,6 +193,8 @@ func _ready() -> void:
 		blocks_button.pressed.connect(func(): _on_category_pressed(Category.BLOCKS))
 	if placeables_button:
 		placeables_button.pressed.connect(func(): _on_category_pressed(Category.PLACEABLES))
+	if useables_button:
+		useables_button.pressed.connect(func(): _on_category_pressed(Category.USEABLES))
 	if simulation_button:
 		simulation_button.pressed.connect(func(): _on_category_pressed(Category.SIMULATION))
 	if agents_button:
@@ -209,7 +217,7 @@ func _ready() -> void:
 		property_tab.visible = false
 		_clear_adjustable_vars()
 
-	_update_category_arrow.call_deferred()
+	_update_category_buttons.call_deferred()
 	_update_category_panel.call_deferred()
 
 
@@ -383,7 +391,7 @@ func setup_inventory(build_items: PackedInt32Array, mesh_library: MeshLibrary) -
 	_setup_hotbar()
 	_refresh_filters()
 	_refresh_inventory_display()
-	_update_category_arrow()
+	_update_category_buttons()
 
 
 ## The bar starts empty-handed; the player fills slots by clicking inventory
@@ -549,7 +557,8 @@ func _refresh_filters() -> void:
 		child.queue_free()
 
 	if (
-		_current_category == Category.SIMULATION
+		_current_category == Category.USEABLES
+		or _current_category == Category.SIMULATION
 		or _current_category == Category.AGENTS
 	):
 		_active_filters.clear()
@@ -723,6 +732,8 @@ func _refresh_inventory_display() -> void:
 			_add_block_groups()
 		Category.PLACEABLES:
 			_add_placeable_group()
+		Category.USEABLES:
+			_add_useables_group()
 		Category.SIMULATION, Category.AGENTS:
 			pass
 
@@ -1893,6 +1904,53 @@ func _add_placeable_group() -> void:
 			)
 
 
+## Non-block tools. These reuse the normal 60x60 item card so they fit the
+## inventory grid; future tools are added to `USEABLE_SCENE_PATHS`.
+func _add_useables_group() -> void:
+	var loaded: Array[PackedScene] = []
+
+	for path: String in USEABLE_SCENE_PATHS:
+		if not ResourceLoader.exists(path):
+			continue
+
+		var scene := load(path) as PackedScene
+
+		if scene != null and not loaded.has(scene):
+			loaded.append(scene)
+
+	if loaded.is_empty():
+		return
+
+	var grid := _add_group("Useables", loaded.size())
+
+	for scene: PackedScene in loaded:
+		var button = item_button_scene.instantiate()
+		grid.add_child(button)
+		button.set_useable(scene, _useable_display_name(scene))
+		button.useable_selected.connect(_on_useable_selected)
+
+
+func _useable_display_name(scene: PackedScene) -> String:
+	var base := scene.resource_path.get_file().get_basename()
+	return base.capitalize()
+
+
+func _on_useable_selected(scene: PackedScene) -> void:
+	if scene == null:
+		return
+
+	_property_hover_item.clear()
+
+	if _selected_placeable_scene != scene:
+		_selected_placeable_overrides.clear()
+
+	_selected_placeable_scene = scene
+	_property_pinned_item = _placeable_item_data(scene)
+	assign_hotbar_placeable(get_hotbar_selected_slot(), scene)
+	_refresh_property_tab()
+	placeable_selected.emit(scene)
+
+
 ## Placeables are grouped by their filename prefix. Add new class prefixes
 ## here (and a matching folder under scenes/placeables/) to extend the catalog.
 func _placeable_class(scene: PackedScene) -> String:
@@ -2160,6 +2218,8 @@ func _on_category_pressed(category: Category) -> void:
 		blocks_button.button_pressed = (_current_category == Category.BLOCKS)
 	if placeables_button:
 		placeables_button.button_pressed = (_current_category == Category.PLACEABLES)
+	if useables_button:
+		useables_button.button_pressed = (_current_category == Category.USEABLES)
 	if simulation_button:
 		simulation_button.button_pressed = (_current_category == Category.SIMULATION)
 	if agents_button:
@@ -2169,31 +2229,36 @@ func _on_category_pressed(category: Category) -> void:
 	# not the inventory category.
 	_refresh_filters()
 	_refresh_inventory_display()
-	_update_category_arrow()
+	_update_category_buttons()
 	_update_category_panel()
 
-func _update_category_arrow() -> void:
-	if not category_arrow:
-		return
-		
-	var target_button: Button = null
-	match _current_category:
-		Category.BLOCKS:
-			target_button = blocks_button
-		Category.PLACEABLES:
-			target_button = placeables_button
-		Category.SIMULATION:
-			target_button = simulation_button
-		Category.AGENTS:
-			target_button = agents_button
-			
-	if target_button:
-		var arrow_width = 0.0
-		if category_arrow.texture:
-			arrow_width = category_arrow.texture.get_width() * category_arrow.scale.x
-			
-		category_arrow.global_position.x = target_button.global_position.x - arrow_width + arrow_x_offset
-		category_arrow.global_position.y = target_button.global_position.y + (target_button.size.y / 2.0) + arrow_y_offset
+func _update_category_buttons() -> void:
+	var buttons: Array[Button] = [
+		blocks_button,
+		placeables_button,
+		useables_button,
+		simulation_button,
+		agents_button,
+	]
+	var active_index := int(_current_category)
+	var selected_color := Color(1.0, 0.85, 0.35, 1.0)
+
+	for index: int in range(buttons.size()):
+		var button := buttons[index]
+
+		if button == null:
+			continue
+
+		button.add_theme_font_size_override("font_size", 16)
+
+		if index == active_index:
+			button.add_theme_color_override("font_color", selected_color)
+			button.add_theme_color_override("font_pressed_color", selected_color)
+			button.add_theme_color_override("font_hover_color", selected_color)
+		else:
+			button.remove_theme_color_override("font_color")
+			button.remove_theme_color_override("font_pressed_color")
+			button.remove_theme_color_override("font_hover_color")
 
 func _update_category_panel() -> void:
 	var searching: bool = not _search_query.is_empty()
@@ -2283,7 +2348,7 @@ func update_build_ui(build_mode_active: bool, inventory_open: bool, current_item
 	if inventory_panel:
 		inventory_panel.visible = should_show_inventory
 		if should_show_inventory:
-			_update_category_arrow.call_deferred()
+			_update_category_buttons.call_deferred()
 			_update_category_panel.call_deferred()
 		else:
 			if (

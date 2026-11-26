@@ -75,6 +75,10 @@ var _route_mesh: MeshInstance3D = null
 var _route_material: StandardMaterial3D = null
 var _route_markers_root: Node3D = null
 var _last_route_key: String = ""
+var _plan_overlay: DemoPlanOverlay = null
+var _plan_events: Array = []
+var _plan_check: CheckBox = null
+var _plan_routes_check: CheckBox = null
 
 var _layer: CanvasLayer = null
 var _ui: Control = null
@@ -409,6 +413,7 @@ func _load_recording(path: String) -> bool:
 	_tick_maps.clear()
 	_events.clear()
 	_routes.clear()
+	_plan_events.clear()
 	_run_start_t = -1.0
 
 	var file := FileAccess.open(path, FileAccess.READ)
@@ -446,6 +451,9 @@ func _load_recording(path: String) -> bool:
 			if not _routes.has(serial):
 				_routes[serial] = []
 			_routes[serial].append(obj)
+			_events.append(obj)
+		elif type == "optimizer":
+			_plan_events.append(obj)
 			_events.append(obj)
 		elif type in [
 			"agent_spawn", "destination", "evacuation", "agent_death", "queue", "contact",
@@ -546,6 +554,27 @@ func _build_world() -> void:
 
 	_build_exit_markers(first_tick)
 	_build_environment_markers()
+	_build_plan_overlay()
+
+
+func _build_plan_overlay() -> void:
+	if _world == null:
+		return
+
+	if _plan_overlay == null or not is_instance_valid(_plan_overlay):
+		_plan_overlay = DemoPlanOverlay.new()
+		_plan_overlay.name = "PlanOverlay"
+		_world.add_child(_plan_overlay)
+
+	_plan_overlay.configure(
+		_routes,
+		_plan_events,
+		_recorded_exit_locations()
+	)
+	_plan_overlay.set_enabled(_plan_check != null and _plan_check.button_pressed)
+	_plan_overlay.set_show_routes(
+		_plan_routes_check != null and _plan_routes_check.button_pressed
+	)
 
 
 func _clear_world() -> void:
@@ -560,6 +589,7 @@ func _clear_world() -> void:
 	_route_mesh = null
 	_route_material = null
 	_route_markers_root = null
+	_plan_overlay = null
 	_last_route_key = ""
 
 
@@ -922,6 +952,10 @@ func _update_scene(force_text: bool) -> void:
 		marker.visible = (_time - _started_t) >= event_t
 
 	_refresh_selected_route()
+
+	if _plan_overlay != null and is_instance_valid(_plan_overlay):
+		_plan_overlay.set_time(_time)
+
 	_timeline.set_value_no_signal(_time)
 
 	if force_text:
@@ -1802,6 +1836,26 @@ func _build_ui() -> void:
 	)
 	controls.add_child(_route_check)
 
+	_plan_check = CheckBox.new()
+	_plan_check.text = "Optimizer plan"
+	_plan_check.tooltip_text = "Draw cohort -> exit assignments from the recorded optimizer events."
+	_plan_check.toggled.connect(_on_plan_toggled)
+	controls.add_child(_plan_check)
+
+	_plan_routes_check = CheckBox.new()
+	_plan_routes_check.text = "Plan routes"
+	_plan_routes_check.tooltip_text = (
+		"Draw the recorded route polyline per cohort. When a run used flow fields, "
+		+ "the overlay shows an assignment-only straight line instead."
+	)
+	_plan_routes_check.button_pressed = true
+	_plan_routes_check.toggled.connect(_on_plan_routes_toggled)
+	controls.add_child(_plan_routes_check)
+
+	var export_button := _button("Export Data", _on_export_pressed)
+	export_button.tooltip_text = "Write tidy CSV tables for this recording to user://exports."
+	controls.add_child(export_button)
+
 	_timeline = HSlider.new()
 	_timeline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_timeline.custom_minimum_size = Vector2(0, 20)
@@ -1884,6 +1938,25 @@ func _on_timeline_changed(value: float) -> void:
 	_playing = false
 	_play_button.text = "Play"
 	_update_scene(true)
+
+
+func _on_plan_toggled(on: bool) -> void:
+	if _plan_overlay != null and is_instance_valid(_plan_overlay):
+		_plan_overlay.set_enabled(on)
+
+
+func _on_plan_routes_toggled(on: bool) -> void:
+	if _plan_overlay != null and is_instance_valid(_plan_overlay):
+		_plan_overlay.set_show_routes(on)
+
+
+func _on_export_pressed() -> void:
+	var result: Dictionary = ExperimentExporter.export_demo(_demo_id)
+	_state_label.text = (
+		"exported -> %s" % String(result.get("output_display", ""))
+		if bool(result.get("ok", false))
+		else "export failed: %s" % String(result.get("error", ""))
+	)
 
 
 func _on_agent_selected(index: int) -> void:

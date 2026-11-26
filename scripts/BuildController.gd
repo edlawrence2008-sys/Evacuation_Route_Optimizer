@@ -314,6 +314,15 @@ func _input(event: InputEvent) -> void:
 
 ## True while the console is open or a text-entry control has keyboard focus,
 ## so build shortcuts do not steal keys from typing.
+## Read-only query used by the Route Paint tool and other held-tool consumers.
+func get_held_placeable_scene() -> PackedScene:
+	return _selected_placeable_scene
+
+
+func get_held_use_component() -> UseComponent:
+	return _held_use_component
+
+
 func _is_typing() -> bool:
 	if hud_manager:
 		var console := hud_manager.get_node_or_null("Console")
@@ -2899,6 +2908,7 @@ func _refresh_held_use_component() -> void:
 		# Keep the component alive after the inspection instance is freed. It
 		# is a plain Node, so it can live under the controller.
 		component.get_parent().remove_child(component)
+		component.owner = null
 		add_child(component)
 		_held_use_component = component
 

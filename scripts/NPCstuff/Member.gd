@@ -48,6 +48,21 @@ signal destination_changed(info: Dictionary)
 ## Disable to make agents keep their line and rely on the social forces.
 @export var allow_yielding: bool = true
 
+@export_group("Water & Hazards")
+## Fraction of walking speed lost when fully submerged.
+@export_range(0.0, 0.95, 0.01) var water_speed_loss: float = 0.65
+## How strongly the local water flow drags the agent when submerged.
+@export_range(0.0, 12.0, 0.1) var water_drag: float = 2.5
+## How often depth/flow/hazard are sampled. 5-10 Hz is enough; the values move
+## smoothly compared with the 30 Hz physics tick.
+@export var water_query_interval: float = 0.15
+@export var hazard_query_interval: float = 0.25
+## Damage per second at full LPG concentration and at full fire heat.
+## FireComponent already applies direct radius damage, so heat damage defaults
+## to zero; raise it only if HazardWorld is the sole fire-damage source.
+@export var gas_damage_per_sec: float = 8.0
+@export var heat_damage_per_sec: float = 0.0
+
 @export_group("Collision")
 ## Only used on the engine-collision path. In the default kinematic mode NPCs
 ## carry collision_mask = 0 and rely on the SFM contact force instead.
@@ -319,6 +334,12 @@ var logic_tick_timer: float = 0.0
 
 var _layer_2_disabled: bool = false
 var _movement_accum: float = 0.0
+## Last unified environment sample. `water` is the WaterWorld sample; `gas`
+## and `heat` come from HazardWorld. Empty when neither system is present.
+var _environment_sample: Dictionary = {}
+var _water_sample: Dictionary = {}
+var _environment_accum: float = 0.0
+var _was_in_water: bool = false
 
 const SPRITE_LIBRARY = preload(
 	"res://scripts/NPCstuff/RealisticSpriteLibrary.gd"
@@ -359,6 +380,11 @@ var last_route_reason: String = ""
 var _optimizer_assignment_active: bool = false
 var _optimizer_assigned_exit_id: String = ""
 var _optimizer_assigned_target: Vector3 = Vector3.ZERO
+## A saved-plan or authored corridor. While active the agent follows the supplied
+## polyline and local congestion detours are suppressed; a blocked leg falls back
+## to normal navigation through request_evacuation_route().
+var _plan_route_active: bool = false
+var _plan_route_points: Array = []
 ## Set by the demo-state importer so the deferred initial action does not
 ## overwrite the restored state on the next frame.
 var _imported_demo_state: bool = false
@@ -374,6 +400,10 @@ var _last_requested_exit_id: String = ""
 var _pending_route_reason: String = ""
 var _pending_route_started_usec: int = 0
 var _spawned_at_sim: float = -1.0
+## Position at the first movement tick. Saved plans use it to match an agent on
+## a later run when serials differ; the live position at solve time would drift.
+var spawn_position: Vector3 = Vector3.ZERO
+var _spawn_position_set: bool = false
 var _evacuated_at_sim: float = -1.0
 
 const LOGIC_TICK_RATE: float = 0.15
@@ -928,12 +958,37 @@ func _physics_process(delta: float) -> void:
 	if _streamed_out or current_state == State.DEAD:
 		return
 
+	# A pre-populated fixture is created before Start. Holding the agents still
+	# keeps their spawn timestamp and evacuation time relative to time zero.
+	if GlobalData.population_frozen:
+		if not _spawn_position_set:
+			spawn_position = global_position
+			_spawn_position_set = true
+
+		velocity = Vector3.ZERO
+		return
+
+	if not _spawn_position_set:
+		spawn_position = global_position
+		_spawn_position_set = true
+
 	_fall_check_timer -= delta
 	if _fall_check_timer <= 0.0:
 		_fall_check_timer = FALL_CHECK_INTERVAL
 		if _is_below_chunk_floor():
 			_on_health_depleted()
 			return
+
+	var environment_interval: float = minf(
+		maxf(water_query_interval, 0.02),
+		maxf(hazard_query_interval, 0.02)
+	)
+	_environment_accum += delta
+
+	if _environment_accum + 0.0001 >= environment_interval:
+		var environment_elapsed := _environment_accum
+		_environment_accum = 0.0
+		_refresh_environment_sample(environment_elapsed)
 
 	_movement_accum += delta
 	var interval: float = 1.0 / maxf(movement_rate, 1.0)
@@ -1027,6 +1082,7 @@ func _physics_process(delta: float) -> void:
 
 		var desired_velocity: Vector3 = (
 			_desired_direction * actual_movement_speed * speed_scale
+			* _water_speed_scale()
 		)
 
 		_update_wall_force(step)
@@ -1035,6 +1091,7 @@ func _physics_process(delta: float) -> void:
 			desired_velocity,
 			is_grounded
 		)
+		_apply_water_drag(step)
 
 	# Movement runs every physics tick. Steering may run at movement_rate, but
 	# the integrator always advances by the physics delta; skipping a tick
@@ -1441,7 +1498,8 @@ func _guard_ledge(desired: Vector3, forward: Vector3) -> Vector3:
 ## what stops agents from walking straight back into a jam they just left.
 func _maybe_avoid_congestion(move_direction: Vector3) -> void:
 	if (
-		_yield_timer > 0.0
+		_plan_route_active
+		or _yield_timer > 0.0
 		or _congestion_repath_timer > 0.0
 		or _congestion_check_timer > 0.0
 		or is_awaiting_path
@@ -2845,6 +2903,8 @@ func set_optimizer_assignment(exit_id: String, target: Vector3) -> bool:
 	_optimizer_assignment_active = true
 	_optimizer_assigned_exit_id = exit_id
 	_optimizer_assigned_target = target
+	_plan_route_active = false
+	_plan_route_points.clear()
 
 	if current_state == State.IDLE and not _has_started_moving:
 		return true
@@ -2860,6 +2920,8 @@ func clear_optimizer_assignment() -> void:
 	_optimizer_assignment_active = false
 	_optimizer_assigned_exit_id = ""
 	_optimizer_assigned_target = Vector3.ZERO
+	_plan_route_active = false
+	_plan_route_points.clear()
 
 
 func has_optimizer_assignment() -> bool:
@@ -2872,6 +2934,66 @@ func get_optimizer_exit_id() -> String:
 
 func get_optimizer_target() -> Vector3:
 	return _optimizer_assigned_target
+
+
+## Follow a saved evacuation plan's corridor to an exit.
+##
+## `points` is an ordered list of world positions (the recorded route, or a
+## corridor the user authored). The nav layer fills the gaps with A* legs; a
+## blocked leg falls back to the direct exit path, so a stale plan cannot
+## deadlock an agent. This sets the same optimizer override as
+## set_optimizer_assignment() so the local logit choice does not fight it.
+func request_evacuation_route(
+	exit_id: String,
+	target: Vector3,
+	points: Array,
+	reason: String = "plan"
+) -> bool:
+	if current_state == State.DEAD or has_meta("evacuated") or current_state == State.ARRIVED:
+		return false
+
+	if exit_id.is_empty() or target == Vector3.ZERO:
+		return false
+
+	var grid: NavGridMap = _get_gridmap()
+
+	if grid == null:
+		return false
+
+	var path: PackedVector3Array = grid.request_path_via(global_position, points, target)
+
+	if path.is_empty():
+		path = grid.request_path_immediate(global_position, target)
+
+	if path.is_empty():
+		return false
+
+	if is_instance_valid(grid):
+		grid.cancel_path_requests(self)
+
+	_optimizer_assignment_active = true
+	_optimizer_assigned_exit_id = exit_id
+	_optimizer_assigned_target = target
+	_plan_route_active = true
+	_plan_route_points = points.duplicate(true)
+	_flow_active = false
+	_flow_wait = 0.0
+	_flow_target = target
+	is_awaiting_path = false
+	has_evacuation_target = true
+	_last_evac_target = target
+	current_state = State.SEEKING_EVAC
+	current_path = path
+	path_index = 0
+	_pending_route_reason = reason
+	_pending_route_started_usec = Time.get_ticks_usec()
+	_emit_destination_changed(target)
+
+	if evacuation_manager:
+		evacuation_manager.notify_evacuation_target_chosen(target, self)
+
+	_assign_route(reason, path, "path")
+	return true
 
 
 func request_evacuation_target(
@@ -3532,7 +3654,15 @@ func _repath() -> void:
 		)
 
 		if keep_target != Vector3.ZERO:
-			request_evacuation_target(keep_target, "navigation")
+			if _plan_route_active and not _plan_route_points.is_empty():
+				request_evacuation_route(
+					_optimizer_assigned_exit_id,
+					keep_target,
+					_plan_route_points,
+					"navigation"
+				)
+			else:
+				request_evacuation_target(keep_target, "navigation")
 		else:
 			_route_to_closest_evac_point()
 		return
@@ -3783,6 +3913,15 @@ func on_exit_unavailable(exit_point: Node3D) -> void:
 	wait_timer = 0.1
 
 
+## Called by GlobalData when a frozen pre-populated crowd is released at Start.
+## The population existed before time zero; measuring its evacuation time from
+## its creation frame would overstate every run.
+func mark_run_start() -> void:
+	_spawned_at_sim = GlobalData.sim_now()
+	_pre_movement_elapsed = 0.0
+	_has_started_moving = false
+
+
 ## Route snapshot for a recorder that attaches after the route was assigned.
 func get_route_snapshot() -> Dictionary:
 	if route_id == 0:
@@ -3857,6 +3996,7 @@ func get_measurement_state() -> Dictionary:
 		"evacuated": is_evacuated(),
 		"evacuated_at": _evacuated_at_sim,
 		"spawned_at": _spawned_at_sim,
+		"spawn_position": spawn_position if _spawn_position_set else global_position,
 		"desired_speed": desired_speed,
 		"pre_movement_delay": _pre_movement_delay,
 		"pre_movement_wait": (
@@ -3913,3 +4053,111 @@ func get_evacuation_snapshot() -> Dictionary:
 		"route_changes": route_changes,
 		"route_switches": route_switch_count,
 	}
+
+# ---------------------------------------------------------------------------
+# Water and hazards
+# ---------------------------------------------------------------------------
+
+## One query for both systems. HazardWorld folds in the WaterWorld sample; if it
+## is absent, query WaterWorld directly so water still works on its own.
+func _refresh_environment_sample(elapsed: float) -> void:
+	_environment_sample = {}
+	_water_sample = {}
+
+	var hazard_world := get_tree().get_first_node_in_group("hazard_world")
+	var sample: Dictionary = {}
+
+	if hazard_world != null and hazard_world.has_method("sample_hazard"):
+		var hazard_result: Variant = hazard_world.call(
+			"sample_hazard",
+			global_position + Vector3.UP * 0.9
+		)
+
+		if hazard_result is Dictionary:
+			sample = hazard_result
+	else:
+		var direct_water := get_tree().get_first_node_in_group("water_world")
+
+		if direct_water != null and direct_water.has_method("sample_water"):
+			var direct_result: Variant = direct_water.call(
+				"sample_water",
+				global_position + Vector3.UP * 0.9
+			)
+
+			if direct_result is Dictionary:
+				sample = {"water": direct_result}
+
+	var water_value: Variant = sample.get("water", {})
+	var water: Dictionary = water_value if water_value is Dictionary else {}
+
+	if water.is_empty():
+		var fallback_water := get_tree().get_first_node_in_group("water_world")
+
+		if fallback_water != null and fallback_water.has_method("sample_water"):
+			var fallback_result: Variant = fallback_water.call(
+				"sample_water",
+				global_position
+			)
+
+			if fallback_result is Dictionary:
+				water = fallback_result
+
+	if not water.is_empty():
+		var surface := float(water.get("surface_y", global_position.y))
+		var submerged := clampf((surface - global_position.y) / 1.8, 0.0, 1.0)
+		water["submerged_fraction"] = submerged
+
+	_environment_sample = sample
+	_water_sample = water
+
+	var in_water := not water.is_empty()
+
+	if in_water and not _was_in_water:
+		var water_world := get_tree().get_first_node_in_group("water_world")
+
+		if water_world != null and water_world.has_method("spawn_splash"):
+			water_world.call("spawn_splash", global_position, 1.0)
+
+	_was_in_water = in_water
+
+	# Fire/LPG damage. This is intentionally separate from the water solver;
+	# it only reads the shared hazard sample.
+	if health_component != null and not sample.is_empty():
+		var gas := maxf(0.0, float(sample.get("gas", 0.0)))
+		var heat := maxf(0.0, float(sample.get("heat", 0.0)))
+		var damage := (
+			gas * gas_damage_per_sec
+			+ heat * heat_damage_per_sec
+		) * elapsed
+
+		if damage > 0.0:
+			health_component.take_damage(damage)
+
+
+func _water_speed_scale() -> float:
+	var submerged := clampf(
+		float(_water_sample.get("submerged_fraction", 0.0)),
+		0.0,
+		1.0
+	)
+	return clampf(1.0 - water_speed_loss * submerged, 0.25, 1.0)
+
+
+func _apply_water_drag(delta: float) -> void:
+	if _water_sample.is_empty():
+		return
+
+	var submerged := clampf(
+		float(_water_sample.get("submerged_fraction", 0.0)),
+		0.0,
+		1.0
+	)
+
+	if submerged <= 0.02:
+		return
+
+	var flow_value: Variant = _water_sample.get("flow", Vector2.ZERO)
+	var flow: Vector2 = flow_value if flow_value is Vector2 else Vector2.ZERO
+	var blend := 1.0 - exp(-water_drag * submerged * maxf(delta, 0.0001))
+	velocity.x = lerpf(velocity.x, flow.x, blend)
+	velocity.z = lerpf(velocity.z, flow.y, blend)

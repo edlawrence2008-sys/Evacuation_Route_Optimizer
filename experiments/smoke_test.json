@@ -1,0 +1,33 @@
+{
+	"experiment": "smoke_test",
+	"_notes": "Tiny one-cell manifest for verifying the runner without a long batch.",
+	"scenarios": [
+		{
+			"id": "S1_smoke",
+			"fixture_preset": "s1",
+			"expected_exits": 4,
+			"population": 12,
+			"prepopulate": true,
+			"agent_cap": 700,
+			"quota": 12,
+			"horizon_s": 15
+		}
+	],
+	"conditions": ["baseline"],
+	"seeds": [42],
+	"repeat": 1,
+	"objective": "balanced",
+	"cohort_size": 4.0,
+	"max_cohorts": 60,
+	"time_budget_ms": 250,
+	"horizon_s": 15,
+	"sampling_interval": 0.25,
+	"prepopulate": true,
+	"population_count": 12,
+	"agent_cap": 700,
+	"quota": 12,
+	"abort_on_failure": true,
+	"require_complete": false,
+	"resume": false,
+	"output_root": "user://experiments"
+}

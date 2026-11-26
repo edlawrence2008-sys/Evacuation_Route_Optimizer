@@ -25,6 +25,8 @@ extends VBoxContainer
 
 var _status_accum: float = 0.0
 var _optimizer_button: Button = null
+var _data_row: GridContainer = null
+var _export_status: Label = null
 
 
 func _ready() -> void:
@@ -53,6 +55,7 @@ func _ready() -> void:
 	GlobalData.npc_evacuated.connect(_on_npc_count_changed)
 
 	_ensure_optimizer_button()
+	_ensure_data_row()
 	_sync_from_state()
 
 
@@ -107,6 +110,13 @@ func _sync_from_state() -> void:
 		member_count_spin.set_value_no_signal(populator.member_count)
 		start_evacuating_check.set_pressed_no_signal(populator.start_evacuating)
 		pathfind_only_check.set_pressed_no_signal(populator.only_pathfindable_blocks)
+		var freeze_check: CheckButton = null
+
+		if _data_row != null:
+			freeze_check = _data_row.get_node_or_null("FreezePopulate") as CheckButton
+
+		if freeze_check != null:
+			freeze_check.set_pressed_no_signal(bool(populator.get("freeze_until_start")))
 
 	_update_status()
 
@@ -263,6 +273,114 @@ func _update_status(keep_message: bool = false) -> void:
 			rec,
 		]
 	)
+
+
+# ---------------------------------------------------------------------------
+# Data export
+# ---------------------------------------------------------------------------
+
+func _ensure_data_row() -> void:
+	if _data_row != null:
+		return
+
+	var record_now_index: int = record_now.get_index()
+	_data_row = GridContainer.new()
+	_data_row.name = "DataRow"
+	_data_row.columns = 2
+	_data_row.add_theme_constant_override("h_separation", 4)
+	_data_row.add_theme_constant_override("v_separation", 4)
+	add_child(_data_row)
+	move_child(_data_row, record_now_index + 1)
+
+	var export_last := Button.new()
+	export_last.text = "Export Last Run"
+	export_last.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	export_last.tooltip_text = (
+		"Write runs.csv, agents.csv, exits.csv, solves.csv, convergence.csv and "
+		+ "the data dictionary for the last demo to user://exports."
+	)
+	export_last.pressed.connect(_on_export_last_pressed)
+	_data_row.add_child(export_last)
+
+	var export_all := Button.new()
+	export_all.text = "Export All"
+	export_all.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	export_all.tooltip_text = "Export every demo in this save's library into one experiment folder."
+	export_all.pressed.connect(_on_export_all_pressed)
+	_data_row.add_child(export_all)
+
+	var freeze := CheckButton.new()
+	freeze.name = "FreezePopulate"
+	freeze.text = "Freeze until Start"
+	freeze.tooltip_text = (
+		"Populated agents stay still until Start, so pre-populated fixtures do "
+		+ "not accrue movement before time zero."
+	)
+	freeze.button_pressed = true
+	freeze.toggled.connect(_on_freeze_toggled)
+	_data_row.add_child(freeze)
+
+	var open_folder := Button.new()
+	open_folder.text = "Open Exports"
+	open_folder.tooltip_text = "Open the folder containing exported CSV tables in the system file browser."
+	open_folder.pressed.connect(_on_open_exports_pressed)
+	_data_row.add_child(open_folder)
+
+	_export_status = Label.new()
+	_export_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_export_status.add_theme_color_override("font_color", Color(0.68, 0.68, 0.64, 1.0))
+	_export_status.add_theme_font_size_override("font_size", 11)
+	add_child(_export_status)
+	move_child(_export_status, _data_row.get_index() + 1)
+
+
+func _on_export_last_pressed() -> void:
+	var demo_id: String = SimRecorder.get_demo_id()
+
+	if demo_id.is_empty():
+		var demos: Array = DemoStore.list_demos()
+
+		if not demos.is_empty():
+			demo_id = String(demos[0].get("id", ""))
+
+	if demo_id.is_empty():
+		_export_status.text = "No recorded demo yet. Start a recorded run first."
+		return
+
+	var result: Dictionary = ExperimentExporter.export_demo(demo_id)
+
+	if bool(result.get("ok", false)):
+		_export_status.text = "Exported %s -> %s (%d rows)" % [
+			demo_id,
+			String(result.get("output_display", "")),
+			int(result.get("runs", 0)),
+		]
+	else:
+		_export_status.text = "Export failed: %s" % str(result.get("error", result.get("errors", "")))
+
+
+func _on_export_all_pressed() -> void:
+	var result: Dictionary = ExperimentExporter.export_all_active_save()
+
+	if bool(result.get("ok", false)):
+		_export_status.text = "Exported %d run(s) -> %s" % [
+			int(result.get("runs", 0)),
+			String(result.get("output_display", "")),
+		]
+	else:
+		_export_status.text = "Export failed: %s" % str(result.get("error", result.get("errors", "")))
+
+
+func _on_freeze_toggled(pressed: bool) -> void:
+	if populator != null:
+		populator.set("freeze_until_start", pressed)
+
+
+func _on_open_exports_pressed() -> void:
+	var path := ProjectSettings.globalize_path(ExperimentExporter.output_root())
+	DirAccess.make_dir_recursive_absolute(ExperimentExporter.output_root())
+	OS.shell_open(path)
+	_export_status.text = "Exports: %s" % path
 
 
 # ---------------------------------------------------------------------------

@@ -55,11 +55,11 @@ class Tile:
 	func index(ix: int, iz: int) -> int:
 		return iz * 16 + ix
 
-	func depth_at(index: int) -> float:
-		return volume[index] / area if index >= 0 and index < volume.size() else 0.0
+	func depth_at(cell_index: int) -> float:
+		return volume[cell_index] / area if cell_index >= 0 and cell_index < volume.size() else 0.0
 
-	func surface_at(index: int) -> float:
-		return floor_y[index] + depth_at(index)
+	func surface_at(cell_index: int) -> float:
+		return floor_y[cell_index] + depth_at(cell_index)
 
 
 var _grid: Node = null
@@ -648,7 +648,7 @@ func _step_tile(tile: Tile, dt: float) -> void:
 	for index in tile.volume.size():
 		tile.volume[index] = clampf(tile.volume[index], 0.0, tile.capacity[index])
 		var ix := index % TILE_CELLS
-		var iz := index / TILE_CELLS
+		var iz := floori(float(index) / float(TILE_CELLS))
 		var left := tile.flux_x[index - 1] if ix > 0 else 0.0
 		var right := tile.flux_x[index] if ix < TILE_CELLS - 1 else 0.0
 		var up := tile.flux_z[index - TILE_CELLS] if iz > 0 else 0.0

@@ -85,12 +85,12 @@ func sample_heat(world_pos: Vector3) -> float:
 		var burning_value: Variant = node.get("burning")
 		if burning_value == null or not bool(burning_value):
 			continue
-		var owner := node.get_parent()
-		if not (owner is Node3D):
+		var owner_node := node.get_parent()
+		if not (owner_node is Node3D):
 			continue
 		var radius_value: Variant = node.get("damage_radius")
 		var radius := maxf(float(radius_value) if radius_value != null else 2.5, 0.5)
-		var distance := (owner as Node3D).global_position.distance_to(world_pos)
+		var distance := (owner_node as Node3D).global_position.distance_to(world_pos)
 		if distance > radius:
 			continue
 		heat = maxf(heat, clampf(1.0 - distance / radius, 0.0, 1.0))
@@ -205,10 +205,10 @@ func _inject_fire_smoke() -> void:
 		var burning_value: Variant = node.get("burning")
 		if burning_value == null or not bool(burning_value):
 			continue
-		var owner := node.get_parent()
-		if owner is Node3D:
+		var owner_node := node.get_parent()
+		if owner_node is Node3D:
 			add_smoke(
-				(owner as Node3D).global_position + Vector3.UP * 1.0,
+				(owner_node as Node3D).global_position + Vector3.UP * 1.0,
 				0.35,
 				1.2
 			)

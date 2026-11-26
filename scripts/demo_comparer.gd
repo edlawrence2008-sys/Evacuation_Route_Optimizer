@@ -75,6 +75,8 @@ var _value_labels: Array = []
 var _delta_labels: Array = []
 var _differences_toggle: CheckButton = null
 var _differences: RichTextLabel = null
+var _plan_check: CheckBox = null
+var _plan_routes_check: CheckBox = null
 
 var _ui_accum: float = 0.0
 var _chart_accum: float = 0.0
@@ -678,6 +680,73 @@ func _build_world() -> void:
 
 		demo["proxies"] = proxies
 
+		var overlay := DemoPlanOverlay.new()
+		overlay.name = "PlanOverlay_%s" % String(demo["letter"])
+		root.add_child(overlay)
+		overlay.configure(
+			_demo_routes(demo),
+			_demo_plan_events(demo),
+			_demo_exit_positions(demo)
+		)
+		overlay.set_enabled(_plan_check != null and _plan_check.button_pressed)
+		overlay.set_show_routes(
+			_plan_routes_check != null and _plan_routes_check.button_pressed
+		)
+		demo["plan_overlay"] = overlay
+
+
+func _demo_plan_events(demo: Dictionary) -> Array:
+	var result: Array = []
+
+	for event: Dictionary in demo.get("events", []):
+		if String(event.get("type", "")) == "optimizer":
+			result.append(event)
+
+	return result
+
+
+func _demo_routes(demo: Dictionary) -> Dictionary:
+	var result: Dictionary = {}
+
+	for event: Dictionary in demo.get("events", []):
+		var type := String(event.get("type", ""))
+
+		if type != "route" and type != "route_change":
+			continue
+
+		var serial := int(event.get("agent", -1))
+
+		if not result.has(serial):
+			result[serial] = []
+
+		(result[serial] as Array).append(event)
+
+	for serial: Variant in result.keys():
+		(result[serial] as Array).sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return float(a.get("t", 0.0)) < float(b.get("t", 0.0))
+		)
+
+	return result
+
+
+func _demo_exit_positions(demo: Dictionary) -> Dictionary:
+	var result: Dictionary = {}
+	var run: Dictionary = demo.get("run", {})
+
+	for entry: Variant in run.get("exits", []):
+		if not entry is Dictionary:
+			continue
+
+		var exit_id := String((entry as Dictionary).get("exit_id", ""))
+		var location: Variant = (entry as Dictionary).get("location", [])
+
+		if location is Array and (location as Array).size() >= 3:
+			result[exit_id] = Vector3(
+				float(location[0]), float(location[1]), float(location[2])
+			)
+
+	return result
+
 
 func _clear_world() -> void:
 	if _world != null and is_instance_valid(_world):
@@ -688,6 +757,7 @@ func _clear_world() -> void:
 	for demo: Dictionary in _demos:
 		demo.erase("root")
 		demo.erase("proxies")
+		demo.erase("plan_overlay")
 
 
 func _update_scene() -> void:
@@ -701,6 +771,11 @@ func _update_scene() -> void:
 
 		if not root.visible:
 			continue
+
+		var plan_overlay: DemoPlanOverlay = demo.get("plan_overlay")
+
+		if plan_overlay != null and is_instance_valid(plan_overlay):
+			plan_overlay.set_time(float(demo.get("start_t", 0.0)) + _time)
 
 		var index := _tick_index(demo, _time)
 
@@ -1578,6 +1653,19 @@ func _build_ui() -> void:
 	_noclip_button.button_up.connect(_end_noclip_hold)
 	controls.add_child(_noclip_button)
 
+	_plan_check = CheckBox.new()
+	_plan_check.text = "Optimizer plans"
+	_plan_check.tooltip_text = "Draw each recording's cohort -> exit assignments on the shared timeline."
+	_plan_check.toggled.connect(_on_plan_toggled)
+	controls.add_child(_plan_check)
+
+	_plan_routes_check = CheckBox.new()
+	_plan_routes_check.text = "Plan routes"
+	_plan_routes_check.button_pressed = true
+	_plan_routes_check.tooltip_text = "Draw recorded route polylines; flow-field runs show assignment-only stems."
+	_plan_routes_check.toggled.connect(_on_plan_routes_toggled)
+	controls.add_child(_plan_routes_check)
+
 	_time_label = Label.new()
 	_time_label.custom_minimum_size = Vector2(150, 0)
 	_time_label.add_theme_color_override("font_color", TEXT)
@@ -2096,6 +2184,22 @@ func _on_timeline_changed(value: float) -> void:
 
 	if _chart != null:
 		_chart.set_cursor(_time)
+
+
+func _on_plan_toggled(on: bool) -> void:
+	for demo: Dictionary in _demos:
+		var overlay: DemoPlanOverlay = demo.get("plan_overlay")
+
+		if overlay != null and is_instance_valid(overlay):
+			overlay.set_enabled(on)
+
+
+func _on_plan_routes_toggled(on: bool) -> void:
+	for demo: Dictionary in _demos:
+		var overlay: DemoPlanOverlay = demo.get("plan_overlay")
+
+		if overlay != null and is_instance_valid(overlay):
+			overlay.set_show_routes(on)
 
 
 # ---------------------------------------------------------------------------

@@ -51,6 +51,8 @@ func to_dictionary() -> Dictionary:
 		"environment_version": source_environment_version,
 		"cohort_count": cohorts.size(),
 		"agent_count": agent_exit_assignments.size(),
+		"cohorts": cohorts.duplicate(true),
+		"assignments": agent_exit_assignments.duplicate(true),
 		"exit_counts": exit_counts.duplicate(true),
 		"estimated_cost": estimated_cost,
 		"terms": terms.duplicate(true),

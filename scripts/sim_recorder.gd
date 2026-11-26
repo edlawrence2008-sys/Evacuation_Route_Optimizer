@@ -103,8 +103,39 @@ var _max_route_switches: int = 0
 var _density_integral: float = 0.0
 var _density_time: float = 0.0
 var _density_peak: float = 0.0
+var _density_peak_time: float = 0.0
 var _speed_integral: float = 0.0
 var _speed_time: float = 0.0
+
+## Density-exposure counters (agent-seconds above a threshold). The run total
+## is the sum over agents; the per-agent map is written into evacuation records
+## and, for still-active agents, exported from the final tick.
+const DENSITY_THRESHOLDS: Array[float] = [1.5, 2.0, 2.5]
+var _density_exposure: Dictionary = {}
+var _agent_density_exposure: Dictionary = {}
+var _contact_agent_seconds_2kn: float = 0.0
+var _contact_agent_seconds_3kn: float = 0.0
+var _contact_samples: Array[float] = []
+var _contact_sample_stride: int = 4
+
+## Optimizer aggregation. `execution_usec` is the last solve; these are the
+## totals the paper needs (solver time vs capture+solve+apply pipeline time).
+var _optimizer_solve_count: int = 0
+var _optimizer_total_solver_usec: int = 0
+var _optimizer_max_solver_usec: int = 0
+var _optimizer_total_pipeline_usec: int = 0
+var _optimizer_rejected: int = 0
+var _optimizer_timed_out: int = 0
+var _optimizer_evaluations: int = 0
+var _optimizer_assigned_serials: Dictionary = {}
+var _optimizer_logit_serials: Dictionary = {}
+var _optimizer_adopted: int = 0
+var _optimizer_commitment_skipped: int = 0
+var _optimizer_hysteresis_held: int = 0
+var _first_optimizer_assignment_t: float = -1.0
+var _last_optimizer_assignment_t: float = -1.0
+var _experiment_context: Dictionary = {}
+var _layout_signature: String = ""
 
 var _pending_environment: Array[Dictionary] = []
 var _environment_seq: int = 0
@@ -298,6 +329,44 @@ func get_optimizer_configuration() -> Dictionary:
 	return _optimizer_configuration.duplicate(true)
 
 
+## Extra experiment labels supplied by the batch runner or a fixture loader:
+## experiment, experiment_scenario, repeat_index, horizon_s, layout_signature.
+## Written into the run header and manifest so exports do not have to guess.
+func set_experiment_context(context: Dictionary) -> void:
+	_experiment_context = context.duplicate(true)
+
+
+func get_experiment_context() -> Dictionary:
+	return _experiment_context.duplicate(true)
+
+
+## Record a saved-plan application. A plan is an optimizer decision that was
+## made earlier, so it is recorded as an optimizer-like event but with a
+## distinct `name` and `detail.plan_applied = true`.
+func record_plan_application(
+	plan_name: String,
+	duration_usec: int,
+	detail: Dictionary = {}
+) -> void:
+	if not _recording:
+		return
+
+	_optimizer_solve_count += 1
+	_optimizer_total_pipeline_usec += maxi(0, duration_usec)
+	var event_detail: Dictionary = detail.duplicate(true)
+	event_detail["plan_applied"] = true
+	event_detail["plan_name"] = plan_name
+	event_detail["total_usec"] = maxi(0, duration_usec)
+	_write({
+		"type": "optimizer",
+		"t": GlobalData.sim_now(),
+		"name": "plan_applied",
+		"duration_usec": maxi(0, duration_usec),
+		"detail": event_detail,
+	})
+
+
+
 ## Record an optimizer execution step. The detail dictionary is the optimizer's
 ## estimate and the application outcome; measured outcomes stay in the run
 ## summary, never in this event.
@@ -311,13 +380,44 @@ func record_optimizer_execution(
 
 	_optimizer_last_usec = maxi(0, duration_usec)
 	_optimizer_executions += 1
+	_optimizer_solve_count += 1
+
+	var detail_copy: Dictionary = detail.duplicate(true)
+	var solver_usec: int = int(round(float(detail_copy.get("computation_time_ms", 0.0)) * 1000.0))
+
+	if solver_usec <= 0:
+		solver_usec = maxi(0, duration_usec)
+
+	var pipeline_usec: int = int(detail_copy.get("total_usec", duration_usec))
+	_optimizer_total_solver_usec += solver_usec
+	_optimizer_max_solver_usec = maxi(_optimizer_max_solver_usec, solver_usec)
+	_optimizer_total_pipeline_usec += maxi(0, pipeline_usec)
+	_optimizer_evaluations += int(detail_copy.get("evaluations", 0))
+
+	if not String(detail_copy.get("rejected_reason", "")).is_empty():
+		_optimizer_rejected += 1
+
+	if bool((detail_copy.get("solver", {}) as Dictionary).get("timed_out", false)):
+		_optimizer_timed_out += 1
+
+	_optimizer_adopted = maxi(_optimizer_adopted, int(detail_copy.get("adopted_spawns", 0)))
+	var apply: Dictionary = detail_copy.get("apply", {})
+	_optimizer_commitment_skipped += int(apply.get("commitment_skipped", 0))
+	_optimizer_hysteresis_held += int(apply.get("held", 0))
+	var assignment_time: float = GlobalData.sim_now()
+
+	if _first_optimizer_assignment_t < 0.0 and int(detail_copy.get("agent_count", 0)) > 0:
+		_first_optimizer_assignment_t = assignment_time
+
+	if int(detail_copy.get("agent_count", 0)) > 0:
+		_last_optimizer_assignment_t = assignment_time
 
 	_write({
 		"type": "optimizer",
 		"t": GlobalData.sim_now(),
 		"name": algorithm_name,
 		"duration_usec": duration_usec,
-		"detail": detail,
+		"detail": detail_copy,
 	})
 
 
@@ -984,6 +1084,27 @@ func _reset_run_state() -> void:
 	_flush_accum = 0.0
 	_optimizer_last_usec = 0
 	_optimizer_executions = 0
+	_density_peak_time = 0.0
+	_density_exposure = {1.5: 0.0, 2.0: 0.0, 2.5: 0.0}
+	_agent_density_exposure.clear()
+	_contact_agent_seconds_2kn = 0.0
+	_contact_agent_seconds_3kn = 0.0
+	_contact_samples.clear()
+	_optimizer_solve_count = 0
+	_optimizer_total_solver_usec = 0
+	_optimizer_max_solver_usec = 0
+	_optimizer_total_pipeline_usec = 0
+	_optimizer_rejected = 0
+	_optimizer_timed_out = 0
+	_optimizer_evaluations = 0
+	_optimizer_assigned_serials.clear()
+	_optimizer_logit_serials.clear()
+	_optimizer_adopted = 0
+	_optimizer_commitment_skipped = 0
+	_optimizer_hysteresis_held = 0
+	_first_optimizer_assignment_t = -1.0
+	_last_optimizer_assignment_t = -1.0
+	_layout_signature = ""
 
 
 func _clear_run_state() -> void:
@@ -1152,6 +1273,16 @@ func _write_route(info: Dictionary) -> void:
 
 	_write(record)
 
+	var reason := String(record.get("reason", ""))
+
+	if reason in ["optimizer", "plan"]:
+		_optimizer_assigned_serials[serial] = true
+
+		if _first_optimizer_assignment_t < 0.0:
+			_first_optimizer_assignment_t = t
+
+		_last_optimizer_assignment_t = maxf(_last_optimizer_assignment_t, t)
+
 	_last_routes[serial] = {
 		"route_id": record["route_id"],
 		"exit_id": record["exit_id"],
@@ -1195,6 +1326,11 @@ func _on_evacuation_recorded(record: Dictionary) -> void:
 		"route_changes": int(record.get("route_changes", 0)),
 		"route_switches": int(record.get("route_switches", 0)),
 	}
+	var exposure: Dictionary = _agent_density_exposure.get(serial, {})
+	event["density_seconds_above_1_5"] = float(exposure.get("above_1_5", 0.0))
+	event["density_seconds_above_2_0"] = float(exposure.get("above_2_0", 0.0))
+	event["density_seconds_above_2_5"] = float(exposure.get("above_2_5", 0.0))
+	event["optimizer_assigned"] = _optimizer_assigned_serials.has(serial)
 	_write(event)
 
 	_evac_times.append(evacuation_time)
@@ -1266,6 +1402,47 @@ func _sample(now: float) -> void:
 		max_density = maxf(max_density, density)
 		active += 1
 
+		var serial: int = int(state.get("serial", -1))
+		var optimizer_assigned: bool = bool(state.get("optimizer_assigned", false))
+		var contact_force: float = float(state.get("contact_force", 0.0))
+
+		if optimizer_assigned:
+			_optimizer_assigned_serials[serial] = true
+
+			if _last_optimizer_assignment_t < 0.0:
+				_last_optimizer_assignment_t = now
+
+			_last_optimizer_assignment_t = now
+		elif not exit_id.is_empty() and String(state.get("status", "")) in [
+			"seeking_exit", "queued", "arrived"
+		]:
+			_optimizer_logit_serials[serial] = true
+
+		if dt > 0.0:
+			var exposure: Dictionary = _agent_density_exposure.get(serial, {})
+
+			for threshold: float in DENSITY_THRESHOLDS:
+				var key := "above_%s" % str(threshold).replace(".", "_")
+
+				if density >= threshold:
+					_density_exposure[threshold] = float(
+						_density_exposure.get(threshold, 0.0)
+					) + dt
+					exposure[key] = float(exposure.get(key, 0.0)) + dt
+
+			if not exposure.is_empty():
+				_agent_density_exposure[serial] = exposure
+
+			if contact_force >= 2000.0:
+				_contact_agent_seconds_2kn += dt
+
+			if contact_force >= 3000.0:
+				_contact_agent_seconds_3kn += dt
+
+		if contact_force > 0.0 and (rows.size() % maxi(1, _contact_sample_stride) == 0):
+			if _contact_samples.size() < 200000:
+				_contact_samples.append(contact_force)
+
 		if not exit_id.is_empty():
 			assigned[exit_id] = int(assigned.get(exit_id, 0)) + 1
 
@@ -1308,7 +1485,12 @@ func _sample(now: float) -> void:
 
 	var mean_density: float = density_sum / float(maxi(active, 1))
 	var mean_speed: float = speed_sum / float(maxi(active, 1))
-	_density_peak = maxf(_density_peak, max_density)
+
+	if max_density > _density_peak:
+		_density_peak = max_density
+		_density_peak_time = now
+	else:
+		_density_peak = maxf(_density_peak, max_density)
 
 	if dt > 0.0:
 		_density_integral += mean_density * dt
@@ -2016,6 +2198,7 @@ func _build_summary(reason: String) -> Dictionary:
 			"max_wait": float(status.get("max_wait", 0.0)),
 			"peak_queue": int(status.get("max_queue", 0)),
 			"peak_occupancy": int(status.get("peak_occupancy", 0)),
+			"receiving_occupancy": int(status.get("receiving_occupancy", 0)),
 			"rejected": int(status.get("rejected", 0)),
 			"capacity_waits": int(status.get("capacity_waits", 0)),
 			"capacity_rejections": int(status.get("capacity_rejections", 0)),
@@ -2057,6 +2240,28 @@ func _build_summary(reason: String) -> Dictionary:
 	if manager != null and manager.has_method("get_summary"):
 		late_agents = manager.get_summary().get("late_agents", [])
 
+	var contact_p99: float = 0.0
+
+	if not _contact_samples.is_empty():
+		var sorted_contacts: Array[float] = _contact_samples.duplicate()
+		sorted_contacts.sort()
+		contact_p99 = sorted_contacts[
+			clampi(int(ceil(float(sorted_contacts.size()) * 0.99)) - 1, 0, sorted_contacts.size() - 1)
+		]
+
+	var assigned_count: int = _optimizer_assigned_serials.size()
+	var fallback_count: int = 0
+
+	for serial: int in _optimizer_logit_serials.keys():
+		if not _optimizer_assigned_serials.has(serial):
+			fallback_count += 1
+
+	var mean_solver_usec: float = (
+		float(_optimizer_total_solver_usec) / float(_optimizer_solve_count)
+		if _optimizer_solve_count > 0
+		else 0.0
+	)
+
 	return {
 		"format": FORMAT,
 		"version": VERSION,
@@ -2095,13 +2300,32 @@ func _build_summary(reason: String) -> Dictionary:
 		"global_average_density": (
 			_density_integral / _density_time if _density_time > 0.0 else 0.0
 		),
+		"peak_density_time": _density_peak_time,
+		"density_agent_seconds_above_1_5": float(_density_exposure.get(1.5, 0.0)),
+		"density_agent_seconds_above_2_0": float(_density_exposure.get(2.0, 0.0)),
+		"density_agent_seconds_above_2_5": float(_density_exposure.get(2.5, 0.0)),
 		"global_average_speed": (
 			_speed_integral / _speed_time if _speed_time > 0.0 else 0.0
 		),
 		"peak_contact_force": _summary_peak_contact_force,
+		"contact_force_p99": contact_p99,
+		"contact_agent_seconds_above_2kn": _contact_agent_seconds_2kn,
+		"contact_agent_seconds_above_3kn": _contact_agent_seconds_3kn,
 		"contact_pairs_total": _summary_contact_pairs,
 		"agent_contact_samples_total": _summary_contact_samples,
 		"contact_solves": _summary_contact_solves,
+		"coverage": {
+			"assigned_agents": assigned_count,
+			"assigned_fraction": (
+				float(assigned_count) / float(maxi(_spawn_serials.size(), 1))
+			),
+			"adopted_agents": _optimizer_adopted,
+			"logit_fallback": fallback_count,
+			"commitment_skipped": _optimizer_commitment_skipped,
+			"hysteresis_held": _optimizer_hysteresis_held,
+			"first_assignment_t": _first_optimizer_assignment_t,
+			"last_assignment_t": _last_optimizer_assignment_t,
+		},
 		"route_changes_total": _route_changes_total,
 		"route_switches_total": _route_switches_total,
 		"destination_changes_total": _destination_changes_total,
@@ -2122,10 +2346,18 @@ func _build_summary(reason: String) -> Dictionary:
 			"available": bool(_optimizer_configuration.get("available", false)),
 			"execution_usec": _optimizer_last_usec,
 			"executions": _optimizer_executions,
+			"solve_count": _optimizer_solve_count,
+			"total_solver_usec": _optimizer_total_solver_usec,
+			"mean_solver_usec": mean_solver_usec,
+			"max_solver_usec": _optimizer_max_solver_usec,
+			"total_pipeline_usec": _optimizer_total_pipeline_usec,
+			"rejected": _optimizer_rejected,
+			"timed_out": _optimizer_timed_out,
+			"evaluations": _optimizer_evaluations,
 			"algorithm": String(_optimizer_configuration.get("algorithm", "")),
 			"mode": String(_optimizer_configuration.get("mode", "")),
 			"configuration": _optimizer_configuration.duplicate(true),
-			"note": "Predicted costs are optimizer estimates; measured outcomes are in the summary fields.",
+			"note": "Predicted costs are optimizer estimates; measured outcomes are in the summary fields. Solver time is result.computation_time_ms; pipeline time is capture + solve + apply.",
 		},
 		"hazard": {
 			"available": false,
@@ -2155,6 +2387,14 @@ func _collect_experiment_metadata(exit_catalog: Array) -> Dictionary:
 		"application/config/version",
 		"dev"
 	))
+	_layout_signature = String(
+		EvacuationPlan.compute_layout_signature(
+			exit_catalog,
+			_used_block_cells()
+		)
+	)
+	var hardware: Dictionary = _collect_hardware_fingerprint()
+	var context: Dictionary = _experiment_context.duplicate(true)
 	return {
 		"simulation_version": version,
 		"recording_format": FORMAT,
@@ -2180,6 +2420,13 @@ func _collect_experiment_metadata(exit_catalog: Array) -> Dictionary:
 		"scenario": _collect_scenario(),
 		"environment_event_model": "runtime_events",
 		"scheduled_events": _scheduled_events.duplicate(true),
+		"hardware_fingerprint": hardware,
+		"layout_signature": _layout_signature,
+		"experiment": String(context.get("experiment", "")),
+		"experiment_scenario": String(context.get("experiment_scenario", "")),
+		"experiment_horizon_s": float(context.get("horizon_s", 0.0)),
+		"repeat_index": int(context.get("repeat_index", 0)),
+		"cell_id": String(context.get("cell_id", "")),
 	}
 
 
@@ -2311,6 +2558,68 @@ func _collect_scenario() -> Dictionary:
 		"evacuation_mode": GlobalData.evacuation_mode,
 		"quality_preset": quality,
 		"used_grid_cells": used_cells,
+	}
+
+
+func _used_block_cells() -> Array:
+	if _grid != null and is_instance_valid(_grid) and _grid.has_method("get_used_block_cells"):
+		return _grid.call("get_used_block_cells")
+
+	return []
+
+
+func _collect_hardware_fingerprint() -> Dictionary:
+	var version_info: Dictionary = Engine.get_version_info()
+	var video_adapter := String(RenderingServer.get_video_adapter_name())
+	var video_vendor := String(RenderingServer.get_video_adapter_vendor())
+	var video_api := String(RenderingServer.get_video_adapter_api_version())
+	var memory_mb: int = 0
+
+	if OS.has_method("get_memory_info"):
+		var memory: Dictionary = OS.get_memory_info()
+
+		if memory.has("physical"):
+			memory_mb = int(float(memory["physical"]) / (1024.0 * 1024.0))
+
+	var renderer := String(ProjectSettings.get_setting(
+		"rendering/renderer/rendering_method",
+		""
+	))
+	var headless := DisplayServer.get_name() == "headless"
+	var fingerprint := JSON.stringify({
+		"os": OS.get_name(),
+		"os_version": OS.get_version(),
+		"cpu": OS.get_processor_name(),
+		"cpu_count": OS.get_processor_count(),
+		"gpu": video_adapter,
+		"gpu_vendor": video_vendor,
+		"gpu_api": video_api,
+		"renderer": renderer,
+		"engine": String(version_info.get("string", "")),
+		"headless": headless,
+	}).sha256_text()
+	return {
+		"fingerprint": fingerprint,
+		"os": OS.get_name(),
+		"os_version": OS.get_version(),
+		"cpu": OS.get_processor_name(),
+		"cpu_count": OS.get_processor_count(),
+		"ram_mb": memory_mb,
+		"gpu": video_adapter,
+		"gpu_vendor": video_vendor,
+		"gpu_api": video_api,
+		"renderer": renderer,
+		"engine_version": String(version_info.get("string", "")),
+		"engine_build": String(version_info.get("hash", "")),
+		"project_version": String(ProjectSettings.get_setting(
+			"application/config/version",
+			"dev"
+		)),
+		"headless": headless,
+		"display_server": DisplayServer.get_name(),
+		"window_width": DisplayServer.window_get_size().x,
+		"window_height": DisplayServer.window_get_size().y,
+		"physics_ticks_per_second": Engine.physics_ticks_per_second,
 	}
 
 
@@ -2453,7 +2762,7 @@ func _json_ready(value: Variant) -> Variant:
 		var dictionary: Dictionary = {}
 
 		for key: Variant in value:
-			dictionary[String(key)] = _json_ready(value[key])
+			dictionary[str(key)] = _json_ready(value[key])
 
 		return dictionary
 

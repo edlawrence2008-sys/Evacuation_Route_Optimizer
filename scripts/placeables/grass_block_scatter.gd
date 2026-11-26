@@ -56,12 +56,12 @@ func _build_scatter() -> void:
 	multimesh.instance_count = count
 
 	for index in count:
-		var position := Vector3(
+		var instance_position := Vector3(
 			rng.randf_range(-half.x, half.x),
 			0.0,
 			rng.randf_range(-half.y, half.y)
 		)
-		var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU))
+		var instance_basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU))
 
 		if tilt_degrees > 0.0:
 			var axis := Vector3(
@@ -71,18 +71,18 @@ func _build_scatter() -> void:
 			).normalized()
 
 			if axis.length_squared() > 0.0001:
-				basis = (
+				instance_basis = (
 					Basis(
 						axis,
 						deg_to_rad(
 							rng.randf_range(-tilt_degrees, tilt_degrees)
 						)
 					)
-					* basis
+					* instance_basis
 				)
 
-		basis = basis.scaled(Vector3.ONE * rng.randf_range(scale_min, scale_max))
-		multimesh.set_instance_transform(index, Transform3D(basis, position))
+		instance_basis = instance_basis.scaled(Vector3.ONE * rng.randf_range(scale_min, scale_max))
+		multimesh.set_instance_transform(index, Transform3D(instance_basis, instance_position))
 
 	scatter.multimesh = multimesh
 	scatter.material_override = GRASS_MATERIAL

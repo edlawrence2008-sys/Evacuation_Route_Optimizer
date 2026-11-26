@@ -1,0 +1,33 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/useables/route_paint_component.gd" id="1_tool"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_route_tool"]
+albedo_color = Color(0.2, 0.85, 0.55, 1)
+metallic = 0.1
+roughness = 0.35
+
+[sub_resource type="CylinderMesh" id="Mesh_route_tool"]
+top_radius = 0.05
+bottom_radius = 0.09
+height = 0.42
+radial_segments = 8
+rings = 2
+material = SubResource("Mat_route_tool")
+
+[node name="RoutePaintTool" type="Node3D"]
+metadata/hand_size = 0.2
+
+[node name="Handle" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.02, -0.1)
+rotation = Vector3(0.35, 0, 0.18)
+mesh = SubResource("Mesh_route_tool")
+
+[node name="Tip" type="MeshInstance3D" parent="."]
+position = Vector3(0.04, 0.2, -0.22)
+scale = Vector3(1, 0.5, 1)
+mesh = SubResource("Mesh_route_tool")
+
+[node name="RoutePaintComponent" type="Node" parent="."]
+cooldown = 0.0
+script = ExtResource("1_tool")

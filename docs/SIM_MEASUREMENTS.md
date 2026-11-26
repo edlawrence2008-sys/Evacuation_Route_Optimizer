@@ -67,6 +67,9 @@ treat a run as evidence:
 | `sampling_interval` | Snapshot interval. |
 | `scenario` | Active placeables (scene/name/position), spawner config (scene/position/quota/interval/batch), spawner count, agent cap/quota, evacuation mode, quality preset, used grid cells. |
 | `scheduled_events` | Declared environmental events (`SimRecorder.schedule_environment_event`); metadata only, not executed. |
+| `hardware_fingerprint` | OS name/version, CPU, RAM, GPU vendor/adapter/API, renderer, engine version/build, headless flag, display server, window size, physics tick. |
+| `layout_signature` | SHA-256 of the sorted used block cells plus exit ids/positions. A saved plan or fixture with another signature is refused. |
+| `experiment` / `experiment_scenario` / `experiment_horizon_s` / `repeat_index` / `cell_id` | Batch-runner context; empty for manual runs. |
 | `environment_event_model` | `runtime_events` - actual edits are recorded as they happen. |
 
 **Events are recorded directly from simulation logic** (signals/counters in
@@ -172,6 +175,15 @@ is accepted / total evacuated.
 Navigation time includes refreshes caused by chunk streaming and block edits,
 not only path requests; it is run-relative (captured after the recorder starts).
 | Optimizer execution time | ms/us | `SimRecorder.record_optimizer_execution()` | `summary.optimizer.execution_usec`, `summary.optimizer_executions`; last solve only. 0 when the optimizer is disabled. Contract: [`OPTIMIZER.md`](OPTIMIZER.md) section 11 |
+| Cumulative solver time | us | optimizer events | `summary.optimizer.solve_count`, `total_solver_usec`, `mean_solver_usec`, `max_solver_usec`; solver time is `result.computation_time_ms` |
+| Cumulative pipeline time | us | optimizer events | `summary.optimizer.total_pipeline_usec` (capture + solve + apply), separate from solver time |
+| Rejected / timed-out solves | count | optimizer events | `summary.optimizer.rejected`, `summary.optimizer.timed_out` |
+| Objective evaluations | count | `result.evaluations` | `summary.optimizer.evaluations`; per-solve rows in `solves.csv` |
+| Density exposure | agent-seconds | per-sample agent density x dt | `summary.density_agent_seconds_above_1_5/2_0/2_5`; per-agent values on `evacuation` events |
+| Peak density time | s | sample with the highest local density | `summary.peak_density_time` |
+| Loaded contact P99 | N | sampled per-agent contact forces (stride 4, capped) | `summary.contact_force_p99` |
+| Contact exposure | agent-seconds | per-sample contact force x dt above 2/3 kN | `summary.contact_agent_seconds_above_2kn/3kn` |
+| Assignment coverage | agents/fraction/s | tick rows + optimizer events | `summary.coverage.assigned_agents/assigned_fraction/adopted_agents/logit_fallback/commitment_skipped/hysteresis_held/first_assignment_t/last_assignment_t` |
 
 **Definitions used here**
 
@@ -224,7 +236,7 @@ with affected agents being those currently assigned to that exit.
 | `queue` | `exit_id`, `agent`, `event` (`entered`, `service_started`, `admitted`, `left`, `cancelled`, `rejected:*`), `queue_length` |
 | `contact` | `agent`, `force`, `threshold`, `rising` (threshold crossing, 0.5/1/2/3 kN) |
 | `nav` | `duration_usec`, `changed_cells` (navigation refresh completion) |
-| `optimizer` | `name`, `duration_usec`, `detail` (`detail` carries algorithm/mode/environment version/cohorts/estimate/convergence/applied/skipped/adopted spawns/rejection and method-specific solver metadata such as ACO ants/iterations/seed/timed_out; see [`OPTIMIZER.md`](OPTIMIZER.md) section 11) |
+| `optimizer` | `name`, `duration_usec`, `detail` (`detail` carries algorithm/mode/environment version/cohorts/assignments/estimate/convergence/applied/unchanged/held/skipped/adopted spawns/rejection and method-specific solver metadata such as ACO ants/iterations/seed/timed_out; see [`OPTIMIZER.md`](OPTIMIZER.md) section 11) |
 | `agent_death` | `agent`, `position` |
 | `exit_added` / `exit_removed` / `exit_state` | exit id/name, availability, location |
 | `environment` | `id`, `kind`, `location`, `cells`, `item`, `item_name`, `nav_usec`, `changed_cells`, `connectivity`, `detail` |

@@ -1,6 +1,5 @@
 [gd_scene format=3 uid="uid://btqvcgkv12dlc"]
 
-[ext_resource type="Texture2D" uid="uid://bin7ktwtbx21i" path="res://textures/inventory/Category_arrow.png" id="1_arrow"]
 [ext_resource type="Texture2D" uid="uid://3g5uv2p8cpro" path="res://textures/inventory/inventory_bg_main.png" id="2_bg"]
 [ext_resource type="PackedScene" uid="uid://crrnl504kgocm" path="res://scenes/inventory/SimulationPanel.tscn" id="3_simulation"]
 [ext_resource type="PackedScene" uid="uid://bdv73usdpdgrg" path="res://scenes/inventory/AgentPanel.tscn" id="4_agents"]
@@ -21,26 +20,21 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -224.0
-offset_top = -146.0
-offset_right = -224.0
-offset_bottom = -146.0
+offset_left = -297.0
+offset_top = -277.0
+offset_right = -297.0
+offset_bottom = -277.0
 grow_horizontal = 2
 grow_vertical = 2
 offset_transform_enabled = true
 mouse_filter = 1
 
-[node name="CategoryArrow" type="Sprite2D" parent="." unique_id=908556737]
-z_index = 1
-position = Vector2(35, -5)
-texture = ExtResource("1_arrow")
-
 [node name="InventoryBgMain" type="Sprite2D" parent="." unique_id=1541739151]
 z_index = -1
 texture_filter = 1
 texture_repeat = 1
-position = Vector2(223.74998, 132)
-scale = Vector2(2.3238342, 1.184)
+position = Vector2(258, 208)
+scale = Vector2(2.62, 1.792)
 texture = ExtResource("2_bg")
 
 [node name="ContentScroll" type="ScrollContainer" parent="." unique_id=927030270]
@@ -52,8 +46,8 @@ anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = 15.0
 offset_top = 16.0
-offset_right = 442.0
-offset_bottom = 270.0
+offset_right = 500.0
+offset_bottom = 330.0
 grow_horizontal = 2
 grow_vertical = 2
 theme = SubResource("Theme_ect3m")
@@ -68,7 +62,7 @@ theme_override_constants/separation = 4
 layout_mode = 1
 offset_left = 8.0
 offset_top = -12.0
-offset_right = 320.0
+offset_right = 402.0
 offset_bottom = 12.0
 theme = SubResource("Theme_ect3m")
 
@@ -89,6 +83,13 @@ theme_type_variation = &"FlatButton"
 toggle_mode = true
 text = "Placeables"
 
+[node name="Useables" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox"]
+layout_mode = 2
+theme = SubResource("Theme_oqp05")
+theme_type_variation = &"FlatButton"
+toggle_mode = true
+text = "Useables"
+
 [node name="Simulation" type="Button" parent="ItemCategoryScroll/ItemCategoryHbox" unique_id=203285778]
 layout_mode = 2
 theme = SubResource("Theme_oqp05")
@@ -105,9 +106,9 @@ text = "Agents"
 
 [node name="SearchBar" type="LineEdit" parent="." unique_id=479352117]
 layout_mode = 0
-offset_left = 326.0
+offset_left = 408.0
 offset_top = -12.0
-offset_right = 438.0
+offset_right = 500.0
 offset_bottom = 12.0
 theme_override_font_sizes/font_size = 16
 placeholder_text = "Search..."
@@ -117,27 +118,27 @@ clear_button_enabled = true
 layout_mode = 0
 offset_left = 17.0
 offset_top = 12.0
-offset_right = 411.0
-offset_bottom = 270.0
+offset_right = 480.0
+offset_bottom = 330.0
 
 [node name="AgentPanel" parent="." unique_id=1442000002 instance=ExtResource("4_agents")]
 layout_mode = 0
 offset_left = 17.0
 offset_top = 12.0
-offset_right = 411.0
-offset_bottom = 270.0
+offset_right = 480.0
+offset_bottom = 330.0
 
 [node name="ItemFilters" type="ScrollContainer" parent="." unique_id=164861352]
 layout_mode = 0
 offset_left = 2.0
-offset_top = 284.0
-offset_right = 447.0
-offset_bottom = 376.0
+offset_top = 344.0
+offset_right = 505.0
+offset_bottom = 424.0
 theme = SubResource("Theme_ect3m")
 
 [node name="GridContainer" type="GridContainer" parent="ItemFilters" unique_id=86088299]
-custom_minimum_size = Vector2(445, 0)
-custom_maximum_size = Vector2(445, -1)
+custom_minimum_size = Vector2(503, 0)
+custom_maximum_size = Vector2(503, -1)
 layout_mode = 2
 columns = 5
 
@@ -146,19 +147,19 @@ layout_mode = 1
 offset_left = -246.0
 offset_top = -16.0
 offset_right = 0.0
-offset_bottom = 320.0
+offset_bottom = 432.0
 
 [node name="Property_tab" parent="." unique_id=888378270 instance=ExtResource("5_mmgv4")]
 layout_mode = 1
-offset_left = 449.0
+offset_left = 510.0
 offset_top = -16.0
-offset_right = 695.0
-offset_bottom = 280.0
+offset_right = 840.0
+offset_bottom = 432.0
 
 [node name="OptimizerPanel" parent="." unique_id=1442000003 instance=ExtResource("6_optimizer")]
 layout_mode = 1
 visible = false
-offset_left = 449.0
+offset_left = 510.0
 offset_top = -16.0
-offset_right = 695.0
-offset_bottom = 280.0
+offset_right = 840.0
+offset_bottom = 432.0

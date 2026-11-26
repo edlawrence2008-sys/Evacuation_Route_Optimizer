@@ -79,6 +79,21 @@ var _budget: SpinBox = null
 var _pso_params: GridContainer = null
 var _swarm: SpinBox = null
 var _pso_iterations: SpinBox = null
+var _first_solve: SpinBox = null
+var _wait_for_spawn: CheckButton = null
+var _hysteresis: CheckButton = null
+var _hysteresis_ratio: SpinBox = null
+var _plan_name: LineEdit = null
+var _plan_select: OptionButton = null
+var _plan_apply_on_start: CheckButton = null
+var _plan_status: Label = null
+var _plan_detail: Label = null
+var _plan_apply_button: Button = null
+var _plan_arm_button: Button = null
+var _plan_show_button: Button = null
+var _plan_paint_button: Button = null
+var _plan_delete_button: Button = null
+var _plan_ids: Array[String] = []
 
 
 func _ready() -> void:
@@ -301,9 +316,65 @@ func _build_ui() -> void:
 
 	_auto = CheckButton.new()
 	_auto.text = "Solve at run start"
-	_auto.tooltip_text = "Run one solve 1 s after Start; with Keep re-solving on, continue during the run."
+	_auto.tooltip_text = "Run one solve after Start; with Keep re-solving on, continue during the run."
 	_auto.toggled.connect(_on_auto_toggled)
 	column.add_child(_auto)
+
+	var first_row := HBoxContainer.new()
+	first_row.add_theme_constant_override("separation", 6)
+	column.add_child(first_row)
+
+	var first_label := Label.new()
+	first_label.text = "First solve (s)"
+	first_label.add_theme_color_override("font_color", MUTED)
+	first_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	first_row.add_child(first_label)
+
+	_first_solve = SpinBox.new()
+	_first_solve.min_value = 0.0
+	_first_solve.max_value = 120.0
+	_first_solve.step = 0.5
+	_first_solve.value = 1.0
+	_first_solve.custom_minimum_size = Vector2(80, 0)
+	_first_solve.value_changed.connect(_on_first_solve_changed)
+	first_row.add_child(_first_solve)
+
+	_wait_for_spawn = CheckButton.new()
+	_wait_for_spawn.text = "Wait for spawn quota"
+	_wait_for_spawn.tooltip_text = (
+		"Delay the first solve until the configured spawn quota is met. Use this "
+		+ "for spawner-driven 600-agent scenarios instead of a fixed delay."
+	)
+	_wait_for_spawn.toggled.connect(_on_wait_for_spawn_toggled)
+	column.add_child(_wait_for_spawn)
+
+	_hysteresis = CheckButton.new()
+	_hysteresis.text = "Hysteresis (keep near-tied exits)"
+	_hysteresis.tooltip_text = (
+		"Do not replace an existing exit assignment unless the new plan improves "
+		+ "estimated cost by the threshold below. Prevents oscillation across re-solves."
+	)
+	_hysteresis.toggled.connect(_on_hysteresis_toggled)
+	column.add_child(_hysteresis)
+
+	var hysteresis_row := HBoxContainer.new()
+	hysteresis_row.add_theme_constant_override("separation", 6)
+	column.add_child(hysteresis_row)
+
+	var hysteresis_label := Label.new()
+	hysteresis_label.text = "Required improvement"
+	hysteresis_label.add_theme_color_override("font_color", MUTED)
+	hysteresis_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hysteresis_row.add_child(hysteresis_label)
+
+	_hysteresis_ratio = SpinBox.new()
+	_hysteresis_ratio.min_value = 0.0
+	_hysteresis_ratio.max_value = 0.9
+	_hysteresis_ratio.step = 0.01
+	_hysteresis_ratio.value = 0.10
+	_hysteresis_ratio.custom_minimum_size = Vector2(80, 0)
+	_hysteresis_ratio.value_changed.connect(_on_hysteresis_ratio_changed)
+	hysteresis_row.add_child(_hysteresis_ratio)
 
 	_resolve = CheckButton.new()
 	_resolve.text = "Keep re-solving"
@@ -341,6 +412,108 @@ func _build_ui() -> void:
 	_run.tooltip_text = "Capture the current agents and exits and apply new assignments. Agents in a queue or near their exit are kept."
 	_run.pressed.connect(_on_run_pressed)
 	column.add_child(_run)
+
+	column.add_child(_field_label("Saved plans"))
+	column.add_child(_small_label(
+		"A plan is a saved assignment plus routes, not the live run. Save captures "
+		+ "the last solve; use Show to draw it, Apply to re-use it, or Paint to edit its corridor."
+	))
+
+	var plan_name_row := HBoxContainer.new()
+	plan_name_row.add_theme_constant_override("separation", 6)
+	column.add_child(plan_name_row)
+
+	_plan_name = LineEdit.new()
+	_plan_name.placeholder_text = "Plan name"
+	_plan_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	plan_name_row.add_child(_plan_name)
+
+	var save_plan_button := Button.new()
+	save_plan_button.text = "Save plan"
+	save_plan_button.tooltip_text = "Save the current assignment and routes to this save's plan library."
+	save_plan_button.pressed.connect(_on_save_plan_pressed)
+	plan_name_row.add_child(save_plan_button)
+
+	var save_painted := Button.new()
+	save_painted.text = "Save painted route as plan"
+	save_painted.tooltip_text = "Bundle the Route Paint corridor into a reusable plan."
+	save_painted.pressed.connect(_on_save_painted_plan_pressed)
+	column.add_child(save_painted)
+
+	_plan_select = OptionButton.new()
+	_plan_select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_plan_select.item_selected.connect(_on_plan_selected)
+	column.add_child(_plan_select)
+
+	_plan_detail = Label.new()
+	_plan_detail.text = "No plan selected."
+	_plan_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_plan_detail.add_theme_color_override("font_color", MUTED)
+	_plan_detail.add_theme_font_size_override("font_size", 10)
+	column.add_child(_plan_detail)
+
+	var plan_row := GridContainer.new()
+	plan_row.columns = 3
+	plan_row.add_theme_constant_override("h_separation", 4)
+	plan_row.add_theme_constant_override("v_separation", 4)
+	column.add_child(plan_row)
+
+	_plan_apply_button = Button.new()
+	_plan_apply_button.text = "Apply"
+	_plan_apply_button.tooltip_text = "Apply the selected plan to the live crowd now."
+	_plan_apply_button.pressed.connect(_on_apply_plan_pressed)
+	_plan_apply_button.disabled = true
+	plan_row.add_child(_plan_apply_button)
+
+	_plan_arm_button = Button.new()
+	_plan_arm_button.text = "Arm at Start"
+	_plan_arm_button.tooltip_text = "Apply the selected plan automatically shortly after the next Start."
+	_plan_arm_button.pressed.connect(_on_arm_plan_pressed)
+	_plan_arm_button.disabled = true
+	plan_row.add_child(_plan_arm_button)
+
+	_plan_show_button = Button.new()
+	_plan_show_button.text = "Show"
+	_plan_show_button.tooltip_text = "Draw the selected plan in the live world (cohort -> exit lines and recorded routes)."
+	_plan_show_button.pressed.connect(_on_show_plan_pressed)
+	_plan_show_button.disabled = true
+	plan_row.add_child(_plan_show_button)
+
+	_plan_paint_button = Button.new()
+	_plan_paint_button.text = "Paint"
+	_plan_paint_button.tooltip_text = "Load the selected plan's routes into the Route Paint tool for editing."
+	_plan_paint_button.pressed.connect(_on_paint_plan_pressed)
+	_plan_paint_button.disabled = true
+	plan_row.add_child(_plan_paint_button)
+
+	var refresh_plan_button := Button.new()
+	refresh_plan_button.text = "Refresh"
+	refresh_plan_button.tooltip_text = "Reload the plan list for the active save."
+	refresh_plan_button.pressed.connect(_refresh_plan_list)
+	plan_row.add_child(refresh_plan_button)
+
+	_plan_delete_button = Button.new()
+	_plan_delete_button.text = "Delete"
+	_plan_delete_button.pressed.connect(_on_delete_plan_pressed)
+	_plan_delete_button.disabled = true
+	plan_row.add_child(_plan_delete_button)
+
+	_plan_apply_on_start = CheckButton.new()
+	_plan_apply_on_start.text = "Apply selected plan at next Start"
+	_plan_apply_on_start.toggled.connect(_on_plan_apply_on_start_toggled)
+	column.add_child(_plan_apply_on_start)
+
+	var open_plans := Button.new()
+	open_plans.text = "Open plan folder"
+	open_plans.pressed.connect(_on_open_plan_folder_pressed)
+	column.add_child(open_plans)
+
+	_plan_status = Label.new()
+	_plan_status.text = "No plan selected."
+	_plan_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_plan_status.add_theme_color_override("font_color", MUTED)
+	_plan_status.add_theme_font_size_override("font_size", 11)
+	column.add_child(_plan_status)
 
 	_status = Label.new()
 	_status.text = "Optimizer off"
@@ -385,6 +558,10 @@ func _sync_controls() -> void:
 	_cohort.set_value_no_signal(bridge.cohort_size)
 	_max_cohorts.set_value_no_signal(bridge.max_cohorts)
 	_auto.set_pressed_no_signal(bridge.auto_solve)
+	_first_solve.set_value_no_signal(bridge.first_solve_delay)
+	_wait_for_spawn.set_pressed_no_signal(bridge.solve_on_spawn_complete)
+	_hysteresis.set_pressed_no_signal(bridge.hysteresis_enabled)
+	_hysteresis_ratio.set_value_no_signal(bridge.hysteresis_ratio)
 	_resolve.set_pressed_no_signal(bridge.re_solve_enabled)
 	_interval.set_value_no_signal(bridge.re_solve_interval)
 	_overlay.set_pressed_no_signal(bridge.overlay_enabled)
@@ -401,6 +578,7 @@ func _sync_controls() -> void:
 	)
 	_update_descriptions()
 	_update_search_visibility()
+	_refresh_plan_list()
 
 
 func _update_descriptions() -> void:
@@ -457,6 +635,365 @@ func _on_max_cohorts_changed(value: float) -> void:
 func _on_auto_toggled(pressed: bool) -> void:
 	if bridge != null:
 		bridge.set_auto_solve(pressed)
+
+
+func _on_first_solve_changed(value: float) -> void:
+	if bridge != null:
+		bridge.set_first_solve_delay(value)
+
+
+func _on_wait_for_spawn_toggled(pressed: bool) -> void:
+	if bridge != null:
+		bridge.set_solve_on_spawn_complete(pressed)
+
+
+func _on_hysteresis_toggled(pressed: bool) -> void:
+	if bridge != null:
+		bridge.set_hysteresis_enabled(pressed)
+
+
+func _on_hysteresis_ratio_changed(value: float) -> void:
+	if bridge != null:
+		bridge.set_hysteresis_ratio(value)
+
+
+# ---------------------------------------------------------------------------
+# Saved plans
+# ---------------------------------------------------------------------------
+
+func _refresh_plan_list() -> void:
+	if _plan_select == null:
+		return
+
+	var previous: String = ""
+
+	if _plan_select.selected >= 0 and _plan_select.selected < _plan_ids.size():
+		previous = _plan_ids[_plan_select.selected]
+
+	_plan_ids.clear()
+	_plan_select.clear()
+	var plans := PlanStore.list_plans()
+
+	for plan: Dictionary in plans:
+		_plan_ids.append(String(plan.get("id", "")))
+		_plan_select.add_item("%s  (%d agents, %d painted, seed %d)" % [
+			String(plan.get("name", plan.get("id", ""))),
+			int(plan.get("assignments", 0)),
+			int(plan.get("authored_cells", 0)),
+			int(plan.get("seed", 0)),
+		])
+
+	if not _plan_ids.is_empty():
+		var index := maxi(_plan_ids.find(previous), 0)
+		_plan_select.select(index)
+		_update_plan_buttons()
+		_update_plan_detail()
+		_set_plan_status("Plan library: %d plan(s). Select one, then Apply / Show / Paint." % _plan_ids.size(), true)
+	else:
+		_plan_detail.text = "No plan files."
+		_update_plan_buttons()
+		_set_plan_status("No saved plans for this save. Run the optimizer, then press Save plan.", false)
+
+
+func _selected_plan_id() -> String:
+	if _plan_select == null or _plan_select.selected < 0:
+		return ""
+
+	if _plan_select.selected >= _plan_ids.size():
+		return ""
+
+	return _plan_ids[_plan_select.selected]
+
+
+func _on_plan_selected(_index: int) -> void:
+	_update_plan_buttons()
+	_update_plan_detail()
+	_set_plan_status("Selected plan loaded. Apply now, arm at Start, Show, Paint, or Delete.", true)
+
+
+func _update_plan_buttons() -> void:
+	var has_plan := not _selected_plan_id().is_empty()
+
+	if _plan_apply_button != null:
+		_plan_apply_button.disabled = not has_plan
+	if _plan_arm_button != null:
+		_plan_arm_button.disabled = not has_plan
+	if _plan_show_button != null:
+		_plan_show_button.disabled = not has_plan
+	if _plan_paint_button != null:
+		_plan_paint_button.disabled = not has_plan
+	if _plan_delete_button != null:
+		_plan_delete_button.disabled = not has_plan
+
+
+func _update_plan_detail() -> void:
+	if _plan_detail == null:
+		return
+
+	var plan_id := _selected_plan_id()
+
+	if plan_id.is_empty():
+		_plan_detail.text = "No plan selected."
+		return
+
+	var plan := PlanStore.load_plan(plan_id)
+
+	if plan == null:
+		_plan_detail.text = "Could not read %s." % plan_id
+		return
+
+	_plan_detail.text = "%d agents | %d cohorts | %d routes | %d painted cells | %s / %s | seed %d\n%s" % [
+		plan.assignment_count(),
+		plan.cohort_count(),
+		plan.routes_with_polylines(),
+		plan.authored_cell_count(),
+		plan.algorithm if not plan.algorithm.is_empty() else "baseline",
+		plan.mode if not plan.mode.is_empty() else "-",
+		plan.rng_seed,
+		PlanStore.plan_path(plan_id),
+	]
+
+
+func _set_plan_status(text: String, ok: bool) -> void:
+	if _plan_status == null:
+		return
+
+	_plan_status.text = text
+	_plan_status.add_theme_color_override(
+		"font_color",
+		Color(0.55, 1.0, 0.62) if ok else Color(1.0, 0.55, 0.45)
+	)
+
+	if text.begins_with("Plan library") or text.begins_with("No saved plans"):
+		return
+
+	_show_hud_toast(text, ok)
+
+
+func _show_hud_toast(text: String, ok: bool) -> void:
+	var tree := get_tree()
+
+	if tree == null:
+		return
+
+	var player := tree.get_first_node_in_group("player")
+
+	if player == null:
+		return
+
+	var hud := player.get_node_or_null("HUD/HUD")
+
+	if hud != null and hud.has_method("show_build_label"):
+		hud.call(
+			"show_build_label",
+			("%s %s" % ["OK:", text]) if ok else ("! " + text),
+			1.2,
+			0.5
+		)
+
+
+func _on_save_plan_pressed() -> void:
+	if bridge == null:
+		_set_plan_status("Cannot save: the optimizer bridge is not ready.", false)
+		return
+
+	var plan_name := _plan_name.text.strip_edges()
+
+	if plan_name.is_empty():
+		plan_name = "Plan %s" % Time.get_datetime_string_from_system(false, true).replace(":", "-")
+
+	var plan := bridge.capture_plan(plan_name)
+
+	if plan == null:
+		_set_plan_status("Nothing to save: start a run, run the optimizer, or apply an assignment first.", false)
+		return
+
+	var plan_id := PlanStore.save_plan(plan, plan_name)
+
+	if plan_id.is_empty():
+		_set_plan_status("Could not write the plan file. Check the save library path.", false)
+		return
+
+	_plan_name.text = plan.name
+	_refresh_plan_list()
+	var index := _plan_ids.find(plan_id)
+
+	if index >= 0:
+		_plan_select.select(index)
+
+	_update_plan_buttons()
+	_update_plan_detail()
+	_set_plan_status(
+		"Saved '%s' (%d agents, %d routes) to %s"
+		% [plan_id, plan.assignment_count(), plan.routes_with_polylines(), PlanStore.plan_path(plan_id)],
+		true
+	)
+
+
+func _on_save_painted_plan_pressed() -> void:
+	var plan_name := _plan_name.text.strip_edges()
+
+	if plan_name.is_empty():
+		plan_name = "Painted route %s" % Time.get_datetime_string_from_system(false, true).replace(":", "-")
+
+	var plan := RoutePainter.capture_authored_plan(plan_name)
+
+	if plan == null or plan.authored_cell_count() == 0:
+		_set_plan_status("Nothing painted. Hold the Route Paint tool and paint a corridor first.", false)
+		return
+
+	var plan_id := PlanStore.save_plan(plan, plan_name)
+
+	if plan_id.is_empty():
+		_set_plan_status("Could not write the painted plan file.", false)
+		return
+
+	_plan_name.text = plan.name
+	_refresh_plan_list()
+	var index := _plan_ids.find(plan_id)
+
+	if index >= 0:
+		_plan_select.select(index)
+
+	_update_plan_buttons()
+	_update_plan_detail()
+	_set_plan_status(
+		"Saved painted plan '%s' (%d cells) to %s"
+		% [plan_id, plan.authored_cell_count(), PlanStore.plan_path(plan_id)],
+		true
+	)
+
+
+func _on_apply_plan_pressed() -> void:
+	var plan_id := _selected_plan_id()
+
+	if bridge == null or plan_id.is_empty():
+		_set_plan_status("Select a saved plan first.", false)
+		return
+
+	var plan := PlanStore.load_plan(plan_id)
+
+	if plan == null:
+		_set_plan_status("The plan file could not be read.", false)
+		return
+
+	var result: Dictionary = bridge.apply_plan(plan)
+
+	if bool(result.get("ok", false)):
+		_set_plan_status(
+			"Applied '%s': %d agents, %d painted cells, %d skipped, %d unmatched."
+			% [
+				plan_id,
+				int(result.get("applied", 0)),
+				int(result.get("authored_cells", 0)),
+				int(result.get("skipped", 0)),
+				int(result.get("missing", 0)),
+			],
+			true
+		)
+	else:
+		_set_plan_status("Apply failed: %s" % String(result.get("error", "unknown")), false)
+
+
+func _on_arm_plan_pressed() -> void:
+	var plan_id := _selected_plan_id()
+
+	if bridge == null or plan_id.is_empty():
+		_set_plan_status("Select a saved plan first.", false)
+		return
+
+	var plan := PlanStore.load_plan(plan_id)
+
+	if plan == null:
+		_set_plan_status("The plan file could not be read.", false)
+		return
+
+	bridge.set_startup_plan(plan)
+	_plan_apply_on_start.set_pressed_no_signal(true)
+	_set_plan_status("Armed '%s' for the next Start." % plan_id, true)
+
+
+func _on_show_plan_pressed() -> void:
+	var plan_id := _selected_plan_id()
+
+	if plan_id.is_empty():
+		_set_plan_status("Select a saved plan first.", false)
+		return
+
+	var plan := PlanStore.load_plan(plan_id)
+
+	if plan == null:
+		_set_plan_status("The plan file could not be read.", false)
+		return
+
+	LivePlanOverlay.show_plan(plan)
+	_set_plan_status("Showing '%s' in the world. Use plan_render off to hide." % plan_id, true)
+
+
+func _on_paint_plan_pressed() -> void:
+	var plan_id := _selected_plan_id()
+
+	if plan_id.is_empty():
+		_set_plan_status("Select a saved plan first.", false)
+		return
+
+	var plan := PlanStore.load_plan(plan_id)
+
+	if plan == null:
+		_set_plan_status("The plan file could not be read.", false)
+		return
+
+	var count := RoutePainter.set_from_plan(plan)
+	_set_plan_status(
+		"Loaded %d route cells from '%s'. Equip the Route Paint tool to edit them." % [count, plan_id],
+		count > 0
+	)
+
+
+func _on_delete_plan_pressed() -> void:
+	var plan_id := _selected_plan_id()
+
+	if plan_id.is_empty():
+		return
+
+	if PlanStore.delete_plan(plan_id):
+		_refresh_plan_list()
+		_set_plan_status("Deleted plan '%s'." % plan_id, true)
+	else:
+		_set_plan_status("Could not delete '%s'." % plan_id, false)
+
+
+func _on_open_plan_folder_pressed() -> void:
+	var root := PlanStore.plans_root()
+	DirAccess.make_dir_recursive_absolute(root)
+	OS.shell_open(ProjectSettings.globalize_path(root))
+	_plan_status.text = "Plan folder: %s" % ProjectSettings.globalize_path(root)
+
+
+func _on_plan_apply_on_start_toggled(pressed: bool) -> void:
+	if bridge == null:
+		return
+
+	if not pressed:
+		bridge.clear_startup_plan()
+		return
+
+	var plan_id := _selected_plan_id()
+
+	if plan_id.is_empty():
+		_plan_apply_on_start.set_pressed_no_signal(false)
+		_set_plan_status("Select a saved plan first.", false)
+		return
+
+	var plan := PlanStore.load_plan(plan_id)
+
+	if plan == null:
+		_plan_apply_on_start.set_pressed_no_signal(false)
+		_set_plan_status("The plan file could not be read.", false)
+		return
+
+	bridge.set_startup_plan(plan)
+	_set_plan_status("Armed '%s' for the next Start." % plan_id, true)
 
 
 func _on_resolve_toggled(pressed: bool) -> void:

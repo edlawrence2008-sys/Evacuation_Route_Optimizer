@@ -11,6 +11,10 @@ var is_spawning_enabled: bool = false # Default to false so they don't spawn dir
 ## Paused is distinct from stopped: counters, quotas, and the current run stay
 ## intact, but spawners stop emitting until resumed.
 var is_spawning_paused: bool = false
+## Pre-populated fixtures set this while agents are created before Start. Member
+## holds still until start_spawning() clears it, so run-relative evacuation times
+## are not corrupted by agents that began walking before time zero.
+var population_frozen: bool = false
 
 ## Run mode for the optimizer. False is the baseline: agents choose exits with
 ## the local logit model. The bridge sets this; Member instances only honour an
@@ -339,6 +343,7 @@ func reset_all() -> void:
 	npcs_evacuated = 0
 	is_spawning_enabled = false
 	is_spawning_paused = false
+	population_frozen = false
 
 ## Pauses or resumes spawning without changing quotas, counters, determinism,
 ## or the live crowd. A paused run is still "started"; Start clears the pause.
@@ -384,6 +389,17 @@ func kill_all_npcs() -> int:
 
 
 func start_spawning() -> void:
+	var was_frozen: bool = population_frozen
+	population_frozen = false
+
+	if was_frozen:
+		var frozen_tree: SceneTree = get_tree()
+
+		if frozen_tree != null:
+			for npc: Node in frozen_tree.get_nodes_in_group("npc"):
+				if npc != null and is_instance_valid(npc) and npc.has_method("mark_run_start"):
+					npc.call("mark_run_start")
+
 	var was_paused: bool = is_spawning_paused
 	is_spawning_paused = false
 

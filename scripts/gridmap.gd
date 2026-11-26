@@ -44,6 +44,13 @@ const VoxelSectionStoreScript := preload("res://scripts/world/VoxelSectionStore.
 @export_range(0.1, 2.0, 0.01) var slab_path_cost: float = 0.9
 ## Multiplier for full-block cells.
 @export_range(0.1, 2.0, 0.01) var full_block_path_cost: float = 1.0
+## Cost multiplier for cells painted as an authored evacuation corridor. Below
+## 1 makes the painted route cheaper than the surrounding floor, so A* and the
+## optimizer's cost fields prefer it. Paint via the Route Paint tool.
+@export_range(0.1, 1.0, 0.01) var authored_route_cost_scale: float = 0.55
+## Cells painted by the Route Paint tool. Not serialized in the GridMap; the
+## RoutePainter autoload persists them per save and re-applies on load.
+var authored_route_cells: Dictionary = {}
 
 @export var enable_greedy_meshing: bool = true
 ## Hard vertical bounds for loaded and placed blocks.
@@ -677,8 +684,11 @@ func _gap_penalty_scale(cell: Vector3i) -> float:
 func _point_weight_scale(cell: Vector3i) -> float:
 	var wall_scale: float = _wall_penalty_scale(cell)
 	var gap_scale: float = _gap_penalty_scale(cell)
+	var route_scale: float = (
+		authored_route_cost_scale if authored_route_cells.has(cell) else 1.0
+	)
 
-	return maxf(wall_scale, gap_scale) * _surface_weight_scale(cell)
+	return maxf(wall_scale, gap_scale) * _surface_weight_scale(cell) * route_scale
 
 
 ## Rebuilds the per-item surface profiles used for nav-point heights and path
@@ -1742,6 +1752,56 @@ func get_nav_point_count() -> int:
 
 func request_path_immediate(start: Vector3, end: Vector3) -> PackedVector3Array:
 	return _calculate_path(start, end)
+
+
+## Concatenate synchronous A* legs through ordered world-space waypoints. This
+## is the primitive behind saved plans and authored routes: the caller supplies
+## a corridor, the navigation layer supplies walkable geometry. A blocked or
+## unreachable leg falls back to a direct path so an agent never deadlocks.
+func request_path_via(
+	start: Vector3,
+	points: Array,
+	end: Vector3,
+	smooth: bool = true
+) -> PackedVector3Array:
+	var waypoints: Array[Vector3] = []
+
+	for point: Variant in points:
+		if point is Vector3:
+			waypoints.append(point)
+		elif point is Array and (point as Array).size() >= 3:
+			waypoints.append(Vector3(
+				float(point[0]), float(point[1]), float(point[2])
+			))
+
+	if waypoints.is_empty():
+		return _calculate_path(start, end, smooth)
+
+	var combined := PackedVector3Array()
+	var current: Vector3 = start
+
+	for waypoint: Vector3 in waypoints:
+		var leg: PackedVector3Array = _calculate_path(current, waypoint, smooth)
+
+		if leg.is_empty():
+			return _calculate_path(start, end, smooth)
+
+		for point: Vector3 in leg:
+			if combined.is_empty() or combined[combined.size() - 1].distance_to(point) > 0.05:
+				combined.append(point)
+
+		current = waypoint
+
+	var final_leg: PackedVector3Array = _calculate_path(current, end, smooth)
+
+	if final_leg.is_empty():
+		return _calculate_path(start, end, smooth)
+
+	for point: Vector3 in final_leg:
+		if combined.is_empty() or combined[combined.size() - 1].distance_to(point) > 0.05:
+			combined.append(point)
+
+	return combined
 
 
 func request_path(
@@ -3603,6 +3663,36 @@ func _wipe_chunk(chunk: Vector2i) -> Array[Vector3i]:
 ## Batch version of _refresh_nav_around. Call it AFTER all the blocks are already set,
 ## so walkability and connection checks see the final state.
 ## Full navigation parameter set for experiment metadata.
+## Replaces the authored corridor layer and refreshes the A* point weights.
+## Called by RoutePainter after a paint/erase or when a save's authored routes
+## are loaded. The cells are walkable nav cells, not new blocks.
+func set_authored_route_cells(cells: Array) -> void:
+	authored_route_cells.clear()
+	var changed_cells: Array[Vector3i] = []
+
+	for value: Variant in cells:
+		var cell: Vector3i
+
+		if value is Vector3i:
+			cell = value
+		elif value is Array and (value as Array).size() >= 3:
+			cell = Vector3i(int(value[0]), int(value[1]), int(value[2]))
+		else:
+			continue
+
+		if not cell_to_id_map.has(cell):
+			continue
+
+		authored_route_cells[cell] = true
+		changed_cells.append(cell)
+
+	for cell: Vector3i in cell_to_id_map:
+		_apply_nav_point_weight(cell)
+
+	if not changed_cells.is_empty():
+		navigation_changed.emit(changed_cells)
+
+
 func get_navigation_parameters() -> Dictionary:
 	return {
 		"cell_size": [cell_size.x, cell_size.y, cell_size.z],
@@ -3611,6 +3701,8 @@ func get_navigation_parameters() -> Dictionary:
 		"stair_path_cost": stair_path_cost,
 		"slab_path_cost": slab_path_cost,
 		"full_block_path_cost": full_block_path_cost,
+		"authored_route_cost_scale": authored_route_cost_scale,
+		"authored_route_cell_count": authored_route_cells.size(),
 		"path_ground_radius": path_ground_radius,
 		"smoothing_max_lookahead": smoothing_max_lookahead,
 		"path_budget_usec": path_budget_usec,
