@@ -1008,11 +1008,13 @@ func _fill_floor(chunk: Vector2i) -> void:
 				if not _grid.has_block(bedrock):
 					missing_bedrock.append(bedrock)
 
-	if not missing.is_empty():
-		_grid.place_blocks(missing, _floor_item, 0)
-
+	# Anchor first: with collapse enabled, a floor placed before its bedrock
+	# would be evaluated as unsupported and removed again.
 	if not missing_bedrock.is_empty():
 		_grid.place_blocks(missing_bedrock, _bedrock_item, 0)
+
+	if not missing.is_empty():
+		_grid.place_blocks(missing, _floor_item, 0)
 
 
 func _chunk_distance_sq(a: Vector2i, b: Vector2i) -> int:

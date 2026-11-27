@@ -1,5 +1,10 @@
 extends CharacterBody3D
 
+## Collision layer used by moving sub-level bodies. Agents use a kinematic
+## ground+obstacle probe instead of engine collision, but the same layer is
+## added to the engine path so physics-contact agents collide with them too.
+const SUBLEVEL_LAYER: int = 1 << 4
+
 ## Measurement/recording hook. Emitted whenever this agent is assigned a new
 ## evacuation route or target, and once when a route attempt fails. The payload
 ## is intentionally self-contained so a recorder can be added without Member
@@ -308,6 +313,9 @@ var _kinematic_stand_y: float = 0.0
 var _foot_offset: float = 0.25
 ## Reused ray query so 600 agents do not allocate one per tick.
 var _ground_query: PhysicsRayQueryParameters3D = null
+## Chest-height probe against moving sub-levels. Kept separate from the ground
+## probe so step-up behaviour and wall blocking stay independent.
+var _sublevel_query: PhysicsRayQueryParameters3D = null
 ## Single-entry ground-probe cache. Agents move a few centimetres per tick, so
 ## re-probing the same 0.2 m bucket every tick is wasted work. Only used while
 ## grounded; airborne agents need a fresh hit to detect the landing surface.
@@ -487,10 +495,18 @@ func _ready() -> void:
 	_spawned_at_sim = GlobalData.sim_now()
 	_foot_offset = _measure_foot_offset()
 	_ground_query = PhysicsRayQueryParameters3D.new()
-	_ground_query.collision_mask = 1
+	# World chunks plus moving sub-levels: agents can stand on a sub-level and
+	# follow its top surface while the navigation graph stays world-based.
+	_ground_query.collision_mask = 1 | SUBLEVEL_LAYER
 	_ground_query.collide_with_bodies = true
 	_ground_query.collide_with_areas = false
 	_refresh_ground_exclusions()
+
+	_sublevel_query = PhysicsRayQueryParameters3D.new()
+	_sublevel_query.collision_mask = SUBLEVEL_LAYER
+	_sublevel_query.collide_with_bodies = true
+	_sublevel_query.collide_with_areas = false
+	_sublevel_query.exclude = [get_rid()]
 	_refresh_movement_mode()
 	_apply_collision_policy()
 
@@ -1248,6 +1264,25 @@ func _is_grounded() -> bool:
 	return is_on_floor() and _character_floor_body() == null
 
 
+## True when a sub-level blocks the horizontal step at chest height. The ray is
+## lifted above one-block step height, so stepping onto a sub-level still works
+## while a taller body acts as a wall.
+func _sublevel_blocks_step(from: Vector3, to: Vector3) -> bool:
+	if _sublevel_query == null or SubLevel.live_count <= 0:
+		return false
+
+	var world := get_world_3d()
+	if world == null:
+		return false
+
+	var lift: float = _foot_offset + kinematic_step_height + 0.15
+	_sublevel_query.from = from + Vector3(0.0, lift, 0.0)
+	_sublevel_query.to = to + Vector3(0.0, lift, 0.0)
+	return not world.direct_space_state.intersect_ray(
+		_sublevel_query
+	).is_empty()
+
+
 ## Downward ray used by kinematic movement. Returns the raw hit dictionary.
 func _probe_ground(at: Vector3) -> Dictionary:
 	if _ground_query == null:
@@ -1321,6 +1356,16 @@ func _move_kinematic(delta: float) -> void:
 		0.0,
 		velocity.z
 	) * delta
+
+	# A sub-level wall is a real obstacle even though the agent does not use
+	# move_and_slide(). The probe sits above one-block step height so normal
+	# step-ups still work, while taller walls stop and zero the horizontal
+	# velocity instead of letting the agent walk through.
+	if _sublevel_blocks_step(start, target):
+		target.x = start.x
+		target.z = start.z
+		velocity.x = 0.0
+		velocity.z = 0.0
 
 	var hit: Dictionary = _probe_ground_cached(target)
 	var supported: bool = not hit.is_empty()
@@ -2271,10 +2316,12 @@ func _apply_collision_policy() -> void:
 	_layer_2_disabled = false
 
 	if _uses_kinematic_movement():
+		# Kinematic movement probes sub-levels directly (ground + obstacle
+		# rays); keeping the engine mask empty is what makes 600 agents cheap.
 		collision_mask = 0
 		return
 
-	collision_mask = 1
+	collision_mask = 1 | SUBLEVEL_LAYER
 
 	if use_physics_contact:
 		collision_mask |= 1 << 1

@@ -28,10 +28,10 @@ const SHADOW_DISTANCES: Array[float] = [20.0, 40.0, 60.0, 90.0, 120.0, 160.0]
 const FOLIAGE_SCALES: Array[float] = [0.5, 0.75, 1.0, 1.25]
 const FOG_OFFSETS: Array[float] = [0.0, 8.0, 16.0, 24.0, 32.0, 48.0, 64.0]
 
-## Structural physics tiers. Stability is independent of this: a world can
-## compute support without ever collapsing. `Collapse` removes unsupported
-## blocks; `Debris` also detaches disconnected islands as rigid bodies.
-const PHYSICS_LEVELS: Array[String] = ["Off", "Collapse", "Debris"]
+## Structural collapse styles, chosen independently of whether collapse is on.
+## Remove: unsupported cells vanish. Fall: blocks drop down their column and
+## settle as blocks. Rigid: one rigid body per collapse batch.
+const COLLAPSE_STYLES: Array[String] = ["Remove", "Fall", "Rigid", "Sublevel"]
 
 const WATER_FLOW_STEPS: Array[float] = [0.067, 0.1, 0.15, 0.22, 0.3]
 const WATER_EQUALIZE_STEPS: Array[float] = [0.25, 0.5, 0.75, 1.0, 1.5]
@@ -87,14 +87,17 @@ var water_wake_style: int = 1
 var water_splashes: bool = true
 var water_surface_particles: bool = true
 
-# Structural systems. Stability computes the per-cell support field; physics
-# level decides what happens when a cell loses support.
+# Structural systems. Stability computes the per-cell support field.
+# Destruction decides whether unsupported cells collapse at all; the collapse
+# style decides how they collapse. Collapse is opt-in so a legacy world without
+# anchors is never demolished by its first edit.
 var stability_enabled: bool = true
-var physics_level: int = 1
+var collapse_enabled: bool = false
+var collapse_style: int = 1
+## When on, a settled sub-level that lines up with the world docks back into the
+## normal chunk grid. Off by default so sub-levels stay editable.
+var auto_dock_sublevels: bool = false
 var stability_debug: bool = false
-## Restored by the Destruction toggle so turning collapse back on keeps the
-## tier the player last chose in the Physics row.
-var last_physics_level: int = 1
 
 
 func _ready() -> void:
@@ -149,7 +152,7 @@ func apply_preset(index: int, save: bool = true) -> void:
 			max_fps = 0
 
 	_apply_water_preset(quality)
-	_apply_physics_preset(quality)
+	_apply_collapse_preset(quality)
 
 	if save:
 		save_settings()
@@ -196,12 +199,14 @@ func _apply_water_preset(index: int) -> void:
 			water_surface_particles = true
 
 
-## Structural defaults for a quality preset. Low skips collapse, Medium removes
-## unsupported blocks, High also spawns island debris.
-func _apply_physics_preset(index: int) -> void:
+## Structural defaults for a quality preset. Collapse stays off below High so a
+## world without anchors (the authored starter platform, older saves) is never
+## demolished by its first edit. The chosen collapse style is never reset by a
+## preset.
+func _apply_collapse_preset(index: int) -> void:
 	stability_enabled = true
 	stability_debug = false
-	physics_level = clampi(index, 0, PHYSICS_LEVELS.size() - 1)
+	collapse_enabled = index >= 2
 
 
 func apply_all() -> void:
@@ -225,13 +230,24 @@ func apply_all() -> void:
 	GlobalData.global_unit_cap = agent_cap
 
 	var grid := tree.get_first_node_in_group("grid_map")
+	if (
+		grid != null
+		and "sync_settings_on_ready" in grid
+		and not bool(grid.get("sync_settings_on_ready"))
+	):
+		# Fixture grid in a test: keep the developer's saved settings out of it.
+		grid = null
 	if grid != null:
 		grid.baked_ao_enabled = ambient_occlusion
 
 		if "stability_enabled" in grid:
 			grid.stability_enabled = stability_enabled
-		if "physics_level" in grid:
-			grid.physics_level = physics_level
+		if "collapse_enabled" in grid:
+			grid.collapse_enabled = collapse_enabled
+		if "collapse_style" in grid:
+			grid.collapse_style = collapse_style
+		if "auto_dock_sublevels" in grid:
+			grid.auto_dock_sublevels = auto_dock_sublevels
 		if "stability_debug" in grid:
 			grid.stability_debug = stability_debug
 
@@ -344,6 +360,10 @@ func apply_all() -> void:
 			foliage_distance,
 			foliage_distance * 0.5
 		)
+
+	for batcher in tree.get_nodes_in_group("foliage_batcher"):
+		if batcher.has_method("mark_dirty"):
+			batcher.call("mark_dirty")
 
 	for node in tree.get_nodes_in_group("sun_light"):
 		if node is DirectionalLight3D:
@@ -564,19 +584,19 @@ func stability_name() -> String:
 
 
 func destruction_name() -> String:
-	return physics_level_name()
+	return "On" if collapse_enabled else "Off"
 
 
-func physics_level_name() -> String:
-	return PHYSICS_LEVELS[clampi(physics_level, 0, PHYSICS_LEVELS.size() - 1)]
+func collapse_style_name() -> String:
+	return COLLAPSE_STYLES[clampi(collapse_style, 0, COLLAPSE_STYLES.size() - 1)]
 
 
 func stability_debug_name() -> String:
 	return "On" if stability_debug else "Off"
 
 
-func destruction_enabled() -> bool:
-	return stability_enabled and physics_level > 0
+func auto_dock_name() -> String:
+	return "On" if auto_dock_sublevels else "Off"
 
 
 func toggle_stability() -> void:
@@ -585,27 +605,24 @@ func toggle_stability() -> void:
 
 
 func toggle_destruction() -> void:
-	if physics_level > 0:
-		last_physics_level = physics_level
-		physics_level = 0
-	else:
-		physics_level = clampi(last_physics_level, 1, PHYSICS_LEVELS.size() - 1)
+	collapse_enabled = not collapse_enabled
+	if collapse_enabled:
 		stability_enabled = true
 	_commit()
 
 
-func cycle_physics_level() -> void:
-	# Collapse needs the support field; turning destruction on turns stability
-	# back on rather than silently doing nothing.
-	physics_level = (physics_level + 1) % PHYSICS_LEVELS.size()
-	if physics_level > 0:
-		last_physics_level = physics_level
-		stability_enabled = true
+func cycle_collapse_style() -> void:
+	collapse_style = (collapse_style + 1) % COLLAPSE_STYLES.size()
 	_commit()
 
 
 func toggle_stability_debug() -> void:
 	stability_debug = not stability_debug
+	_commit()
+
+
+func toggle_auto_dock() -> void:
+	auto_dock_sublevels = not auto_dock_sublevels
 	_commit()
 
 
@@ -792,7 +809,9 @@ func save_settings() -> void:
 	config.set_value("audio", "master_volume", master_volume)
 	config.set_value("audio", "music_volume", music_volume)
 	config.set_value("structure", "stability", stability_enabled)
-	config.set_value("structure", "physics_level", physics_level)
+	config.set_value("structure", "collapse_enabled", collapse_enabled)
+	config.set_value("structure", "collapse_style", collapse_style)
+	config.set_value("structure", "auto_dock", auto_dock_sublevels)
 	config.set_value("structure", "debug", stability_debug)
 	config.set_value("system", "agent_cap", agent_cap)
 	config.set_value("system", "max_fps", max_fps)
@@ -869,15 +888,30 @@ func load_settings() -> void:
 	stability_enabled = bool(
 		config.get_value("structure", "stability", stability_enabled)
 	)
-	physics_level = clampi(
-		int(config.get_value("structure", "physics_level", physics_level)),
-		0,
-		PHYSICS_LEVELS.size() - 1
-	)
+	if config.has_section_key("structure", "collapse_enabled"):
+		collapse_enabled = bool(
+			config.get_value("structure", "collapse_enabled", collapse_enabled)
+		)
+		collapse_style = clampi(
+			int(config.get_value("structure", "collapse_style", collapse_style)),
+			0,
+			COLLAPSE_STYLES.size() - 1
+		)
+	elif config.has_section_key("structure", "physics_level"):
+		# Legacy three-tier setting: 0 off, 1 remove, 2 rigid.
+		var legacy := clampi(
+			int(config.get_value("structure", "physics_level", 0)),
+			0,
+			2
+		)
+		collapse_enabled = legacy > 0
+		collapse_style = 2 if legacy >= 2 else (0 if legacy == 1 else 1)
 	stability_debug = bool(
 		config.get_value("structure", "debug", stability_debug)
 	)
-	last_physics_level = maxi(1, physics_level)
+	auto_dock_sublevels = bool(
+		config.get_value("structure", "auto_dock", auto_dock_sublevels)
+	)
 	agent_cap = int(config.get_value("system", "agent_cap", 120))
 	max_fps = int(config.get_value("system", "max_fps", 60))
 	view_roll_index = int(config.get_value("camera", "view_roll", 1))

@@ -366,6 +366,7 @@ func _test_step_slabs_retrofit() -> void:
 
 func _make_grid(with_mesher: bool = false) -> NavGridMap:
 	var grid := NavGridMap.new()
+	grid.sync_settings_on_ready = false
 	grid.name = "ChunkStoreTestGrid"
 	grid.mesh_library = _make_library()
 	grid.cell_size = Vector3.ONE

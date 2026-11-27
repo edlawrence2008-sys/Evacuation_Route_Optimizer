@@ -48,6 +48,7 @@ const USEABLE_SCENE_PATHS := [
 	"res://scenes/useables/water_tool.tscn",
 	"res://scenes/useables/gas_tool.tscn",
 	"res://scenes/useables/route_paint_tool.tscn",
+	"res://scenes/useables/physics_gun.tscn",
 ]
 
 ## Property-tab row labels -> canonical BlockMaterials keys.

@@ -38,6 +38,46 @@ var grid_map: NavGridMap
 var build_items: PackedInt32Array = PackedInt32Array()
 var inventory_open: bool = false
 var build_mode_active: bool = true
+
+## Aimed-block stability readout. The window evaluation costs a few
+## milliseconds on a large structure, so it runs only after the cursor has
+## rested on the same cell and results are cached until the world changes.
+const BLOCK_MATERIALS = preload("res://scripts/block_materials.gd")
+const STABILITY_READOUT = preload("res://scripts/world/stability_readout.gd")
+const STABILITY_READOUT_DELAY: float = 0.2
+const STABILITY_SENTINEL := Vector3i(2147483647, 2147483647, 2147483647)
+const STABILITY_CACHE_LIMIT: int = 512
+var _stability_label = null
+var _stability_cell: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _stability_pending: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _stability_timer: float = 0.0
+var _stability_cache: Dictionary = {}
+var _stability_signals_connected: bool = false
+## Exact cell preview while aiming at a moving sub-level. One box per selected
+## local cell; parented to the body so it follows the body's interpolation.
+var _sublevel_area_preview: MultiMeshInstance3D = null
+var _sublevel_area_multimesh: MultiMesh = null
+## G-key grab. Deliberately "just a grab": a spring pull with a 2D line beam,
+## no axis lock, no freeze, no emitter. Works on any RigidBody3D, including
+## sub-levels. Separate from the Useables physics gun below.
+var _grab_body: RigidBody3D = null
+var _grab_local_point: Vector3 = Vector3.ZERO
+var _grab_distance: float = 3.0
+var _grab_line: MeshInstance3D = null
+var _grab_immediate: ImmediateMesh = null
+
+## Useables physics gun. A rigid, axis-locked hold with a beam from the gun
+## model's emitter and a freeze toggle. It never shares state with the G grab.
+var _gun_body: RigidBody3D = null
+var _gun_local_point: Vector3 = Vector3.ZERO
+var _gun_distance: float = 4.0
+var _gun_beam: MeshInstance3D = null
+var _gun_previous_gravity: float = 1.0
+var _gun_previous_lock_x: bool = false
+var _gun_previous_lock_y: bool = false
+var _gun_previous_lock_z: bool = false
+## True while a Useables tool owns the primary-use button.
+var _primary_use_held: bool = false
 signal inventory_toggled(open: bool)
 var _last_inventory_signal: bool = false
 
@@ -110,6 +150,9 @@ var _area_plane_point: Vector3 = Vector3.ZERO
 var _area_plane_normal: Vector3 = Vector3.UP
 var _area_plane_axis: int = 1
 var _area_cells: Array[Vector3i] = []
+## Non-null while a drag/brush stroke edits a moving sub-level. The area's
+## anchor/target/cells are then local to that body instead of the world grid.
+var _area_sublevel: SubLevel = null
 var _preview_cells: Array[Vector3i] = []
 var _preview_destroying: bool = false
 var _preview_item: int = -1
@@ -269,9 +312,29 @@ func _input(event: InputEvent) -> void:
 		_pick_aimed()
 		return
 
+	if not inventory_open and event.is_action_pressed("physics_gun"):
+		_begin_grab()
+		return
+
+	if event.is_action_released("physics_gun"):
+		_stop_grab()
+		return
+
 	if _held_use_component != null and not inventory_open:
+		# The physics gun's hold distance is adjustable with the scroll keys.
+		if _gun_body != null and event.is_action_pressed("scroll_up"):
+			_gun_distance = clampf(_gun_distance + 0.5, 2.5, 11.0)
+			return
+		if _gun_body != null and event.is_action_pressed("scroll_down"):
+			_gun_distance = clampf(_gun_distance - 0.5, 2.5, 11.0)
+			return
 		if event.is_action_pressed("primary_use"):
+			_primary_use_held = true
 			_use_held_tool(false)
+			return
+		if event.is_action_released("primary_use"):
+			_primary_use_held = false
+			_held_use_component.release(player)
 			return
 		if event.is_action_pressed("secondary_use"):
 			_use_held_tool(true)
@@ -286,6 +349,11 @@ func _input(event: InputEvent) -> void:
 		return
 
 	if build_mode_active and event.is_action_pressed("ui_rotate"):
+		if (
+			_held_use_component != null
+			and _held_use_component.rotate_held(player, 15.0)
+		):
+			return
 		_rotate_placement()
 		return
 
@@ -302,8 +370,12 @@ func _input(event: InputEvent) -> void:
 
 	if build_mode_active and not inventory_open and player.movement_enabled:
 		if event.is_action_pressed("place_block"):
+			if _try_sublevel_edit(true):
+				return
 			_start_build_hold(true)
 		elif event.is_action_pressed("break_block"):
+			if _try_sublevel_edit(false):
+				return
 			_start_build_hold(false)
 		else:
 			for slot in Hotbar.SLOT_COUNT:
@@ -340,10 +412,38 @@ func _process(_delta: float) -> void:
 	if not _setup_done or player == null:
 		return
 
+	# Both beams follow the render-frame camera/emitter and the interpolated
+	# body, so they do not judder at the 30 Hz physics rate.
+	if _camera != null:
+		# Use the same interpolated time base for the camera/emitter and the
+		# body. Mixing `global_transform` (physics frame) with the body's
+		# interpolated transform made the beam swim during strafing/vertical
+		# movement even though it was rebuilt every render frame.
+		var camera_xform := _camera_render_transform()
+
+		if _grab_body != null and is_instance_valid(_grab_body):
+			var grab_point: Vector3 = (
+				_grab_body.get_global_transform_interpolated() * _grab_local_point
+			)
+			_update_grab_line(
+				camera_xform.origin - camera_xform.basis.z * 0.35,
+				grab_point
+			)
+
+		if _gun_body != null and is_instance_valid(_gun_body):
+			var gun_point: Vector3 = (
+				_gun_body.get_global_transform_interpolated() * _gun_local_point
+			)
+			_update_gun_beam(_gun_muzzle_position(), gun_point)
+
 	if player.is_dead:
 		_cancel_build_drag()
 		_hide_placeable_ghost()
 		_hide_ghost_block()
+		_hide_stability_readout()
+		_stop_grab()
+		end_gun_hold()
+		_primary_use_held = false
 		return
 
 	if build_mode_active and not inventory_open:
@@ -351,6 +451,7 @@ func _process(_delta: float) -> void:
 		# variant and orientation from this same face data.
 		_update_face_indicator()
 		_update_ghost_block()
+		_update_stability_readout(_delta)
 
 		if (
 			player.movement_enabled
@@ -363,10 +464,30 @@ func _process(_delta: float) -> void:
 		_hide_ghost_block()
 		_hide_placeable_ghost()
 		_hide_face_indicator()
+		_hide_stability_readout()
 		_cancel_build_drag()
 
 	if not player.movement_enabled:
 		_cancel_build_drag()
+
+
+## Both grabs run at the physics rate. They use separate bodies, so starting
+## one releases the other.
+func _physics_process(delta: float) -> void:
+	_update_grab_spring()
+	_update_gun_hold(delta)
+
+	if (
+		_primary_use_held
+		and _held_use_component != null
+		and _camera != null
+	):
+		_held_use_component.hold(
+			player,
+			_camera.global_position,
+			-_camera.global_transform.basis.z,
+			delta
+		)
 
 
 func _exit_tree() -> void:
@@ -378,6 +499,14 @@ func _exit_tree() -> void:
 		ghost_area.queue_free()
 	if is_instance_valid(_face_indicator):
 		_face_indicator.queue_free()
+	if is_instance_valid(_sublevel_area_preview):
+		_sublevel_area_preview.queue_free()
+	_stop_grab()
+	end_gun_hold()
+	if is_instance_valid(_grab_line):
+		_grab_line.queue_free()
+	if is_instance_valid(_gun_beam):
+		_gun_beam.queue_free()
 	_clear_placeable_ghost()
 # --- Building & UI Integration ---
 func _get_grid_map() -> NavGridMap:
@@ -389,6 +518,16 @@ func _get_grid_map() -> NavGridMap:
 			if hud_manager:
 				hud_manager.setup_inventory(build_items, grid_map.mesh_library)
 			_update_build_ui()
+	if grid_map != null and not _stability_signals_connected:
+		_stability_signals_connected = true
+		grid_map.block_placed.connect(
+			func(_cell: Vector3i, _item: int) -> void:
+				_stability_cache.clear()
+		)
+		grid_map.block_removed.connect(
+			func(_cell: Vector3i) -> void:
+				_stability_cache.clear()
+		)
 	return grid_map
 
 
@@ -481,6 +620,28 @@ func _update_ghost_block() -> void:
 	_hide_placeable_ghost()
 
 	var hit := _get_build_hit()
+	if not hit.is_empty():
+		var sublevel := _sublevel_from_collider(hit.get("collider"))
+		if sublevel != null:
+			var clearing := build_tool == BuildTool.CLEAR
+			var held: int = _current_build_item()
+			# No ghost while the physics gun holds the body, while it is still
+			# moving, or with an empty hand outside the clear tool. This is what
+			# used to look like a flickering green/orange overlay on the blocks.
+			if (
+				_grab_body != null
+				or _gun_body != null
+				or _area_active
+				or not sublevel.is_settled()
+				or (held < 0 and not clearing)
+			):
+				_hide_ghost_block()
+				return
+			_hide_ghost_block()
+			_show_sublevel_ghost(sublevel, hit)
+			return
+	_hide_sublevel_ghost()
+
 	if hit.is_empty():
 		_hide_ghost_block()
 		return
@@ -596,6 +757,7 @@ func _show_brush_placeable_preview(hit: Dictionary) -> void:
 func _hide_ghost_block() -> void:
 	if ghost_area:
 		ghost_area.visible = false
+	_hide_sublevel_ghost()
 	_preview_cells.clear()
 	_preview_destroying = false
 	_preview_item = -1
@@ -704,6 +866,36 @@ func _update_placeable_ghost(hit: Dictionary) -> void:
 	_ensure_placeable_ghost(_selected_placeable_scene)
 
 	if _placeable_ghost == null:
+		return
+
+	var sublevel := _sublevel_from_collider(hit.get("collider"))
+	if sublevel != null:
+		var face := _local_face_normal(sublevel, hit.normal)
+		var hit_cell := _sublevel_hit_cell(sublevel, hit)
+		var target := hit_cell + face
+		var world_pos := sublevel.to_global(
+			sublevel.cell_center_local(target)
+		)
+		var spin := _manual_rotation * PI * 0.5
+		if _placeable_ghost_is_foliage:
+			spin += _placeable_ghost_yaw
+		_placeable_ghost.global_transform = Transform3D(
+			sublevel.global_transform.basis
+			* Basis(Vector3.UP, spin)
+			* _placeable_ghost_base_basis,
+			world_pos
+		)
+		_placeable_ghost.visible = true
+
+		var normal: Vector3 = hit.get("normal", Vector3.UP)
+		var supported: bool = (
+			not _placeable_ghost_requires_support
+			or normal.y > 0.5
+		)
+		var blocked: bool = not supported
+		if blocked != _placeable_ghost_blocked:
+			_placeable_ghost_blocked = blocked
+			_set_ghost_blocked(_placeable_ghost, blocked)
 		return
 
 	_placeable_ghost.global_position = _placeable_grid_position(
@@ -899,6 +1091,99 @@ func _hide_face_indicator() -> void:
 	_last_face_info.clear()
 	if _face_indicator != null:
 		_face_indicator.visible = false
+
+
+# --- Aimed-block stability readout -----------------------------------------
+
+
+func _update_stability_readout(delta: float) -> void:
+	if not is_instance_valid(grid_map):
+		_get_grid_map()
+
+	if grid_map == null or not grid_map.stability_enabled:
+		_hide_stability_readout()
+		return
+
+	# The readout is part of the build HUD: show it while a placement ghost is
+	# up, or whenever the structural overlay is enabled. An empty hand walking
+	# around stays clean.
+	var show := grid_map.stability_debug
+	if not show and is_instance_valid(ghost_area):
+		show = ghost_area.visible
+	if not show:
+		_hide_stability_readout()
+		return
+
+	var cell: Vector3i = _last_face_info.get("cell", STABILITY_SENTINEL)
+
+	if cell == STABILITY_SENTINEL:
+		_hide_stability_readout()
+		return
+
+	if cell != _stability_pending:
+		# The cursor is still moving; wait for it to rest instead of paying for
+		# a window evaluation on every cell it crosses.
+		_stability_pending = cell
+		_stability_timer = 0.0
+		_hide_stability_label_only()
+		return
+
+	_stability_timer += delta
+	if _stability_timer < STABILITY_READOUT_DELAY:
+		return
+
+	if not _stability_cache.has(cell):
+		if _stability_cache.size() >= STABILITY_CACHE_LIMIT:
+			_stability_cache.clear()
+		_stability_cache[cell] = grid_map.get_stability(cell)
+
+	_show_stability(cell, int(_stability_cache[cell]))
+
+
+func _show_stability(cell: Vector3i, value: int) -> void:
+	if value < 0 or not is_instance_valid(grid_map):
+		_hide_stability_label_only()
+		return
+
+	var item: int = grid_map.get_block_item(cell)
+	if item < 0:
+		_hide_stability_label_only()
+		return
+
+	var item_name := ""
+	if grid_map.mesh_library != null:
+		item_name = String(grid_map.mesh_library.get_item_name(item))
+	var reach: int = BLOCK_MATERIALS.stability_reach_for_item(item_name)
+
+	var label = _ensure_stability_label()
+	_stability_cell = cell
+	label.show_value(value, reach)
+
+	label.global_position = (
+		grid_map.map_to_local(cell) + Vector3(0.0, grid_map.cell_size.y * 0.85, 0.0)
+	)
+
+
+func _ensure_stability_label():
+	if is_instance_valid(_stability_label):
+		return _stability_label
+
+	_stability_label = STABILITY_READOUT.new()
+	_stability_label.name = "StabilityReadout"
+	player.add_child(_stability_label)
+	return _stability_label
+
+
+func _hide_stability_label_only() -> void:
+	if is_instance_valid(_stability_label):
+		_stability_label.hide_value()
+
+
+func _hide_stability_readout() -> void:
+	_stability_pending = STABILITY_SENTINEL
+	_stability_cell = STABILITY_SENTINEL
+	_stability_timer = 0.0
+	_hide_stability_label_only()
 
 
 ## Classifies a point on the aimed face into the same five zones the mesh draws.
@@ -1141,6 +1426,10 @@ func _refresh_area_target(force: bool = false) -> void:
 	if not _area_active or not grid_map:
 		return
 
+	if _area_sublevel != null:
+		_refresh_sublevel_area_target(force)
+		return
+
 	# The far corner comes from the drag plane, not from a surface hit, so the
 	# selection can continue over empty space.
 	var projected: Variant = _ray_plane_point(
@@ -1279,6 +1568,10 @@ func _finish_area() -> void:
 	if not _area_active:
 		return
 
+	if _area_sublevel != null:
+		_finish_sublevel_area()
+		return
+
 	# Only refresh to the release position if the drag actually unlocked.
 	# A quick click stays exactly on its one-cell anchor.
 	if _drag_unlocked:
@@ -1380,6 +1673,7 @@ func _cancel_build_drag() -> void:
 	_break_held = false
 	_area_active = false
 	_area_destroying = false
+	_area_sublevel = null
 	_hold_time = 0.0
 	_drag_unlocked = false
 	_area_cells.clear()
@@ -1392,6 +1686,7 @@ func _cancel_build_drag() -> void:
 	_area_palette_id = ""
 	_area_anchor_hit = {}
 	_hide_ghost_block()
+	_hide_sublevel_ghost()
 
 	if _hand != null:
 		_hand.call("set_shaking", false)
@@ -2809,6 +3104,1133 @@ func _is_grid_collider(collider: Object) -> bool:
 	return false
 
 
+# --- Moving sub-levels -----------------------------------------------------
+
+func _sublevel_from_collider(collider: Object) -> SubLevel:
+	var node: Node = collider as Node
+	while node != null and node != get_tree().root:
+		if node is SubLevel:
+			return node
+		node = node.get_parent()
+	return null
+
+
+func _local_face_normal(sublevel: SubLevel, world_normal: Vector3) -> Vector3i:
+	var local: Vector3 = sublevel.global_transform.basis.inverse() * world_normal
+
+	if absf(local.x) >= absf(local.y) and absf(local.x) >= absf(local.z):
+		return Vector3i(1 if local.x > 0.0 else -1, 0, 0)
+	if absf(local.y) >= absf(local.z):
+		return Vector3i(0, 1 if local.y > 0.0 else -1, 0)
+	return Vector3i(0, 0, 1 if local.z > 0.0 else -1)
+
+
+# --- G grab ----------------------------------------------------------------
+
+## Quick grab bound to G. This is deliberately "just a grab": the body keeps
+## its gravity and orientation and is pulled by a soft spring. Releasing leaves
+## its velocity. The Useables physics gun below is a separate system.
+func _begin_grab() -> void:
+	if _camera == null or _grab_body != null:
+		return
+
+	var hit := _get_build_hit()
+	if hit.is_empty():
+		return
+
+	var collider: Variant = hit.get("collider")
+	if not collider is RigidBody3D:
+		return
+
+	var body := collider as RigidBody3D
+	if body == player:
+		return
+
+	var distance: float = _camera.global_position.distance_to(hit.position)
+	if distance > 12.0:
+		return
+
+	# Only one system may pull a body at a time.
+	end_gun_hold()
+
+	_grab_body = body
+	_grab_local_point = body.to_local(hit.position)
+	_grab_distance = clampf(distance, 2.0, 10.0)
+	body.sleeping = false
+	_update_grab_line(
+		_camera.global_position - _camera.global_transform.basis.z * 0.35,
+		hit.position
+	)
+
+
+func _stop_grab() -> void:
+	_grab_body = null
+
+	if _grab_immediate != null:
+		_grab_immediate.clear_surfaces()
+	if is_instance_valid(_grab_line):
+		_grab_line.visible = false
+
+
+func _update_grab_spring() -> void:
+	if _grab_body == null:
+		return
+
+	if not is_instance_valid(_grab_body) or _camera == null:
+		_stop_grab()
+		return
+
+	var target: Vector3 = (
+		_camera.global_position
+		- _camera.global_transform.basis.z * _grab_distance
+	)
+	var world_point: Vector3 = _grab_body.to_global(_grab_local_point)
+	var offset: Vector3 = world_point - _grab_body.global_position
+	var body_mass: float = maxf(_grab_body.mass, 0.1)
+	var point_velocity: Vector3 = (
+		_grab_body.linear_velocity
+		+ _grab_body.angular_velocity.cross(offset)
+	)
+	var force: Vector3 = (
+		(target - world_point) * body_mass * 40.0
+		- point_velocity * body_mass * 8.0
+	)
+	force = force.limit_length(body_mass * 400.0)
+
+	_grab_body.apply_force(force, offset)
+	_grab_body.sleeping = false
+
+
+func _ensure_grab_line() -> void:
+	if is_instance_valid(_grab_line):
+		return
+
+	_grab_line = MeshInstance3D.new()
+	_grab_line.name = "GrabLine"
+	_grab_line.top_level = true
+	_grab_line.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_grab_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_grab_immediate = ImmediateMesh.new()
+	_grab_line.mesh = _grab_immediate
+
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.vertex_color_use_as_albedo = true
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.no_depth_test = true
+	material.albedo_color = Color.WHITE
+	_grab_line.material_override = material
+
+	get_tree().current_scene.add_child.call_deferred(_grab_line)
+
+
+## The original 2D debug line, rebuilt at the render rate instead of from
+## `_physics_process`. That is what removes the flicker without changing how it
+## looks: a one-pixel ImmediateMesh line from the camera to the grab point.
+func _update_grab_line(from: Vector3, to: Vector3) -> void:
+	_ensure_grab_line()
+	if _grab_immediate == null:
+		return
+
+	_grab_immediate.clear_surfaces()
+	_grab_immediate.surface_begin(Mesh.PRIMITIVE_LINES)
+	_grab_immediate.surface_set_color(Color(0.3, 1.0, 0.9, 0.9))
+	_grab_immediate.surface_add_vertex(from)
+	_grab_immediate.surface_add_vertex(to)
+	_grab_immediate.surface_end()
+	_grab_line.visible = true
+
+
+# --- Useables physics gun --------------------------------------------------
+
+## Rigid hold used by the Physics Gun tool. Unlike the G grab it cancels
+## gravity, locks the body's rotation, keeps it at a fixed distance and draws a
+## beam from the gun model's emitter.
+func begin_gun_hold() -> bool:
+	if _camera == null:
+		return false
+
+	if _gun_body != null and is_instance_valid(_gun_body):
+		return true
+
+	var hit := _get_build_hit()
+	if hit.is_empty():
+		return false
+
+	var collider: Variant = hit.get("collider")
+	if not collider is RigidBody3D:
+		return false
+
+	var body := collider as RigidBody3D
+	if body == player:
+		return false
+
+	var distance: float = _camera.global_position.distance_to(hit.position)
+	if distance > 14.0:
+		return false
+
+	_stop_grab()
+
+	if body.freeze:
+		body.freeze = false
+
+	_gun_previous_gravity = body.gravity_scale
+	_gun_previous_lock_x = body.axis_lock_angular_x
+	_gun_previous_lock_y = body.axis_lock_angular_y
+	_gun_previous_lock_z = body.axis_lock_angular_z
+	body.gravity_scale = 0.0
+	body.axis_lock_angular_x = true
+	body.axis_lock_angular_y = true
+	body.axis_lock_angular_z = true
+	body.angular_velocity = Vector3.ZERO
+	body.sleeping = false
+
+	_gun_body = body
+	_gun_local_point = body.to_local(hit.position)
+	_gun_distance = clampf(distance, 2.5, 11.0)
+	_update_gun_beam(_gun_muzzle_position(), hit.position)
+	return true
+
+
+func end_gun_hold() -> void:
+	var body := _gun_body
+	_gun_body = null
+
+	if is_instance_valid(_gun_beam):
+		_gun_beam.visible = false
+
+	if body == null or not is_instance_valid(body):
+		return
+
+	body.gravity_scale = _gun_previous_gravity
+	body.axis_lock_angular_x = _gun_previous_lock_x
+	body.axis_lock_angular_y = _gun_previous_lock_y
+	body.axis_lock_angular_z = _gun_previous_lock_z
+
+	if not body.freeze:
+		body.sleeping = false
+
+
+func get_gun_body() -> RigidBody3D:
+	return _gun_body
+
+
+## Keeps the UseComponent contract; the controller owns the gun spring in
+## `_physics_process`, so the tool must not apply a second force here.
+func hold_gun(_delta: float) -> void:
+	pass
+
+
+func _update_gun_hold(_delta: float) -> void:
+	if _gun_body == null:
+		return
+
+	if not is_instance_valid(_gun_body) or _camera == null:
+		end_gun_hold()
+		return
+
+	if _gun_body.freeze:
+		_gun_body.sleeping = false
+		return
+
+	var target: Vector3 = (
+		_camera.global_position
+		- _camera.global_transform.basis.z * _gun_distance
+	)
+	var world_point: Vector3 = _gun_body.to_global(_gun_local_point)
+	var offset: Vector3 = world_point - _gun_body.global_position
+	var body_mass: float = maxf(_gun_body.mass, 0.1)
+	var point_velocity: Vector3 = (
+		_gun_body.linear_velocity
+		+ _gun_body.angular_velocity.cross(offset)
+	)
+	var force: Vector3 = (
+		(target - world_point) * body_mass * 200.0
+		- point_velocity * body_mass * 26.0
+	)
+	force = force.limit_length(body_mass * 4000.0)
+
+	_gun_body.apply_force(force, offset)
+	_gun_body.angular_velocity = Vector3.ZERO
+	_gun_body.gravity_scale = 0.0
+	_gun_body.sleeping = false
+
+
+func toggle_gun_freeze() -> void:
+	var body := _gun_body
+
+	if body == null or not is_instance_valid(body):
+		var hit := _get_build_hit()
+		if hit.is_empty():
+			return
+		var collider: Variant = hit.get("collider")
+		if collider is RigidBody3D:
+			body = collider
+
+	if body == null or not is_instance_valid(body):
+		return
+
+	body.freeze = not body.freeze
+	if body.freeze:
+		body.linear_velocity = Vector3.ZERO
+		body.angular_velocity = Vector3.ZERO
+	else:
+		body.sleeping = false
+
+
+## Q rotates the held body around the view axis, at the point the beam holds,
+## so the object turns without drifting away from the camera.
+func rotate_gun_held(step_degrees: float) -> bool:
+	if (
+		_gun_body == null
+		or not is_instance_valid(_gun_body)
+		or _camera == null
+	):
+		return false
+
+	if _gun_body.freeze:
+		_gun_body.freeze = false
+
+	var axis: Vector3 = -_camera.global_transform.basis.z
+	var pivot: Vector3 = _gun_body.to_global(_gun_local_point)
+	var basis := Basis(axis, deg_to_rad(step_degrees)) * _gun_body.global_transform.basis
+	basis = basis.orthonormalized()
+	_gun_body.global_transform = Transform3D(
+		basis,
+		pivot - basis * _gun_local_point
+	)
+	_gun_body.angular_velocity = Vector3.ZERO
+	_gun_body.sleeping = false
+	return true
+
+
+## Render-frame camera transform. The beam endpoints must be evaluated on the
+## same interpolated time base as the physics body, otherwise lateral/vertical
+## camera movement makes a correctly-rebuilt beam appear to flicker/swim.
+func _camera_render_transform() -> Transform3D:
+	if _camera == null or not is_instance_valid(_camera):
+		return Transform3D.IDENTITY
+	return _camera.get_global_transform_interpolated()
+
+
+## The physics gun's beam starts at the viewmodel's muzzle marker (`Emitter` in
+## `physics_gun.tscn`), not at the camera. The muzzle's *local* offset is kept
+## and re-applied to the interpolated camera, so viewmodel sway stays smooth
+## without inheriting the camera's physics-frame snap.
+func _gun_muzzle_position() -> Vector3:
+	var camera_xform := _camera_render_transform()
+
+	if is_instance_valid(_hand) and _hand.has_method("get_muzzle_position"):
+		var muzzle: Vector3 = _hand.call("get_muzzle_position")
+		if _camera != null and is_instance_valid(_camera):
+			var local: Vector3 = _camera.global_transform.affine_inverse() * muzzle
+			return camera_xform * local
+		return muzzle
+
+	if _camera != null:
+		return camera_xform.origin - camera_xform.basis.z * 0.35
+
+	return Vector3.ZERO
+
+
+func _ensure_gun_beam() -> void:
+	if is_instance_valid(_gun_beam):
+		return
+
+	_gun_beam = MeshInstance3D.new()
+	_gun_beam.name = "PhysicsGunBeam"
+	_gun_beam.top_level = true
+	_gun_beam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_gun_beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+	var cylinder := CylinderMesh.new()
+	cylinder.height = 1.0
+	cylinder.top_radius = 0.022
+	cylinder.bottom_radius = 0.022
+	cylinder.radial_segments = 10
+	cylinder.rings = 1
+
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.no_depth_test = true
+	material.albedo_color = Color(0.25, 1.0, 0.9, 0.9)
+	cylinder.material = material
+
+	_gun_beam.mesh = cylinder
+	get_tree().current_scene.add_child.call_deferred(_gun_beam)
+
+
+## Solid cylinder from the gun emitter to the held point. The cylinder avoids
+## the 1 px line aliasing; the G grab above keeps its original line.
+func _update_gun_beam(from: Vector3, to: Vector3) -> void:
+	_ensure_gun_beam()
+	if not is_instance_valid(_gun_beam):
+		return
+
+	var direction: Vector3 = to - from
+	var length: float = direction.length()
+	if length < 0.01:
+		_gun_beam.visible = false
+		return
+
+	var y_axis: Vector3 = direction / length
+	var up: Vector3 = Vector3.UP
+	if absf(y_axis.dot(up)) > 0.99:
+		up = Vector3.RIGHT
+	var x_axis: Vector3 = up.cross(y_axis).normalized()
+	var z_axis: Vector3 = x_axis.cross(y_axis)
+
+	_gun_beam.global_transform = Transform3D(
+		Basis(x_axis, y_axis * length, z_axis),
+		(from + to) * 0.5
+	)
+	_gun_beam.visible = true
+
+
+## Click/drag/brush entry point for moving sub-levels. Returns true when the
+## click belonged to a sub-level so the world-grid path does not also run.
+func _try_sublevel_edit(placing: bool) -> bool:
+	var hit := _get_build_hit()
+	if hit.is_empty():
+		return false
+
+	var sublevel := _sublevel_from_collider(hit.get("collider"))
+	if sublevel == null:
+		return false
+
+	var hit_cell := _sublevel_hit_cell(sublevel, hit)
+	if not sublevel.cells.has(hit_cell):
+		return true
+
+	# Placeables on a sub-level are attached to the body so they move with it.
+	if placing and _selected_placeable_scene != null:
+		_place_placeable_on_sublevel(sublevel, hit, hit_cell)
+		return true
+
+	# Brushes are a single click in both directions, matching the world path.
+	if brush_mode:
+		_apply_sublevel_brush(sublevel, hit, hit_cell, not placing)
+		return true
+
+	_begin_sublevel_area(sublevel, hit, hit_cell, placing)
+	return true
+
+
+func _sublevel_hit_cell(sublevel: SubLevel, hit: Dictionary) -> Vector3i:
+	# Step slightly into the body along the face normal, then use the nearest
+	# occupied cell. A hit exactly on a cell edge rounds to the empty neighbour
+	# with plain rounding.
+	return sublevel.nearest_cell_to_world(
+		hit.position - hit.normal * 0.05
+	)
+
+
+## Starts a local drag rectangle on the body. Anchor/target/cells stay in the
+## sub-level's local grid, so a moving body can be edited without converting
+## through the world grid.
+func _begin_sublevel_area(
+	sublevel: SubLevel,
+	hit: Dictionary,
+	hit_cell: Vector3i,
+	placing: bool
+) -> bool:
+	if _area_active:
+		return false
+
+	var face := _local_face_normal(sublevel, hit.normal)
+	var target_item := int(
+		(sublevel.cells[hit_cell] as Dictionary).get("item", -1)
+	)
+	var anchor := hit_cell
+
+	if placing and build_tool != BuildTool.CLEAR:
+		anchor = _placement_anchor(hit_cell, face)
+
+	var needs_item := (
+		build_tool != BuildTool.CLEAR
+		and build_tool != BuildTool.FLATTEN
+	)
+	if (
+		placing
+		and needs_item
+		and _current_build_item() == -1
+		and _active_palette_id().is_empty()
+	):
+		return false
+
+	_area_sublevel = sublevel
+	_area_face = face
+	_area_anchor = anchor
+	_area_target = anchor
+	_area_destroying = not placing
+	_area_target_cell = hit_cell
+	_area_target_item = target_item
+	_area_source_item = -1
+	_area_resolved_item = -1
+	_area_resolved_orientation = 0
+	_area_placeable_scene = null
+	_area_placeable_hit = {}
+	_area_palette_id = _active_palette_id() if placing else ""
+	_area_anchor_hit = hit.duplicate()
+
+	if placing and _area_palette_id.is_empty():
+		_area_source_item = _current_build_item()
+		if _area_source_item != -1:
+			var resolved := _resolve_placement(_area_source_item, [anchor])
+			_area_resolved_item = int(resolved["item"])
+			_area_resolved_orientation = int(resolved["orientation"])
+
+	_area_plane_axis = _face_axis(face)
+	_area_plane_point = sublevel.to_global(
+		sublevel.cell_center_local(anchor)
+	)
+	_area_plane_normal = (
+		sublevel.global_transform.basis * Vector3(face)
+	).normalized()
+
+	_area_active = true
+	_area_cells = _collect_area_cells(anchor, anchor, _area_destroying)
+	_area_last_size = _area_cells_size_key(_area_cells)
+	_hold_time = 0.0
+	_drag_unlocked = false
+
+	if placing:
+		_place_held = true
+	else:
+		_break_held = true
+
+	_show_sublevel_area_preview(sublevel, _area_cells, _area_destroying)
+
+	if _hand != null:
+		_hand.call("play_place_swing" if placing else "play_break_swing")
+		_hand.call("set_shaking", true)
+	return true
+
+
+func _refresh_sublevel_area_target(force: bool = false) -> void:
+	if not is_instance_valid(_area_sublevel):
+		_cancel_build_drag()
+		return
+
+	# Re-anchor the drag plane to the body each tick so a moving (or slowly
+	# rotating) sub-level does not leave the rectangle behind in world space.
+	_area_plane_point = _area_sublevel.to_global(
+		_area_sublevel.cell_center_local(_area_anchor)
+	)
+	_area_plane_normal = (
+		_area_sublevel.global_transform.basis * Vector3(_area_face)
+	).normalized()
+
+	var projected: Variant = _ray_plane_point(
+		_area_plane_point,
+		_area_plane_normal
+	)
+	if projected == null:
+		return
+
+	var cell: Vector3i = _sublevel_cell_from_plane_point(
+		_area_sublevel,
+		projected,
+		_area_plane_axis
+	)
+	cell = _clamp_area_target(_area_anchor, cell)
+
+	if not force and cell == _area_target:
+		return
+
+	_area_target = cell
+	_area_cells = _collect_area_cells(
+		_area_anchor,
+		cell,
+		_area_destroying
+	)
+
+	var size_key := _area_cells_size_key(_area_cells)
+	if size_key != _area_last_size:
+		var new_volume := _area_size_volume(size_key)
+		var old_volume := _area_size_volume(_area_last_size)
+		_area_last_size = size_key
+		if new_volume >= old_volume:
+			_play_build_increment(1.02, 1.10)
+		else:
+			_play_build_increment(0.82, 0.90)
+
+	if _hand != null:
+		_hand.call("set_shaking", true, _area_cells.size())
+
+	_show_sublevel_area_preview(
+		_area_sublevel,
+		_area_cells,
+		_area_destroying
+	)
+
+
+func _sublevel_cell_from_plane_point(
+	sublevel: SubLevel,
+	point: Vector3,
+	axis: int
+) -> Vector3i:
+	var local: Vector3 = sublevel.to_local(point) / sublevel.block_size
+	var cell := Vector3i(
+		roundi(local.x),
+		roundi(local.y),
+		roundi(local.z)
+	)
+	# The drag is flat: the plane's axis never leaves the anchor layer.
+	cell[axis] = _area_anchor[axis]
+	return cell
+
+
+func _finish_sublevel_area() -> void:
+	if _drag_unlocked:
+		_refresh_sublevel_area_target(true)
+
+	var sublevel := _area_sublevel
+	var destroying := _area_destroying
+	var face := _area_face
+	var cells: Array[Vector3i] = []
+	cells.append_array(_area_cells)
+
+	_area_active = false
+	_area_sublevel = null
+	_area_destroying = false
+	_drag_unlocked = false
+	_hold_time = 0.0
+	_area_last_size = Vector3i.ZERO
+	_area_cells.clear()
+	_area_face_info.clear()
+	_area_source_item = -1
+	_area_resolved_item = -1
+	_area_resolved_orientation = 0
+	_area_placeable_scene = null
+	_area_placeable_hit = {}
+	_area_palette_id = ""
+	_area_anchor_hit = {}
+	_place_held = false
+	_break_held = false
+	_stop_build_loop()
+	_hide_sublevel_ghost()
+
+	if _hand != null:
+		_hand.call("set_shaking", false)
+
+	if (
+		sublevel == null
+		or not is_instance_valid(sublevel)
+		or cells.is_empty()
+	):
+		return
+
+	_apply_sublevel_cells(sublevel, cells, destroying, face)
+
+	if _hand != null:
+		_hand.call("play_impact")
+
+
+func _apply_sublevel_brush(
+	sublevel: SubLevel,
+	hit: Dictionary,
+	hit_cell: Vector3i,
+	removing: bool
+) -> void:
+	if sublevel == null or not is_instance_valid(sublevel):
+		return
+
+	var face := _local_face_normal(sublevel, hit.normal)
+	var target_item := int(
+		(sublevel.cells[hit_cell] as Dictionary).get("item", -1)
+	)
+	var volume := _sublevel_brush_volume(
+		sublevel,
+		hit_cell,
+		face,
+		target_item,
+		removing
+	)
+	if volume.is_empty():
+		return
+
+	var tool := BuildTool.CLEAR if removing else build_tool
+	var changed := _mutate_sublevel(
+		sublevel,
+		volume,
+		tool,
+		removing,
+		face
+	)
+	if changed <= 0:
+		return
+
+	_play_sfx(_sfx_land, 0.7 if removing else 1.0, 0.9 if removing else 1.2)
+	if _hand != null:
+		_hand.call(
+			"play_break_swing" if removing else "play_place_swing"
+		)
+
+
+func _sublevel_brush_volume(
+	sublevel: SubLevel,
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	removing: bool
+) -> Array[Vector3i]:
+	if brush_kind == BrushKind.SURFACE:
+		return _sublevel_surface_cells(
+			sublevel,
+			target_cell,
+			face,
+			target_item,
+			removing
+		)
+	if brush_kind == BrushKind.CLUSTER:
+		return _sublevel_cluster_cells(
+			sublevel,
+			target_cell,
+			target_item
+		)
+
+	var offset := Vector3i.ZERO if removing else _placement_offset(face)
+	var result: Array[Vector3i] = []
+	for local: Vector3i in _brush_positions():
+		result.append(target_cell + offset + local)
+	return result
+
+
+func _sublevel_surface_cells(
+	sublevel: SubLevel,
+	target_cell: Vector3i,
+	face: Vector3i,
+	target_item: int,
+	removing: bool
+) -> Array[Vector3i]:
+	if target_item < 0:
+		return []
+
+	var tool := BuildTool.CLEAR if removing else build_tool
+	var replace_mode := (
+		tool == BuildTool.REPLACE
+		or tool == BuildTool.CLEAR
+		or tool == BuildTool.FLATTEN
+	)
+	var start := target_cell if replace_mode else target_cell + face
+	var radius := clampi(brush_params.x, 1, 10)
+	var axis := _face_axis(face)
+	var offsets: Array[Vector3i] = []
+
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			for dz in range(-1, 2):
+				var offset := Vector3i(dx, dy, dz)
+				if offset == Vector3i.ZERO:
+					continue
+				if offset[axis] != 0:
+					continue
+				if absi(dx) + absi(dy) + absi(dz) > 1:
+					continue
+				offsets.append(offset)
+
+	var visited: Dictionary = {}
+	var frontier: Array[Vector3i] = [start]
+	var result: Array[Vector3i] = []
+
+	while not frontier.is_empty():
+		var current: Vector3i = frontier.pop_front()
+		if visited.has(current):
+			continue
+		visited[current] = true
+		if (current - start).length_squared() > radius * radius:
+			continue
+
+		if replace_mode:
+			if not sublevel.cells.has(current):
+				continue
+			if int(
+				(sublevel.cells[current] as Dictionary).get("item", -1)
+			) != target_item:
+				continue
+			if sublevel.cells.has(current + face):
+				continue
+			result.append(current)
+		else:
+			if sublevel.cells.has(current):
+				continue
+			var behind := current - face
+			if not sublevel.cells.has(behind):
+				continue
+			if int(
+				(sublevel.cells[behind] as Dictionary).get("item", -1)
+			) != target_item:
+				continue
+			result.append(current)
+
+		for offset: Vector3i in offsets:
+			frontier.append(current + offset)
+
+	return result
+
+
+func _sublevel_cluster_cells(
+	sublevel: SubLevel,
+	target_cell: Vector3i,
+	target_item: int
+) -> Array[Vector3i]:
+	if target_item < 0:
+		return []
+
+	var radius := clampi(brush_params.x, 1, 10)
+	var visited: Dictionary = {}
+	var frontier: Array[Vector3i] = [target_cell]
+	var result: Array[Vector3i] = []
+	var offsets: Array[Vector3i] = [
+		Vector3i.LEFT, Vector3i.RIGHT,
+		Vector3i.UP, Vector3i.DOWN,
+		Vector3i.FORWARD, Vector3i.BACK,
+	]
+
+	while not frontier.is_empty():
+		var current: Vector3i = frontier.pop_front()
+		if visited.has(current):
+			continue
+		visited[current] = true
+		if (current - target_cell).length_squared() > radius * radius:
+			continue
+		if not sublevel.cells.has(current):
+			continue
+		if int(
+			(sublevel.cells[current] as Dictionary).get("item", -1)
+		) != target_item:
+			continue
+		result.append(current)
+		for offset: Vector3i in offsets:
+			frontier.append(current + offset)
+
+	return result
+
+
+func _apply_sublevel_cells(
+	sublevel: SubLevel,
+	cells: Array[Vector3i],
+	removing: bool,
+	face: Vector3i
+) -> int:
+	var tool := BuildTool.CLEAR if removing else build_tool
+	return _mutate_sublevel(sublevel, cells, tool, removing, face)
+
+
+## Shared mutation for sub-level drags and brushes. Edits are applied to a copy
+## of the cell dictionary and rebuilt once, so a long drag does not rebuild the
+## mesh/collision once per cell.
+func _mutate_sublevel(
+	sublevel: SubLevel,
+	cells: Array[Vector3i],
+	tool: int,
+	removing: bool,
+	face: Vector3i
+) -> int:
+	if (
+		sublevel == null
+		or not is_instance_valid(sublevel)
+		or cells.is_empty()
+	):
+		return 0
+
+	var data: Dictionary = sublevel.cells.duplicate(true)
+	var changed := 0
+	var palette_ids: Array[int] = []
+	var palette_id := _active_palette_id()
+	if not palette_id.is_empty():
+		palette_ids = _palette_block_ids(palette_id)
+
+	match tool:
+		BuildTool.CLEAR:
+			for cell: Vector3i in cells:
+				if data.erase(cell):
+					changed += 1
+			if changed > 0:
+				_remove_sublevel_placeables(sublevel, cells)
+		BuildTool.REPLACE, BuildTool.FLATTEN:
+			for cell: Vector3i in cells:
+				if not data.has(cell):
+					continue
+				var placement := _sublevel_placement(cell, palette_ids)
+				if placement.is_empty():
+					continue
+				data[cell] = placement
+				changed += 1
+		BuildTool.OVERLAY:
+			var direction := face if face != Vector3i.ZERO else Vector3i.UP
+			for cell: Vector3i in cells:
+				if not data.has(cell):
+					continue
+				var above := cell + direction
+				if data.has(above):
+					continue
+				var placement := _sublevel_placement(cell, palette_ids)
+				if placement.is_empty():
+					continue
+				data[above] = placement
+				changed += 1
+		_:
+			for cell: Vector3i in cells:
+				if tool == BuildTool.FILL and data.has(cell):
+					continue
+				if _sublevel_cell_overlaps_player(sublevel, cell):
+					continue
+				if data.has(cell):
+					continue
+				var placement := _sublevel_placement(cell, palette_ids)
+				if placement.is_empty():
+					continue
+				data[cell] = placement
+				changed += 1
+
+	if changed == 0:
+		return 0
+
+	if data.is_empty():
+		sublevel.move_placeables_to(sublevel.get_parent())
+		sublevel.queue_free()
+	else:
+		sublevel.set_cells(data)
+
+	return changed
+
+
+func _sublevel_placement(
+	cell: Vector3i,
+	palette_ids: Array[int]
+) -> Dictionary:
+	var item := -1
+	if not palette_ids.is_empty():
+		item = int(palette_ids[randi() % palette_ids.size()])
+	else:
+		item = _current_build_item()
+	if item < 0:
+		return {}
+	return _resolve_placement(item, [cell])
+
+
+func _sublevel_cell_overlaps_player(
+	sublevel: SubLevel,
+	cell: Vector3i
+) -> bool:
+	if player == null or not is_instance_valid(player):
+		return false
+
+	var center := sublevel.to_global(sublevel.cell_center_local(cell))
+	var half := sublevel.block_size * 0.5
+	var feet := player.global_position
+	var head_y := feet.y + 1.8
+
+	return (
+		absf(center.x - feet.x) < half.x + 0.35
+		and absf(center.z - feet.z) < half.z + 0.35
+		and center.y + half.y > feet.y
+		and center.y - half.y < head_y
+	)
+
+
+func _remove_sublevel_placeables(
+	sublevel: SubLevel,
+	cells: Array[Vector3i]
+) -> void:
+	if sublevel == null or not is_instance_valid(sublevel) or cells.is_empty():
+		return
+
+	var wanted: Dictionary = {}
+	for cell: Vector3i in cells:
+		wanted[cell] = true
+
+	for child in sublevel.get_children():
+		if not child is Node3D or not child.is_in_group("placeables"):
+			continue
+		var cell := sublevel.local_cell_at_world(
+			(child as Node3D).global_position
+		)
+		if wanted.has(cell):
+			child.queue_free()
+
+
+## Attaches a placeable to the sub-level body so it moves and rotates with it.
+func _place_placeable_on_sublevel(
+	sublevel: SubLevel,
+	hit: Dictionary,
+	hit_cell: Vector3i
+) -> void:
+	if _selected_placeable_scene == null or sublevel == null:
+		return
+
+	var normal: Vector3 = hit.get("normal", Vector3.UP)
+	var face := _local_face_normal(sublevel, normal)
+	var target := hit_cell + face
+	var instance: Node = _selected_placeable_scene.instantiate()
+	if instance == null:
+		return
+
+	var overrides: Dictionary = (
+		hud_manager.get_placeable_overrides()
+		if hud_manager != null
+		else {}
+	)
+	for key in overrides:
+		if key in instance:
+			instance.set(key, overrides[key])
+
+	if _placeable_requires_support(instance) and normal.y <= 0.5:
+		instance.free()
+		_play_sfx(_sfx_build_cancel, 1.0, 1.0)
+		return
+
+	get_tree().current_scene.add_child(instance)
+
+	if instance is Node3D:
+		var world_pos := sublevel.to_global(
+			sublevel.cell_center_local(target)
+		)
+		var basis := (
+			sublevel.global_transform.basis
+			* (instance as Node3D).global_transform.basis
+		)
+		(instance as Node3D).global_transform = Transform3D(
+			basis,
+			world_pos
+		)
+
+		var spin := _manual_rotation * PI * 0.5
+		if randomize_foliage_yaw and instance.is_in_group("foliage"):
+			spin += randf() * TAU
+		if not is_zero_approx(spin):
+			(instance as Node3D).rotate_object_local(Vector3.UP, spin)
+
+	instance.add_to_group("placeables")
+
+	if instance is Node3D:
+		(instance as Node3D).reparent(sublevel, true)
+
+	if instance is Node3D:
+		GlobalData.report_environment_change(
+			(instance as Node3D).global_position,
+			"placeable_added",
+			{
+				"scene": String(instance.scene_file_path),
+				"name": String(instance.name),
+			}
+		)
+
+	_play_sfx(_sfx_land, 1.0, 1.2)
+	if _hand != null:
+		_hand.call("play_place_swing")
+
+
+func _ensure_sublevel_area_preview(
+	sublevel: SubLevel
+) -> MultiMeshInstance3D:
+	if is_instance_valid(_sublevel_area_preview):
+		if _sublevel_area_preview.get_parent() != sublevel:
+			_sublevel_area_preview.reparent(sublevel, false)
+			_sublevel_area_preview.transform = Transform3D.IDENTITY
+		return _sublevel_area_preview
+
+	_sublevel_area_preview = MultiMeshInstance3D.new()
+	_sublevel_area_preview.name = "SubLevelAreaPreview"
+	_sublevel_area_preview.cast_shadow = (
+		GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	)
+
+	var box := BoxMesh.new()
+	box.size = sublevel.block_size * 0.98
+	_sublevel_area_multimesh = MultiMesh.new()
+	_sublevel_area_multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	_sublevel_area_multimesh.mesh = box
+	_sublevel_area_preview.multimesh = _sublevel_area_multimesh
+
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.albedo_color = PLACE_PREVIEW_COLOR
+	_sublevel_area_preview.material_override = material
+
+	# Parented to the body: local cell transforms stay valid while it moves.
+	sublevel.add_child(_sublevel_area_preview)
+	_sublevel_area_preview.transform = Transform3D.IDENTITY
+	_sublevel_area_preview.visible = false
+	return _sublevel_area_preview
+
+
+func _show_sublevel_ghost(sublevel: SubLevel, hit: Dictionary) -> void:
+	var hit_cell := _sublevel_hit_cell(sublevel, hit)
+	if not sublevel.cells.has(hit_cell):
+		return
+
+	var clearing := build_tool == BuildTool.CLEAR
+	var face := _local_face_normal(sublevel, hit.normal)
+
+	if brush_mode:
+		var target_item := int(
+			(sublevel.cells[hit_cell] as Dictionary).get("item", -1)
+		)
+		var volume := _sublevel_brush_volume(
+			sublevel,
+			hit_cell,
+			face,
+			target_item,
+			clearing
+		)
+		if not volume.is_empty():
+			_show_sublevel_area_preview(sublevel, volume, clearing)
+			return
+
+	var target := hit_cell if clearing else hit_cell + face
+	_show_sublevel_area_preview(sublevel, [target], clearing)
+
+
+## Exact per-cell preview for a drag rectangle or brush volume. The MultiMesh
+## is a child of the body, so it follows interpolation and a moving sub-level.
+func _show_sublevel_area_preview(
+	sublevel: SubLevel,
+	cells: Array[Vector3i],
+	destroying: bool
+) -> void:
+	if (
+		sublevel == null
+		or not is_instance_valid(sublevel)
+		or cells.is_empty()
+	):
+		_hide_sublevel_ghost()
+		return
+
+	var preview := _ensure_sublevel_area_preview(sublevel)
+	if _sublevel_area_multimesh == null:
+		return
+
+	_sublevel_area_multimesh.instance_count = cells.size()
+	for index in cells.size():
+		_sublevel_area_multimesh.set_instance_transform(
+			index,
+			Transform3D(
+				Basis.IDENTITY,
+				sublevel.cell_center_local(cells[index])
+			)
+		)
+
+	var material := preview.material_override as StandardMaterial3D
+	if material != null:
+		material.albedo_color = (
+			DESTROY_PREVIEW_COLOR
+			if destroying
+			else PLACE_PREVIEW_COLOR
+		)
+	preview.visible = true
+
+
+func _hide_sublevel_ghost() -> void:
+	if is_instance_valid(_sublevel_area_preview):
+		_sublevel_area_preview.visible = false
+
+
 func _find_placeable_ancestor(collider: Object) -> Node:
 	var node: Node = collider as Node
 
@@ -2836,6 +4258,9 @@ func _toggle_inventory() -> void:
 	inventory_open = !inventory_open
 	if inventory_open:
 		_cancel_build_drag()
+		_primary_use_held = false
+		_stop_grab()
+		end_gun_hold()
 		_get_grid_map()
 
 	_update_build_ui()
@@ -2891,6 +4316,12 @@ func _update_build_ui() -> void:
 func _refresh_held_use_component() -> void:
 	if _held_use_scene == _selected_placeable_scene:
 		return
+
+	_primary_use_held = false
+	if _grab_body != null:
+		_stop_grab()
+	if _gun_body != null:
+		end_gun_hold()
 
 	_held_use_scene = _selected_placeable_scene
 

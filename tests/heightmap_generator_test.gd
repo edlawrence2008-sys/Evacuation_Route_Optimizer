@@ -605,6 +605,7 @@ func _remove_dir(path: String) -> void:
 
 func _make_grid(parent: Node = null) -> NavGridMap:
 	var grid := NavGridMap.new()
+	grid.sync_settings_on_ready = false
 	grid.name = "HeightmapTestGrid"
 	grid.mesh_library = _make_library()
 	grid.cell_size = Vector3.ONE

@@ -5,6 +5,9 @@ extends GridMap
 signal block_placed(cell: Vector3i, item: int)
 signal block_removed(cell: Vector3i)
 signal navigation_changed(changed_cells: Array[Vector3i])
+## One structural collapse event (not one per removed cell). The optimizer uses
+## it as a route disruption and the recorder stores it as a summary event.
+signal structure_collapsed(cells: Array[Vector3i], style: int)
 signal chunk_loaded(chunk: Vector2i)
 signal chunk_unloaded(chunk: Vector2i)
 signal flow_field_baked(target_cell: Vector3i)
@@ -16,6 +19,11 @@ signal nav_refresh_measured(duration_usec: int, changed_cells: int)
 const CTM_BUILDER := preload("res://scripts/connected_texture_builder.gd")
 const COLOR_PALETTE := preload("res://scripts/color_palette_db.gd")
 const VoxelSectionStoreScript := preload("res://scripts/world/VoxelSectionStore.gd")
+const STRUCTURAL_STABILITY := preload("res://scripts/world/structural_stability.gd")
+const BLOCK_IDS = preload("res://scripts/world/block_ids.gd")
+const FALLING_BLOCKS = preload("res://scripts/world/falling_blocks.gd")
+const SUB_LEVEL_MANAGER = preload("res://scripts/world/sub_level_manager.gd")
+const FOLIAGE_BATCHER = preload("res://scripts/world/foliage_batcher.gd")
 
 ## Body radius used for navigation clearance checks. The spawned NPC body is a
 ## 0.25 m sphere; matching it here keeps path validation honest.
@@ -58,11 +66,27 @@ var authored_route_cells: Dictionary = {}
 @export var max_block_y: int = 255
 
 ## Structural settings, mirrored from PerformanceSettings.apply_all().
-## `stability_enabled` computes the support field; `physics_level` decides what
-## happens when a cell loses support (0 off, 1 remove, 2 remove + debris).
+## `stability_enabled` computes the support field; `collapse_enabled` decides
+## whether unsupported cells collapse at all; `collapse_style` picks how.
 @export var stability_enabled: bool = true
-@export var physics_level: int = 1
-@export var stability_debug: bool = false
+@export var collapse_enabled: bool = false
+@export var collapse_style: int = 1
+## When on, a settled sub-level that lines up with the world docks back into the
+## normal chunk grid. Off by default so sub-levels stay editable.
+@export var auto_dock_sublevels: bool = false
+@export var stability_debug: bool = false:
+	set(value):
+		stability_debug = value
+		_stability_overlay_dirty = true
+## Copy the live PerformanceSettings on _ready. Fixture grids in tests set this
+## false before adding the node so the developer's saved settings do not leak
+## into the assertion world.
+@export var sync_settings_on_ready: bool = true
+
+const COLLAPSE_REMOVE: int = 0
+const COLLAPSE_FALL: int = 1
+const COLLAPSE_RIGID: int = 2
+const COLLAPSE_SUBLEVEL: int = 3
 
 @export var debug_greedy_colors: bool = false:
 	set(value):
@@ -213,6 +237,31 @@ var path_request_count: int = 0
 ## Packed sparse 3D section storage. Replaces the old per-cell
 ## Dictionary[chunk][Vector3i] index: cost follows content, not build height.
 var _sections = VoxelSectionStoreScript.new()
+
+## Structural support evaluation. Computed on demand from the cells; nothing is
+## serialized, so the save format stays unchanged.
+var _structural = null
+## Moving editable block structures (Sable-style sub-levels).
+var _sublevel_manager = null
+## True while the collapse loop is removing cells, so the removal hook does not
+## re-enter and recurse.
+var _structural_busy: bool = false
+## Debug overlay.
+var _stability_overlay: MultiMeshInstance3D = null
+var _stability_overlay_accum: float = 0.0
+var _stability_overlay_dirty: bool = true
+var _stability_overlay_center: Vector2i = Vector2i(2147483647, 2147483647)
+var _debris_bodies: Array[Node3D] = []
+const STABILITY_OVERLAY_INTERVAL: float = 0.25
+const STABILITY_OVERLAY_MAX_INSTANCES: int = 2000
+const STABILITY_OVERLAY_CHUNK_RADIUS: int = 1
+const STABILITY_OVERLAY_DRAW_RADIUS: float = 16.0
+const MAX_COLLAPSE_PASSES: int = 32
+const MAX_DEBRIS_BODIES: int = 6
+const MAX_DEBRIS_CELLS: int = 512
+const DEBRIS_LIFETIME: float = 6.0
+const FALL_DURATION: float = 0.45
+const MAX_FALL_VISUALS: int = 512
 ## True when GridMap keeps its own cells for collision (chunk meshing off).
 ## When the mesher owns collision, the runtime mirror is dropped entirely.
 var _grid_mirror_enabled: bool = true
@@ -318,11 +367,34 @@ class FlowBakeJob:
 	var head: int = 0
 
 
+## Pulls the live PerformanceSettings on startup. `apply_all()` can run before
+## the grid exists (direct scene launch, or a settings change before the map
+## loads), so relying on it alone leaves the grid at its inspector defaults and
+## collapse silently never runs.
+func _sync_structural_settings() -> void:
+	var settings := get_node_or_null("/root/PerformanceSettings")
+	if settings == null:
+		return
+
+	if "stability_enabled" in settings:
+		stability_enabled = bool(settings.stability_enabled)
+	if "collapse_enabled" in settings:
+		collapse_enabled = bool(settings.collapse_enabled)
+	if "collapse_style" in settings:
+		collapse_style = int(settings.collapse_style)
+	if "auto_dock_sublevels" in settings:
+		auto_dock_sublevels = bool(settings.auto_dock_sublevels)
+	if "stability_debug" in settings:
+		stability_debug = bool(settings.stability_debug)
+
+
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 
 	add_to_group("grid_map")
+	if sync_settings_on_ready:
+		_sync_structural_settings()
 
 	# Any navigation change can move or remove a wall, so the cached wall force
 	# is only valid until the next change.
@@ -346,6 +418,15 @@ func _ready() -> void:
 		_mesher.debug_colors = debug_greedy_colors
 		_mesher.baked_ao_enabled = baked_ao_enabled
 		_mesher.start()
+
+	# Large generated worlds can contain thousands of crossed-card foliage
+	# placeables. Their editable nodes stay; only their Sprite3D cards are
+	# replaced by per-chunk MultiMeshes.
+	if get_tree().get_first_node_in_group("foliage_batcher") == null:
+		var batcher := FOLIAGE_BATCHER.new()
+		batcher.name = "FoliageBatcher"
+		batcher.add_to_group("foliage_batcher")
+		add_child(batcher)
 
 	if debug_show_paths:
 		_ensure_debug_mesh()
@@ -579,8 +660,14 @@ func initialize_navigation() -> void:
 ## Copies the scene's authored GridMap cells into the packed store. Only the
 ## first initialize_navigation() call needs this; afterwards the store is the
 ## source of truth and the grid is empty at runtime.
+##
+## Authored worlds (the shipped starter platform) predate the generator's
+## bedrock layer, so a bedrock anchor is added under each authored column here.
+## This keeps the starter map buildable when collapse is enabled without
+## editing every map scene.
 func _seed_sections_from_gridmap() -> Array[Vector3i]:
 	var cells: Array[Vector3i] = get_used_cells()
+	var lowest_by_column: Dictionary = {}
 
 	for cell in cells:
 		var item: int = get_cell_item(cell)
@@ -589,8 +676,29 @@ func _seed_sections_from_gridmap() -> Array[Vector3i]:
 			continue
 
 		_sections.set_cell(cell, item, get_cell_item_orientation(cell))
+		var column := Vector2i(cell.x, cell.z)
+		lowest_by_column[column] = mini(
+			int(lowest_by_column.get(column, cell.y)),
+			cell.y
+		)
 
+	_anchor_authored_columns(lowest_by_column)
 	return cells
+
+
+func _anchor_authored_columns(lowest_by_column: Dictionary) -> void:
+	var bedrock: int = BLOCK_IDS.id_for_name_in("bedrock", mesh_library)
+	if bedrock < 0:
+		return
+
+	for column: Vector2i in lowest_by_column:
+		var y: int = int(lowest_by_column[column]) - 1
+		if y < min_block_y or y > max_block_y:
+			continue
+		var cell := Vector3i(column.x, y, column.y)
+		if _sections.has_cell(cell):
+			continue
+		_sections.set_cell(cell, bedrock, 0)
 
 
 ## Drops every stored cell and rebuilds an empty navigation graph. Used when a
@@ -1571,6 +1679,7 @@ func _process(_delta: float) -> void:
 		_mesher.process()
 
 	_update_debug_paths(_delta)
+	_update_stability_overlay(_delta)
 	_advance_bake_jobs()
 	_flush_congestion_weights(_delta)
 	_advance_congestion(_delta)
@@ -2746,6 +2855,7 @@ func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 	mark_chunk_dirty(cell_to_chunk(cell))
 	_refresh_nav_around(cell)
 	block_placed.emit(cell, item)
+	_apply_structure_after_edit([cell], {}, true)
 
 	return true
 
@@ -2754,10 +2864,15 @@ func remove_block(cell: Vector3i) -> bool:
 	if get_block_item(cell) == GridMap.INVALID_CELL_ITEM:
 		return false
 
+	var before: Dictionary = {}
+	if stability_enabled and collapse_enabled and not _structural_busy:
+		before = _structural_snapshot([cell])
+
 	_untrack_cell(cell)
 	mark_chunk_dirty(cell_to_chunk(cell))
 	_refresh_nav_around(cell)
 	block_removed.emit(cell)
+	_apply_structure_after_edit([cell], before)
 
 	return true
 
@@ -2798,6 +2913,7 @@ func place_blocks(
 		block_placed.emit(cell, item)
 
 	navigation_changed.emit(affected)
+	_apply_structure_after_edit(placed_cells, {}, true)
 	return placed_cells.size()
 
 
@@ -2851,6 +2967,10 @@ func add_step_slabs(item: int = 46) -> int:
 
 ## Removes every existing cell in `cells` with a single navigation refresh.
 func remove_blocks(cells: Array[Vector3i]) -> int:
+	var before: Dictionary = {}
+	if stability_enabled and collapse_enabled and not _structural_busy:
+		before = _structural_snapshot(cells)
+
 	var removed: Array[Vector3i] = []
 
 	for cell: Vector3i in cells:
@@ -2870,6 +2990,7 @@ func remove_blocks(cells: Array[Vector3i]) -> int:
 		block_removed.emit(cell)
 
 	navigation_changed.emit(affected)
+	_apply_structure_after_edit(removed, before)
 	return removed.size()
 
 
@@ -2888,6 +3009,718 @@ func _mark_chunks_dirty(cells: Array[Vector3i]) -> void:
 
 func has_block(cell: Vector3i) -> bool:
 	return get_block_item(cell) != GridMap.INVALID_CELL_ITEM
+
+
+# ---------------------------------------------------------------------------
+# Structural stability
+# ---------------------------------------------------------------------------
+
+func get_structural_stability() -> RefCounted:
+	if _structural == null:
+		_structural = STRUCTURAL_STABILITY.new(self)
+	return _structural
+
+
+## Lazily owns the sub-level manager. It lives beside the grid (the grid itself
+## is hidden by chunk streaming) and survives across collapses.
+func get_sublevel_manager():
+	if _sublevel_manager == null or not is_instance_valid(_sublevel_manager):
+		var manager = SUB_LEVEL_MANAGER.new()
+		manager.name = "SubLevelManager"
+		var host := _visual_host()
+		host.add_child(manager)
+		manager.setup(self, host)
+		_sublevel_manager = manager
+	return _sublevel_manager
+
+
+## Support reach of one cell, or -1 when stability is disabled or the cell is
+## empty. Anchored cells (bedrock) report 255.
+func get_stability(cell: Vector3i) -> int:
+	if not stability_enabled:
+		return -1
+	if not has_block(cell):
+		return -1
+	return get_structural_stability().stability_at(cell)
+
+
+## Support values for an explicit set of cells. Used by the debug overlay and
+## by diagnostics; the caller should include a margin around the area it draws.
+func get_stability_field(cells: Array[Vector3i]) -> Dictionary:
+	if not stability_enabled:
+		return {}
+	return get_structural_stability().field_for_cells(cells)
+
+
+## Runs the collapse loop for a set of edited cells.
+##
+## `before` is the support field captured *before* a removal. Only cells that
+## were supported before and are unsupported now collapse, so pre-existing
+## unanchored geometry (an authored platform, an old save without bedrock) is
+## never demolished by an unrelated edit. Placement cannot reduce support, so
+## only the placed cells themselves are checked.
+##
+## Cascades are driven here rather than by nested hooks so the whole collapse is
+## one bounded loop.
+func _apply_structure_after_edit(
+	seeds: Array[Vector3i],
+	before: Dictionary = {},
+	placement: bool = false
+) -> void:
+	_stability_overlay_dirty = true
+
+	if not stability_enabled:
+		return
+	if not collapse_enabled:
+		return
+	if _structural_busy:
+		return
+	if seeds.is_empty():
+		return
+
+	var placed: Dictionary = {}
+	if placement:
+		for cell: Vector3i in seeds:
+			placed[cell] = true
+
+	_structural_busy = true
+	var pending: Array[Vector3i] = seeds
+	var previous: Dictionary = before
+	var pass_index: int = 0
+	var removed_any: bool = false
+	var collapsed_cells: Array[Vector3i] = []
+
+	while pass_index < MAX_COLLAPSE_PASSES and not pending.is_empty():
+		var current: Dictionary = {}
+		var unsupported: Dictionary = {}
+
+		var centers: Array[Vector3i] = _select_stability_centers(
+			pending,
+			get_structural_stability().decision_radius()
+		)
+
+		for center: Vector3i in centers:
+			var result: Dictionary = get_structural_stability().evaluate_around(center)
+			if bool(result.get("aborted", false)):
+				continue
+
+			var values: Dictionary = result.get("values", {})
+			for cell: Vector3i in values:
+				current[cell] = maxi(
+					int(current.get(cell, 0)),
+					int(values[cell])
+				)
+
+			for cell: Vector3i in result.get("unsupported", []):
+				if placement and pass_index == 0:
+					if placed.has(cell):
+						unsupported[cell] = true
+					continue
+				if int(previous.get(cell, 0)) > 0:
+					unsupported[cell] = true
+
+		if unsupported.is_empty():
+			break
+
+		# Accumulate the earliest (highest) value seen for each cell. Values only
+		# fall as cells are removed, so a cell that was supported when it first
+		# entered a window stays eligible later even if its own seed was folded
+		# into a nearby evaluation centre.
+		for cell: Vector3i in current:
+			previous[cell] = maxi(
+				int(previous.get(cell, 0)),
+				int(current[cell])
+			)
+
+		placement = false
+
+		var batch: Array[Vector3i] = []
+		batch.assign(unsupported.keys())
+		var moved_items: Dictionary = {}
+		var moved_orientations: Dictionary = {}
+		if collapse_style != COLLAPSE_REMOVE:
+			var captured := _capture_cells(batch)
+			moved_items = captured["items"]
+			moved_orientations = captured["orientations"]
+
+		remove_blocks(batch)
+		collapsed_cells.append_array(batch)
+
+		match collapse_style:
+			COLLAPSE_FALL:
+				_drop_collapsed_blocks(batch, moved_items, moved_orientations)
+			COLLAPSE_RIGID:
+				_spawn_collapse_debris(batch, moved_items, moved_orientations)
+			COLLAPSE_SUBLEVEL:
+				get_sublevel_manager().spawn(
+					batch,
+					moved_items,
+					moved_orientations
+				)
+		pending = _solid_neighbours(batch)
+		removed_any = true
+		pass_index += 1
+
+	_structural_busy = false
+
+	if removed_any:
+		_stability_overlay_dirty = true
+
+	if not collapsed_cells.is_empty():
+		structure_collapsed.emit(collapsed_cells, collapse_style)
+
+
+## Picks evaluation centres so every seed is within `decision` columns of one
+## centre. Adjacent seeds fold together, but a long drag still gets centres
+## every `decision` columns, which is what keeps the whole batch covered. The
+## old "skip any seed inside any window" rule could leave the far side of a long
+## batch unevaluated and floating.
+func _select_stability_centers(
+	seeds: Array[Vector3i],
+	decision: int
+) -> Array[Vector3i]:
+	var centers: Array[Vector3i] = []
+	if decision <= 0 or seeds.is_empty():
+		return centers
+
+	var buckets: Dictionary = {}
+
+	for seed: Vector3i in seeds:
+		var key := Vector2i(
+			floori(float(seed.x) / float(decision)),
+			floori(float(seed.z) / float(decision))
+		)
+		var covered: bool = false
+
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				var list_value: Variant = buckets.get(
+					key + Vector2i(dx, dz),
+					null
+				)
+				if list_value == null:
+					continue
+				for center: Vector3i in list_value:
+					if (
+						absi(seed.x - center.x)
+						+ absi(seed.z - center.z)
+						<= decision
+					):
+						covered = true
+						break
+				if covered:
+					break
+			if covered:
+				break
+
+		if covered:
+			continue
+
+		centers.append(seed)
+		if not buckets.has(key):
+			buckets[key] = []
+		buckets[key].append(seed)
+
+	return centers
+
+
+## Reads each placed/removed cell's item and orientation while it still exists.
+func _capture_cells(cells: Array[Vector3i]) -> Dictionary:
+	var items: Dictionary = {}
+	var orientations: Dictionary = {}
+
+	for cell: Vector3i in cells:
+		items[cell] = get_block_item(cell)
+		orientations[cell] = get_block_orientation(cell)
+
+	return {"items": items, "orientations": orientations}
+
+
+## Support field for a set of cells *before* they are removed. Captured by the
+## removal entry points so the collapse loop can tell "was supported" from
+## "was already floating".
+func _structural_snapshot(cells: Array[Vector3i]) -> Dictionary:
+	var values: Dictionary = {}
+	var covered: Dictionary = {}
+	var evaluator = get_structural_stability()
+
+	for cell: Vector3i in cells:
+		if covered.has(cell):
+			continue
+		var result: Dictionary = evaluator.evaluate_around(cell)
+		if bool(result.get("aborted", false)):
+			continue
+		for covered_cell: Vector3i in result.get("cells", []):
+			covered[covered_cell] = true
+		var window: Dictionary = result.get("values", {})
+		for window_cell: Vector3i in window:
+			values[window_cell] = window[window_cell]
+
+	return values
+
+
+## Solid cells orthogonally touching any of `cells`. Used as the next cascade
+## seeds after a removal batch.
+func _solid_neighbours(cells: Array[Vector3i]) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+	var seen: Dictionary = {}
+
+	for cell: Vector3i in cells:
+		for offset: Vector3i in STRUCTURAL_STABILITY.DIRS_6:
+			var neighbour: Vector3i = cell + offset
+			if seen.has(neighbour) or not has_block(neighbour):
+				continue
+			seen[neighbour] = true
+			result.append(neighbour)
+
+	return result
+
+
+## Chunk streaming hides the GridMap (`ChunkMesher` sets `grid.visible = false`)
+## and renders sibling `ChunkMeshes` instead. Anything visual must therefore be
+## parented to the grid's parent, not the grid, or it is invisible in game. The
+## path debug mesh already follows this rule.
+func _visual_host() -> Node:
+	var host := get_parent()
+	if host != null:
+		return host
+	if is_inside_tree():
+		return get_tree().current_scene
+	return self
+
+
+## Rigid tier: one rigid body per collapse batch, built from the removed cells'
+## real block meshes (materials included). The body sits on collision layer 0 and
+## only collides with the world layer, so it cannot disturb agents, navigation or
+## the optimizer. Bodies are capped and expire so a long session cannot
+## accumulate them.
+func _spawn_collapse_debris(
+	cells: Array[Vector3i],
+	items: Dictionary,
+	orientations: Dictionary
+) -> void:
+	if collapse_style != COLLAPSE_RIGID or cells.is_empty():
+		return
+
+	var count: int = mini(cells.size(), MAX_DEBRIS_CELLS)
+	var centre := Vector3.ZERO
+	for index in count:
+		centre += to_global(map_to_local(cells[index]))
+	centre /= float(count)
+
+	var mesh: ArrayMesh = _build_debris_mesh(
+		cells,
+		items,
+		orientations,
+		centre,
+		count
+	)
+	if mesh == null or mesh.get_surface_count() == 0:
+		return
+
+	var body := RigidBody3D.new()
+	body.name = "StabilityDebris"
+	body.add_to_group("stability_debris")
+	body.collision_layer = 0
+	body.collision_mask = 1
+	body.mass = clampf(float(count) * 0.15, 1.0, 200.0)
+	body.linear_damp = 0.15
+	body.angular_damp = 0.3
+	# A small deterministic tumble makes the collapse read as debris rather than
+	# a static prop, and it is presentation-only.
+	body.angular_velocity = Vector3(0.15, 0.35, 0.1)
+
+	var collision := CollisionShape3D.new()
+	# The world's chunk collision is a concave trimesh. Jolt does not reliably
+	# collide a moving concave body against a static concave mesh, so the debris
+	# collider is the convex hull of the batch; the visual keeps the exact shape.
+	collision.shape = mesh.create_convex_shape(true, false)
+	body.add_child(collision)
+
+	var visual := MeshInstance3D.new()
+	visual.mesh = mesh
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	body.add_child(visual)
+
+	var host := _visual_host()
+	host.add_child(body)
+	body.global_position = centre
+
+	# A child timer is freed with the body, so a scene change can never invoke
+	# a callback on a freed grid or body.
+	var lifetime := Timer.new()
+	lifetime.one_shot = true
+	lifetime.wait_time = DEBRIS_LIFETIME
+	lifetime.process_mode = Node.PROCESS_MODE_ALWAYS
+	lifetime.timeout.connect(body.queue_free)
+	body.add_child(lifetime)
+	lifetime.start()
+
+	# Expired bodies leave dangling references; drop them before capping so the
+	# eviction never has to assign a freed instance to a typed variable.
+	for index in range(_debris_bodies.size() - 1, -1, -1):
+		if not is_instance_valid(_debris_bodies[index]):
+			_debris_bodies.remove_at(index)
+
+	_debris_bodies.append(body)
+
+	while _debris_bodies.size() > MAX_DEBRIS_BODIES:
+		var oldest: Variant = _debris_bodies.pop_front()
+		if is_instance_valid(oldest):
+			oldest.queue_free()
+
+
+## Merges the removed cells' block meshes into one mesh, one surface per
+## (item, source surface) so the rigid body keeps the real block materials and
+## stair/slab shapes. Unknown items fall back to a box.
+func _build_debris_mesh(
+	cells: Array[Vector3i],
+	items: Dictionary,
+	orientations: Dictionary,
+	centre: Vector3,
+	count: int
+) -> ArrayMesh:
+	var groups: Dictionary = {}
+	var missing: Array[Vector3i] = []
+
+	for index in count:
+		var cell: Vector3i = cells[index]
+		var item: int = int(items.get(cell, -1))
+		var source: Mesh = null
+		if mesh_library != null and item >= 0:
+			source = mesh_library.get_item_mesh(item)
+
+		if source == null or source.get_surface_count() == 0:
+			missing.append(cell)
+			continue
+
+		for surface in source.get_surface_count():
+			var key := "%d:%d" % [item, surface]
+			if not groups.has(key):
+				groups[key] = {
+					"item": item,
+					"surface": surface,
+					"cells": [],
+				}
+			groups[key]["cells"].append(cell)
+
+	if groups.is_empty() and missing.is_empty():
+		return null
+
+	var result := ArrayMesh.new()
+	var fallback_material := StandardMaterial3D.new()
+	fallback_material.albedo_color = Color(0.5, 0.46, 0.42)
+	fallback_material.roughness = 1.0
+
+	for key: Variant in groups:
+		var group: Dictionary = groups[key]
+		var item: int = int(group["item"])
+		var surface: int = int(group["surface"])
+		var source: Mesh = mesh_library.get_item_mesh(item)
+		var builder := SurfaceTool.new()
+		builder.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+		for cell: Vector3i in group["cells"]:
+			var basis := get_orientation_basis(int(orientations.get(cell, 0)))
+			builder.append_from(
+				source,
+				surface,
+				Transform3D(basis, to_global(map_to_local(cell)) - centre)
+			)
+
+		builder.commit(result)
+		var material: Material = source.surface_get_material(surface)
+		result.surface_set_material(
+			result.get_surface_count() - 1,
+			material if material != null else fallback_material
+		)
+
+	if not missing.is_empty():
+		var box := BoxMesh.new()
+		box.size = cell_size * 0.92
+		var builder := SurfaceTool.new()
+		builder.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+		for cell: Vector3i in missing:
+			builder.append_from(
+				box,
+				0,
+				Transform3D(Basis.IDENTITY, to_global(map_to_local(cell)) - centre)
+			)
+
+		builder.commit(result)
+		result.surface_set_material(
+			result.get_surface_count() - 1,
+			fallback_material
+		)
+
+	return result
+
+
+# ---------------------------------------------------------------------------
+# Falling collapse style
+# ---------------------------------------------------------------------------
+
+## Unsupported cells drop down their own column, stack on the first solid cell
+## below, and settle back into the world as normal blocks. The world move is
+## delayed until the visual fall ends so a block is never visible in two places
+## at once. Landing uses the structural guard, so settling rubble never starts
+## a new collapse cascade.
+func _drop_collapsed_blocks(
+	cells: Array[Vector3i],
+	items: Dictionary,
+	orientations: Dictionary
+) -> void:
+	if cells.is_empty():
+		return
+
+	var by_column: Dictionary = {}
+
+	for cell: Vector3i in cells:
+		var column := Vector2i(cell.x, cell.z)
+		if not by_column.has(column):
+			by_column[column] = []
+		by_column[column].append(cell.y)
+
+	var moves: Dictionary = {}
+	var visuals: Array = []
+	var any_move: bool = false
+
+	for column: Vector2i in by_column:
+		var ys: Array = by_column[column]
+		ys.sort()
+		var occupied: Dictionary = {}
+
+		for value: Variant in ys:
+			var source_y: int = int(value)
+			var source := Vector3i(column.x, source_y, column.y)
+			var item: int = int(items.get(source, -1))
+			if item < 0:
+				continue
+
+			# Land on the first solid cell (or already landed block) below.
+			var landing_y: int = min_block_y - 1
+			for probe in range(source_y - 1, min_block_y - 1, -1):
+				if occupied.has(probe):
+					landing_y = probe + 1
+					break
+				if has_block(Vector3i(column.x, probe, column.y)):
+					landing_y = probe + 1
+					break
+
+			if landing_y < min_block_y or landing_y > max_block_y:
+				continue
+
+			var destination := Vector3i(column.x, landing_y, column.y)
+			occupied[landing_y] = true
+
+			var orientation: int = int(orientations.get(source, 0))
+			var key := "%d:%d" % [item, orientation]
+			if not moves.has(key):
+				moves[key] = {
+					"item": item,
+					"orientation": orientation,
+					"cells": [],
+				}
+			moves[key]["cells"].append(destination)
+
+			if destination != source:
+				any_move = true
+				if visuals.size() < MAX_FALL_VISUALS:
+					visuals.append({
+						"from": to_global(map_to_local(source)),
+						"to": to_global(map_to_local(destination)),
+					})
+
+	if moves.is_empty():
+		return
+
+	if not any_move:
+		_land_fallen_blocks(moves)
+		return
+
+	_spawn_falling_blocks(visuals)
+
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = FALL_DURATION
+	timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	timer.timeout.connect(
+		func() -> void:
+			_land_fallen_blocks(moves)
+			timer.queue_free()
+	)
+	add_child(timer)
+	timer.start()
+
+
+func _land_fallen_blocks(moves: Dictionary) -> void:
+	var was_busy: bool = _structural_busy
+	_structural_busy = true
+
+	for key: Variant in moves:
+		var entry: Dictionary = moves[key]
+		var cells: Array[Vector3i] = []
+		cells.assign(entry["cells"])
+		place_blocks(cells, int(entry["item"]), int(entry["orientation"]))
+
+	_structural_busy = was_busy
+	_stability_overlay_dirty = true
+
+
+func _spawn_falling_blocks(visuals: Array) -> void:
+	if visuals.is_empty():
+		return
+
+	var falling = FALLING_BLOCKS.new()
+	falling.name = "FallingBlocks"
+	falling.process_mode = Node.PROCESS_MODE_ALWAYS
+	falling.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_visual_host().add_child(falling)
+	falling.setup(visuals, cell_size, FALL_DURATION)
+
+
+# ---------------------------------------------------------------------------
+# Structural debug overlay
+# ---------------------------------------------------------------------------
+
+func _update_stability_overlay(delta: float) -> void:
+	if not stability_debug or not stability_enabled:
+		if _stability_overlay != null and _stability_overlay.visible:
+			_stability_overlay.visible = false
+		return
+
+	_stability_overlay_accum += delta
+
+	var player := get_tree().get_first_node_in_group("Player") as Node3D
+	var origin := Vector3.ZERO
+	if player != null:
+		origin = player.global_position
+	else:
+		var used: Array[Vector3i] = get_used_block_cells()
+		if not used.is_empty():
+			origin = to_global(map_to_local(used[0]))
+	var center_chunk: Vector2i = position_to_chunk(origin)
+
+	if not _stability_overlay_dirty and _stability_overlay_center == center_chunk:
+		return
+
+	# Rebuild on edits and chunk changes, throttled so a drag does not rebuild
+	# the whole overlay once per placed cell. No idle refresh: a clean overlay
+	# stays put instead of popping once a second.
+	if _stability_overlay_dirty and _stability_overlay_accum < STABILITY_OVERLAY_INTERVAL:
+		return
+
+	_stability_overlay_accum = 0.0
+	_stability_overlay_dirty = false
+	_stability_overlay_center = center_chunk
+
+	# Collect a margin of chunks wider than the drawn radius: a cell at the
+	# drawn edge needs support from up to `window_radius` farther out.
+	var chunks: Array[Vector2i] = []
+
+	for dx in range(-STABILITY_OVERLAY_CHUNK_RADIUS, STABILITY_OVERLAY_CHUNK_RADIUS + 1):
+		for dz in range(-STABILITY_OVERLAY_CHUNK_RADIUS, STABILITY_OVERLAY_CHUNK_RADIUS + 1):
+			var chunk := center_chunk + Vector2i(dx, dz)
+			if _nav_chunks.has(chunk) or _sections.has_column(chunk):
+				chunks.append(chunk)
+
+	chunks.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return (
+			Vector2(a - center_chunk).length_squared()
+			< Vector2(b - center_chunk).length_squared()
+		)
+	)
+
+	var draw_radius_sq: float = STABILITY_OVERLAY_DRAW_RADIUS * STABILITY_OVERLAY_DRAW_RADIUS
+	var margin_cells: Array[Vector3i] = []
+	var draw_set: Dictionary = {}
+
+	for chunk: Vector2i in chunks:
+		for cell: Vector3i in get_chunk_cell_list(chunk):
+			margin_cells.append(cell)
+			var world := to_global(map_to_local(cell))
+			if world.distance_squared_to(origin) <= draw_radius_sq:
+				draw_set[cell] = true
+		if margin_cells.size() >= STRUCTURAL_STABILITY.MAX_WINDOW_CELLS:
+			break
+
+	var field: Dictionary = get_stability_field(margin_cells)
+	if field.is_empty():
+		return
+
+	if _stability_overlay == null:
+		_stability_overlay = _make_stability_overlay()
+
+	var visible_cells: Array[Vector3i] = []
+	for cell: Vector3i in margin_cells:
+		if not draw_set.has(cell):
+			continue
+		if not _cell_is_exposed(cell):
+			continue
+		visible_cells.append(cell)
+		if visible_cells.size() >= STABILITY_OVERLAY_MAX_INSTANCES:
+			break
+
+	var multimesh: MultiMesh = _stability_overlay.multimesh
+	multimesh.instance_count = visible_cells.size()
+	var max_reach: int = get_structural_stability().max_reach()
+
+	for index in visible_cells.size():
+		var cell: Vector3i = visible_cells[index]
+		multimesh.set_instance_transform(
+			index,
+			Transform3D(Basis.IDENTITY, to_global(map_to_local(cell)))
+		)
+		multimesh.set_instance_color(index, _stability_color(int(field.get(cell, 0)), max_reach))
+
+	_stability_overlay.visible = true
+
+
+func _cell_is_exposed(cell: Vector3i) -> bool:
+	for offset: Vector3i in STRUCTURAL_STABILITY.DIRS_6:
+		if not has_block(cell + offset):
+			return true
+	return false
+
+
+func _make_stability_overlay() -> MultiMeshInstance3D:
+	var box := BoxMesh.new()
+	box.size = cell_size * 0.92
+
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.vertex_color_use_as_albedo = true
+	material.albedo_color = Color(1.0, 1.0, 1.0, 0.55)
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	box.material = material
+
+	var multimesh := MultiMesh.new()
+	multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	multimesh.use_colors = true
+	multimesh.mesh = box
+	multimesh.instance_count = 0
+
+	var overlay := MultiMeshInstance3D.new()
+	overlay.name = "StabilityOverlay"
+	overlay.multimesh = multimesh
+	overlay.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Updated from _process; interpolating a MultiMesh causes the overlay to
+	# judder/flicker when physics interpolation is enabled.
+	overlay.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	overlay.visible = false
+	_visual_host().add_child(overlay)
+	return overlay
+
+
+func _stability_color(value: int, max_reach: int) -> Color:
+	if value >= STRUCTURAL_STABILITY.STABILITY_ANCHORED:
+		return Color(0.35, 0.65, 1.0, 0.75)
+	if value <= 0:
+		return Color(1.0, 0.08, 0.05, 0.8)
+	var t: float = clampf(float(value) / float(maxi(1, max_reach)), 0.0, 1.0)
+	return Color.from_hsv(lerpf(0.0, 0.33, t), 0.9, 1.0, 0.55)
 
 
 func _refresh_point_weights_around(changed_cell: Vector3i) -> void:

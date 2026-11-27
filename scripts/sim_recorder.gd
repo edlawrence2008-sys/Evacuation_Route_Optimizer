@@ -1848,6 +1848,8 @@ func _cache_grid() -> void:
 		_grid.block_removed.connect(_on_block_removed)
 	if not _grid.nav_refresh_measured.is_connected(_on_nav_refresh_measured):
 		_grid.nav_refresh_measured.connect(_on_nav_refresh_measured)
+	if not _grid.structure_collapsed.is_connected(_on_structure_collapsed):
+		_grid.structure_collapsed.connect(_on_structure_collapsed)
 
 
 func _on_block_placed(cell: Vector3i, item: int) -> void:
@@ -1874,6 +1876,22 @@ func _on_block_removed(cell: Vector3i) -> void:
 		-1,
 		_grid.last_nav_refresh_usec
 	)
+
+
+## Summary event for one collapse. The individual block_removed records still
+## exist; this marks the batch as a single disruption so the optimizer and the
+## comparer do not have to infer it from a burst of removals.
+func _on_structure_collapsed(cells: Array[Vector3i], style: int) -> void:
+	if not _recording:
+		return
+
+	var styles: Array[String] = ["remove", "fall", "rigid"]
+	_write({
+		"type": "structure_collapse",
+		"t": GlobalData.sim_now(),
+		"cells": cells.size(),
+		"style": styles[clampi(style, 0, styles.size() - 1)],
+	})
 
 
 func _on_nav_refresh_measured(duration_usec: int, changed_cells: int) -> void:

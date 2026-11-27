@@ -1,19 +1,19 @@
 {
-  "version": 2,
-  "description": "Base properties for block materials. Each material owns the values shown in the Property tab; a block group (one texture's normal block plus its slabs, stairs and panels) inherits them and applies the variant modifiers below. base_stability is the 0..1 inspector value; stability_reach is the integer horizontal span the structural pass uses, where 255 means anchored (never unsupported).",
+  "version": 3,
+  "description": "Base properties for block materials. Each material owns the values shown in the Property tab; a block group (one texture's normal block plus its slabs, stairs and panels) inherits them and applies the variant modifiers below. base_stability is the normalized 0..1 integrity value; stability_reach is the integer horizontal span (blocks) the structural pass uses, where 255 means anchored (never unsupported). Vertical support is unlimited. base_weight is a mass ratio with concrete = 1.0. buoyancy is 0..1 (0 = dense/sinks, 1 = floats), base_path_cost is a navigation multiplier, flammability is 0..1.",
   "materials": [
     {
       "id": "backrooms",
       "label": "Backrooms",
       "prefixes": ["backrooms"],
       "properties": {
-        "base_stability": 0.7,
-        "stability_reach": 6,
-        "base_durability": 0.65,
-        "base_weight": 0.8,
-        "buoyancy": 0.0,
+        "base_stability": 0.55,
+        "stability_reach": 5,
+        "base_durability": 0.45,
+        "base_weight": 0.35,
+        "buoyancy": 0.05,
         "base_path_cost": 1.0,
-        "flammability": 0.1
+        "flammability": 0.2
       }
     },
     {
@@ -25,7 +25,7 @@
         "base_stability": 1.0,
         "stability_reach": 255,
         "base_durability": 1.0,
-        "base_weight": 1.0,
+        "base_weight": 2.5,
         "buoyancy": 0.0,
         "base_path_cost": 1.0,
         "flammability": 0.0
@@ -64,10 +64,10 @@
       "label": "Dirt",
       "prefixes": ["dirt"],
       "properties": {
-        "base_stability": 0.5,
-        "stability_reach": 4,
-        "base_durability": 0.35,
-        "base_weight": 0.85,
+        "base_stability": 0.15,
+        "stability_reach": 1,
+        "base_durability": 0.2,
+        "base_weight": 0.9,
         "buoyancy": 0.0,
         "base_path_cost": 1.0,
         "flammability": 0.0
@@ -78,10 +78,10 @@
       "label": "Echidna",
       "prefixes": ["echidna"],
       "properties": {
-        "base_stability": 0.9,
+        "base_stability": 0.85,
         "stability_reach": 7,
         "base_durability": 0.8,
-        "base_weight": 0.75,
+        "base_weight": 0.9,
         "buoyancy": 0.0,
         "base_path_cost": 1.0,
         "flammability": 0.0
@@ -92,10 +92,10 @@
       "label": "Floortile",
       "prefixes": ["floortile"],
       "properties": {
-        "base_stability": 0.7,
-        "stability_reach": 6,
-        "base_durability": 0.55,
-        "base_weight": 0.65,
+        "base_stability": 0.4,
+        "stability_reach": 3,
+        "base_durability": 0.4,
+        "base_weight": 0.5,
         "buoyancy": 0.0,
         "base_path_cost": 1.0,
         "flammability": 0.0
@@ -106,13 +106,13 @@
       "label": "Grass",
       "prefixes": ["grass"],
       "properties": {
-        "base_stability": 0.55,
-        "stability_reach": 4,
-        "base_durability": 0.35,
+        "base_stability": 0.1,
+        "stability_reach": 1,
+        "base_durability": 0.15,
         "base_weight": 0.85,
-        "buoyancy": 0.0,
+        "buoyancy": 0.05,
         "base_path_cost": 1.0,
-        "flammability": 0.15
+        "flammability": 0.25
       }
     },
     {
@@ -120,13 +120,13 @@
       "label": "Planks",
       "prefixes": ["planks", "plank"],
       "properties": {
-        "base_stability": 0.8,
+        "base_stability": 0.6,
         "stability_reach": 4,
-        "base_durability": 0.65,
-        "base_weight": 0.5,
-        "buoyancy": 0.05,
+        "base_durability": 0.55,
+        "base_weight": 0.4,
+        "buoyancy": 0.6,
         "base_path_cost": 1.0,
-        "flammability": 0.9
+        "flammability": 0.85
       }
     },
     {
@@ -136,7 +136,7 @@
       "properties": {
         "base_stability": 0.05,
         "stability_reach": 1,
-        "base_durability": 0.05,
+        "base_durability": 0.0,
         "base_weight": 1.0,
         "buoyancy": 1.0,
         "base_path_cost": 2.0,
@@ -148,10 +148,10 @@
       "label": "Window",
       "prefixes": ["window"],
       "properties": {
-        "base_stability": 0.45,
-        "stability_reach": 3,
-        "base_durability": 0.25,
-        "base_weight": 0.4,
+        "base_stability": 0.2,
+        "stability_reach": 1,
+        "base_durability": 0.15,
+        "base_weight": 0.3,
         "buoyancy": 0.0,
         "base_path_cost": 1.0,
         "flammability": 0.0

@@ -39,12 +39,17 @@ caption = "Simulation & Agent Defaults"
 [node name="PhysicsLevel" parent="RightColumn" instance=ExtResource("1_btn")]
 position = Vector3(0, 0.22, 0)
 action = &"physics_level"
-caption = "Physics"
+caption = "Collapse Style"
 
 [node name="StabilityOverlay" parent="RightColumn" instance=ExtResource("1_btn")]
 position = Vector3(0, -0.01, 0)
 action = &"stability_debug"
 caption = "Stability Overlay"
+
+[node name="AutoDock" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.24, 0)
+action = &"auto_dock"
+caption = "Auto Dock"
 
 [node name="GameplayBack" parent="." instance=ExtResource("1_btn")]
 position = Vector3(0, -0.62, 0.035)

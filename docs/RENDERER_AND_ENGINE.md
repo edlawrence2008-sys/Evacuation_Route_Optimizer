@@ -71,6 +71,39 @@ Those are fixed by the P1 work (LOD, greedy merging beyond the AO radius,
 compressed import, deferred nav, footprint clamping, one chunk per frame), not by
 a renderer change.
 
+### 2.1 Large foliage worlds (2026-11-27)
+
+The `Plains_Bigger` save has **8,448 placed foliage** plants, which are
+**16,818 crossed Sprite3D cards**. Before batching it submitted **15,626 draw
+calls** and ran at **4-7 FPS**, while script (~0.4 ms) and physics (~0.1 ms)
+were negligible: the world was draw-submission bound, not simulation bound.
+
+`scripts/world/foliage_batcher.gd` keeps every placeable Node3D and its Area3D
+(selection, breaking, save/load) and hides only the Sprite3D cards. It replaces
+them with **per-64 m chunk MultiMeshes**, grouped by material and by
+primary/secondary card. The foliage sway shader already derives its wind phase
+from `MODEL_MATRIX`, so per-instance animation survives the batch. Primary
+batches keep the double-sided shadow pass; secondary cards stay shadowless and
+use the shorter mid LOD range.
+
+Rebuilds are event-driven (`SceneTree.node_added` / `node_removed` plus a 0.25 s
+debounce). There is no per-second foliage scan, so an idle world pays nothing.
+A distance-setting change calls `mark_dirty()` from `PerformanceSettings`.
+Batches below 200 cards restore the individual Sprite3D cards, so small scenes
+keep the original path.
+
+Measured on the same save:
+
+| Measure | Before | After |
+|---|---|---|
+| Foliage cards | 16,818 individual | 16,818 instanced |
+| Draw calls | 15,626 | ~260 |
+| FPS | 4-7 | **138-180** |
+| One-time rebuild | - | ~42 ms scan + ~45 ms batch creation |
+
+`tests/foliage_batcher_test.gd` (8 checks) covers grouping, hidden-card
+restoration, a removal shrinking the batch, and the batch/material contract.
+
 ## 3. Renderer recommendation
 
 **Stay on `mobile` unless a specific Forward+ feature is required.** It has more

@@ -624,6 +624,7 @@ func _build_manifest(display: String, world: Dictionary = {}) -> Dictionary:
 		"cycle_time": cycle_time,
 		"sim_seed": int(global_data.rng_seed) if global_data != null else 0,
 		"runtime_exports": _collect_runtime_exports(),
+		"sublevels": _collect_sublevels(),
 		"placeables": _collect_placeables(),
 		"world": _normalise_world_metadata(world),
 	}
@@ -798,6 +799,42 @@ func _write_thumbnail(folder: String) -> void:
 	MAP_RENDERER.save_thumbnail(grid, folder.path_join(THUMBNAIL))
 
 
+## Undocked sub-level bodies are separate from the chunk store, so they need
+## their own manifest entry. Auto-docked bodies are already world cells and are
+## not collected here.
+func _collect_sublevels() -> Array:
+	var grid := get_tree().get_first_node_in_group("grid_map")
+	if grid == null or not grid.has_method("get_sublevel_manager"):
+		return []
+
+	var manager: Variant = grid.get_sublevel_manager()
+	if manager == null or not manager.has_method("serialize_all"):
+		return []
+
+	return manager.serialize_all()
+
+
+## Index of the sub-level body that owns `node`, or -1 for world placeables.
+## Saved with each placeable so attached furniture can be re-parented on load.
+func _sublevel_ancestor_index(node: Node) -> int:
+	var grid := get_tree().get_first_node_in_group("grid_map")
+	if grid == null or not grid.has_method("get_sublevel_manager"):
+		return -1
+
+	var manager: Variant = grid.get_sublevel_manager()
+	if manager == null:
+		return -1
+
+	var current: Node = node
+	while current != null:
+		var index: int = manager.sublevels.find(current)
+		if index >= 0:
+			return index
+		current = current.get_parent()
+
+	return -1
+
+
 func _collect_placeables() -> Array:
 	var entries: Array = []
 	for node in get_tree().get_nodes_in_group("placeables"):
@@ -809,6 +846,7 @@ func _collect_placeables() -> Array:
 		var xform: Transform3D = node.global_transform
 		entries.append({
 			"scene": scene_path,
+			"sublevel": _sublevel_ancestor_index(node),
 			"xform": [
 				xform.basis.x.x, xform.basis.x.y, xform.basis.x.z,
 				xform.basis.y.x, xform.basis.y.y, xform.basis.y.z,
@@ -908,6 +946,7 @@ func _apply_manifest(manifest: Dictionary) -> void:
 	await tree.process_frame
 
 	var scene_root := tree.current_scene
+	var restored_placeables: Array = []
 	if scene_root != null:
 		for entry: Dictionary in manifest.get("placeables", []):
 			var scene_path := String(entry.get("scene", ""))
@@ -949,6 +988,10 @@ func _apply_manifest(manifest: Dictionary) -> void:
 					Vector3(values[6], values[7], values[8]),
 					Vector3(values[9], values[10], values[11])
 				)
+			restored_placeables.append({
+				"node": instance,
+				"sublevel": int(entry.get("sublevel", -1)),
+			})
 
 	var player_data: Dictionary = manifest.get("player", {})
 	if player != null and not player_data.is_empty():
@@ -978,6 +1021,34 @@ func _apply_manifest(manifest: Dictionary) -> void:
 
 	if player != null:
 		await _wait_for_spawn_collision(player)
+
+	# Undocked sub-levels are independent bodies, so they are restored after the
+	# saved position's chunk collision is ready. Placeables attached to a body
+	# are re-parented afterwards so they keep moving with it.
+	var sublevel_manager: Variant = null
+	var grid := tree.get_first_node_in_group("grid_map")
+	if grid != null and grid.has_method("get_sublevel_manager"):
+		sublevel_manager = grid.get_sublevel_manager()
+		if sublevel_manager != null and manifest.has("sublevels"):
+			sublevel_manager.restore_all(manifest.get("sublevels", []))
+
+	if sublevel_manager != null:
+		for record: Dictionary in restored_placeables:
+			var placeable: Variant = record.get("node")
+			var index: int = int(record.get("sublevel", -1))
+			if (
+				index < 0
+				or not is_instance_valid(placeable)
+				or not placeable is Node3D
+				or index >= sublevel_manager.sublevels.size()
+			):
+				continue
+			(placeable as Node3D).reparent(
+				sublevel_manager.sublevels[index],
+				true
+			)
+
+	if player != null:
 		if is_instance_valid(player):
 			player.set_physics_process(player_physics_was_enabled)
 			if player is CharacterBody3D:

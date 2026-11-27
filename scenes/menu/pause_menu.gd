@@ -753,7 +753,7 @@ func _ensure_settings_ui() -> void:
 		0.45
 	)
 	_ensure_water_button(
-		gameplay_right, "PhysicsLevel", "physics_level", "Physics", 0.22
+		gameplay_right, "PhysicsLevel", "physics_level", "Collapse Style", 0.22
 	)
 	_ensure_water_button(
 		gameplay_right,
@@ -761,6 +761,9 @@ func _ensure_settings_ui() -> void:
 		"stability_debug",
 		"Stability Overlay",
 		-0.01
+	)
+	_ensure_water_button(
+		gameplay_right, "AutoDock", "auto_dock", "Auto Dock", -0.24
 	)
 
 	_move_settings_button("Volume", audio_left, 0.10)
@@ -2227,9 +2230,11 @@ func _dynamic_caption(action: String) -> String:
 		"destruction":
 			return "Destruction: " + PerformanceSettings.destruction_name()
 		"physics_level":
-			return "Physics: " + PerformanceSettings.physics_level_name()
+			return "Collapse: " + PerformanceSettings.collapse_style_name()
 		"stability_debug":
 			return "Stability Overlay: " + PerformanceSettings.stability_debug_name()
+		"auto_dock":
+			return "Auto Dock: " + PerformanceSettings.auto_dock_name()
 		"shadows":
 			return "Shadows: " + PerformanceSettings.shadows_name()
 		"shadow_distance":
@@ -2524,10 +2529,13 @@ func _click_at(screen_position: Vector2) -> void:
 			PerformanceSettings.toggle_destruction()
 			_refresh_labels()
 		"physics_level":
-			PerformanceSettings.cycle_physics_level()
+			PerformanceSettings.cycle_collapse_style()
 			_refresh_labels()
 		"stability_debug":
 			PerformanceSettings.toggle_stability_debug()
+			_refresh_labels()
+		"auto_dock":
+			PerformanceSettings.toggle_auto_dock()
 			_refresh_labels()
 		"shadows":
 			PerformanceSettings.toggle_shadows()

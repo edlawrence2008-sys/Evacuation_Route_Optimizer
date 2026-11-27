@@ -97,6 +97,48 @@ static func bedrock_id() -> int:
 	return id_for_name(BEDROCK_NAME)
 
 
+## Same resolution as `id_for_name`, but against a specific MeshLibrary. Used by
+## a grid whose library may be a fixture rather than the project's main one.
+static func id_for_name_in(name: String, library: MeshLibrary) -> int:
+	if library == null:
+		return id_for_name(name)
+
+	_ensure_ready()
+	if library == _library:
+		return id_for_name(name)
+
+	var clean := name.strip_edges()
+	if clean.is_empty():
+		return -1
+
+	var direct: int = library.find_item_by_name(clean)
+	if direct >= 0:
+		return direct
+
+	var autoblocks := clean if clean.begins_with("Auto_") else "Auto_" + clean
+	direct = library.find_item_by_name(autoblocks)
+	if direct >= 0:
+		return direct
+
+	var wanted := clean.to_lower()
+
+	for item_id: int in library.get_item_list():
+		var item_name := String(library.get_item_name(item_id))
+		if MATERIALS.variant_of(item_name) != "block":
+			continue
+		if MATERIALS.block_group_id(item_name) == wanted:
+			return item_id
+
+	for item_id: int in library.get_item_list():
+		var item_name := String(library.get_item_name(item_id))
+		if MATERIALS.variant_of(item_name) != "block":
+			continue
+		if MATERIALS.material_id(item_name) == wanted:
+			return item_id
+
+	return -1
+
+
 static func has_item(item_id: int) -> bool:
 	_ensure_ready()
 	if _library == null:

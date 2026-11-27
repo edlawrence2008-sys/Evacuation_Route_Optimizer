@@ -138,6 +138,7 @@ func _test_unreachable(grid: NavGridMap) -> void:
 
 func _make_grid() -> NavGridMap:
 	var grid := NavGridMap.new()
+	grid.sync_settings_on_ready = false
 	grid.name = "OptimizerTestGrid"
 	grid.mesh_library = _make_library()
 	grid.cell_size = Vector3.ONE

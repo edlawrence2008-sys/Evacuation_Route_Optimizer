@@ -6,8 +6,9 @@
 > outcome. The 2026-11-20 consistency pass added a congestion-aware greedy,
 > PSO, a static min-cost-flow model and a time-expanded min-cost-flow model,
 > normalised the objective terms per agent, made the congestion term use peak
-> platoon flow, and let local search swap pairs. Multi-objective terms,
-> disruption-driven re-solve and hazards are still future work.
+> platoon flow, and let local search swap pairs. Multi-objective terms and
+> hazards are still future work; structural collapse is now an explicit
+> disruption trigger (2026-11-27).
 > **Known scope limits (2026-11-21):** assignments remain exit-only over shared
 > flow fields, so the planner cannot split a cohort across parallel corridors.
 > Periodic/triggered re-solves, late-spawn coverage and an assignment overlay are
@@ -161,7 +162,7 @@ novelty statement.
 |---|---|---|---|
 | 1 | Global multi-exit assignment optimizer | **Done (phases 1-2)** | The single missing decision. `EvacPoint` already provides ids, availability, queues and admission rates |
 | 2 | Congestion-aware route optimization | **Done (phases 1-3)** | Predictive demand-to-capacity term plus a shared cost field; ACO searches the assignment |
-| 3 | Dynamic disruption-aware optimization | **Build (phase 5)** | Triggers already exist (`availability_changed`, `environment_changed`, `navigation_changed`); needs debounce and hysteresis |
+| 3 | Dynamic disruption-aware optimization | **Partial (phase 5)** | Navigation and environment triggers exist; structural collapse now schedules a disruption re-solve at the 2 s gap and records a `structure_collapse` event. Needs exit-failure debounce/hysteresis and hazard coupling |
 | 4 | Multi-objective optimization | **Build incrementally (phase 4)** | Ship T/D/Q first; add contact force, switching and hazard after the loop is validated |
 | 5 | Hazard-aware route costs | **Defer (phase 6)** | No hazard field exists. `FireComponent`, water and block edits could feed one later |
 | - | Five optimization modes | **Build as weight presets (phase 4)** | Cheap once the objective is configurable |

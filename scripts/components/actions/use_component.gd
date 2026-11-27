@@ -24,6 +24,27 @@ func alt_use(_actor: Node, _origin: Vector3, _direction: Vector3) -> void:
 	pass
 
 
+## Called every physics frame while the primary-use button is held. The base
+## tool is one-shot, so the default is a no-op.
+func hold(
+	_actor: Node,
+	_origin: Vector3,
+	_direction: Vector3,
+	_delta: float
+) -> void:
+	pass
+
+
+## Called when the primary-use button is released.
+func release(_actor: Node) -> void:
+	pass
+
+
+## Q while the tool is selected. Return true when the tool consumed the input.
+func rotate_held(_actor: Node, _step_degrees: float) -> bool:
+	return false
+
+
 func begin_cooldown() -> void:
 	_next_use_msec = Time.get_ticks_msec() + int(
 		maxf(cooldown, 0.0) * 1000.0

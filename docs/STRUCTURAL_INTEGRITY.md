@@ -1,8 +1,9 @@
 # Structural Integrity and Bedrock
 
-Status: **foundation only** (2026-11-26). The material data, the Bedrock anchor,
-generator output, the save migration and the settings toggles exist. The
-propagation pass, collapse and debris are **not implemented yet**.
+Status: **core implemented** (2026-11-27). Material reach, the Bedrock anchor,
+generator output, the save migration, the support pass, the collapse loop, the
+opt-in settings and the debug overlay exist. Island rigid bodies and the HUD
+readout are the remaining pieces.
 
 This page records the design so the next stage has one source of truth.
 
@@ -16,8 +17,12 @@ shown in the Property tab.
   pillar of the same material is fully stable at every height.
 - Each **lateral** step away from support costs 1. A concrete face at reach 8
   supports 7 next to it, then 6, and so on.
-- A cell's value is `min(material_reach, incoming)`. A wood block next to a
-  reach-8 concrete block still caps at 4.
+- A cell's shown value is `min(material_reach, incoming)`. A wood block next to
+  a reach-8 concrete block still caps at 4, and the wood after it at 3.
+- **Vertical support is not capped by the intermediate block.** A grass block
+  on bedrock shows 1 because it can only span one block sideways, but it still
+  passes the column's full support to the concrete built on top. Without this,
+  every structure on natural ground would start at 1 and could not be built.
 - Reaching **0** means unsupported; a cell with 0 falls.
 - Slabs, stairs and panels scale the material reach by their `base_stability`
   variant modifier (Concrete block 8, Concrete slab 7).
@@ -32,26 +37,77 @@ Sentinel values in `scripts/block_materials.gd`:
 
 ## Material data
 
-`resources/block_materials.json` (version 2) adds `stability_reach` per material
+`resources/block_materials.json` (version 3) adds `stability_reach` per material
 and `anchored: true` on Bedrock. `base_stability` stays the normalized inspector
 value used by the Property tab.
 
-| Material | `base_stability` | `stability_reach` |
-|---|---:|---:|
-| Bedrock | 1.0 | 255 (anchored) |
-| Concrete | 0.95 | 8 |
-| Debug | 1.0 | 8 |
-| Echidna | 0.9 | 7 |
-| Backrooms | 0.7 | 6 |
-| Floortile | 0.7 | 6 |
-| Grass | 0.55 | 4 |
-| Dirt | 0.5 | 4 |
-| Planks | 0.8 | 4 |
-| Window | 0.45 | 3 |
-| Water | 0.05 | 1 |
+| Material | stability | reach | durability | weight | buoyancy | flammability |
+|---|---:|---:|---:|---:|---:|---:|
+| Bedrock | 1.0 | **anchored** | 1.0 | 2.5 | 0.0 | 0.0 |
+| Concrete | 0.95 | 8 | 0.90 | 1.0 | 0.0 | 0.0 |
+| Debug | 1.0 | 8 | 1.0 | 1.0 | 0.0 | 0.0 |
+| Echidna | 0.85 | 7 | 0.80 | 0.9 | 0.0 | 0.0 |
+| Backrooms | 0.55 | 5 | 0.45 | 0.35 | 0.05 | 0.2 |
+| Planks | 0.60 | 4 | 0.55 | 0.4 | 0.60 | 0.85 |
+| Floortile | 0.40 | 3 | 0.40 | 0.5 | 0.0 | 0.0 |
+| Dirt | 0.15 | 1 | 0.20 | 0.9 | 0.0 | 0.0 |
+| Grass | 0.10 | 1 | 0.15 | 0.85 | 0.05 | 0.25 |
+| Window | 0.20 | 1 | 0.15 | 0.3 | 0.0 | 0.0 |
+| Water | 0.05 | 1 | 0.0 | 1.0 | 1.0 | 0.0 |
+
+Rationale: `stability_reach` is a **lateral span**, not a load limit. Vertical
+support passes through any material, so low-reach ground (dirt/grass 1) does not
+cap what is built on top of it; it only stops the ground itself from
+cantilevering. On the current table:
+
+- concrete and debug reach 8; robust masonry (Echidna) reaches 7; institutional wall panels reach 5; timber reaches 4; ceramic tile and light partitions reach 3; loose soil, turf and glass reach 1 and therefore cannot cantilever at all.
+- `base_weight` is a mass ratio with concrete = 1.0 (bedrock 2.5, water 1.0, timber 0.4).
+- `buoyancy` is 0..1 with 1 = floats (planks 0.6, water 1.0).
+- `flammability` follows the material: planks 0.85, grass 0.25, backrooms 0.2, everything mineral 0.
+- Variants scale reach and durability with their `base_stability` modifier, so a concrete slab reaches 7, a concrete panel 4, and a timber slab 3.
 
 API: `BlockMaterials.stability_reach_for_item(name)`,
-`BlockMaterials.is_anchored(name)`, `BlockMaterials.stability_reach_name(value)`.
+`BlockMaterials.is_anchored(name)`, `BlockMaterials.stability_reach_name(value)`,
+`BlockMaterials.max_stability_reach()`.
+
+## The support pass
+
+`scripts/world/structural_stability.gd` computes the field on demand; nothing is
+serialized, so the save format and the section store are unchanged.
+
+- **Window.** An edit can only change cells within `max_reach` lateral steps
+  (8). A cell at that distance can only be reached from a column at most another
+  8 farther out, so the evaluator collects the connected solid cells within
+  `2 * max_reach` columns (all heights) around the edit. With values capped at
+  8, anything beyond that window can contribute at most 0 and is not needed.
+  This keeps an edit bounded even on a 384 x 384 world; a window over 60,000
+  cells aborts rather than stalling.
+- **Batch centres.** A drag can be much wider than one window. The loop picks
+  evaluation centres so every edited cell is within one decision radius (8) of a
+  centre, and only trusts zeros within that radius of the centre (values near
+  the window edge can be underestimated because their support lies outside).
+  The old "skip any seed inside any window" rule could leave the far side of a
+  long drag unevaluated and floating; this replaces it.
+- **Relaxation.** Anchors seed a 255 raw bucket. A highest-first sweep carries
+  the arriving support upward unchanged and laterally at `capped - 1`, where
+  `capped = min(arriving, material reach)`. The shown value is the arriving
+  support capped by the cell's own reach. One descending sweep over 255..1 is
+  enough because a value can never exceed the bucket being drained.
+- **Placement** can only add support, so only the placed cells are checked. An
+  unsupported placement falls immediately.
+- **Removal** captures the support field *before* the cells are removed. After
+  the edit, only cells that were `> 0` before and are `0` now collapse. Cells
+  that were already floating (an authored platform before it was anchored, an
+  old build with no bedrock) are left alone. This is deliberate: an unrelated
+  edit must never demolish legacy geometry.
+- **Cascades** are driven by one bounded loop (8 passes): remove the batch, take
+  the solid neighbours as the next seeds, compare against the field captured
+  before that batch. Each pass is one `remove_blocks()` call, so chunks and
+  navigation refresh once per batch rather than once per cell.
+- **Authored worlds.** The shipped starter platform lives directly on the
+  GridMap with no bedrock. `_seed_sections_from_gridmap()` adds a runtime
+  bedrock anchor under each authored column, so the starter map is buildable
+  with collapse enabled without editing every map scene.
 
 ## Bedrock block
 
@@ -126,20 +182,115 @@ store; 770 chunks and 188,103 columns anchored; 0 errors; `--verify` reports
 
 ## Settings
 
-`PerformanceSettings` persists three values under `[structure]` and mirrors them
+`PerformanceSettings` persists four values under `[structure]` and mirrors them
 to the `NavGridMap`:
 
-| Setting | Values | Effect once the pass exists |
+| Setting | Values | Effect |
 |---|---|---|
 | `stability_enabled` | On / Off | Compute the support field at all |
-| `physics_level` | Off / Collapse / Debris | Remove unsupported cells; `Debris` also detaches islands as rigid bodies |
+| `collapse_enabled` | On / Off | Whether cells that lose support collapse |
+| `collapse_style` | Remove / Fall / Rigid / Sublevel | How they collapse |
+| `auto_dock_sublevels` | On / Off | Whether settled sub-levels dock back into the world grid |
 | `stability_debug` | On / Off | Support overlay |
 
-Presets: Low = Off, Medium = Collapse, High = Debris. Turning collapse on forces
-stability on. In the menus the **Destruction** row toggles the tier on/off and
-remembers it, while the **Physics** row cycles which tier is used. The in-game pause menu and the main menu expose the three rows in
-**Settings -> Gameplay** (`scenes/menu/settings/gameplay_menu.tscn` and the
-pause menu's dynamically built panel).
+**Collapse is off by default.** Stability is computed and queryable, but a world
+without anchors is never demolished by its first edit. Presets: Low and Medium
+leave collapse off; High turns it on. A preset never changes the chosen collapse
+style. Turning collapse on forces stability on.
+
+The two rows are independent:
+
+- **Destruction** — on/off. With it off, you can inspect stability, but nothing
+  ever falls.
+- **Collapse** — the style used when Destruction is on:
+  - **Remove** deletes the cells.
+  - **Fall** drops each block down its own column and re-places it on the first
+    solid cell below, so rubble settles as normal blocks. Landing is delayed by
+    the 0.45 s fall animation, then placed with the structural guard so settling
+    never starts a new cascade.
+  - **Rigid** builds one `RigidBody3D` per batch from the removed cells' real
+    block meshes (materials and stair/slab surfaces preserved) on collision
+    layer 0, world mask 1, max 6 bodies × 512 cells × 6 s. The collider is the
+    batch's **convex hull**, not a trimesh: the world's chunk collision is a
+    concave mesh, and a moving concave body does not reliably collide against
+    another concave mesh. Debris never re-enters the grid.
+  - **Sublevel** turns the batch into a persistent, editable moving structure
+    with its own local cell grid, compound box colliders and materials. It can
+    be built on, broken, welded to other sub-levels and optionally auto-docked
+    to the world. See [`SUB_LEVELS.md`](SUB_LEVELS.md).
+
+Old `[structure] physics_level` settings migrate automatically: 0 → off, 1 →
+on/Remove, 2 → on/Rigid.
+
+`NavGridMap._ready()` also pulls the live settings (`_sync_structural_settings`).
+`apply_all()` can run before the grid exists, so a direct scene launch or a
+settings change made before the map loads would otherwise leave collapse off at
+the grid's inspector defaults. Fixture grids opt out with
+`sync_settings_on_ready = false`, which also makes `apply_all()` skip them.
+
+Both menus expose the rows in **Settings -> Gameplay**
+(`scenes/menu/settings/gameplay_menu.tscn`); the pause menu instances the same
+scene.
+
+## Debug overlay
+
+`stability_debug` (and `NavGridMap.stability_debug`) draws exposed cells around
+the player as translucent boxes: blue = anchored, green (8) through yellow to
+red (0). It rebuilds only when an edit or a chunk change marks it dirty
+(throttled to 4 Hz), never while idle, and its MultiMesh has physics
+interpolation disabled so it cannot judder. It covers the player's chunk plus
+its eight neighbours, draws within 16 m, caps at 2,000 instances and skips fully
+enclosed cells. The overlay is approximate at its outer fringe (the evaluation
+margin is exactly the structural window).
+
+The stability overlay is a **debug view**; it is independent of the sub-level
+build preview. The green/orange box that flickered while a sub-level was moving
+was the build ghost, now blue/red and hidden while the body moves or is held by
+the G grab or the physics gun.
+
+## Aimed-block readout
+
+While a placement ghost is visible, or whenever the structural overlay is on, a
+small billboard label above the aimed block shows `current / maximum` (`∞` for
+anchors, `0 / N UNSUPPORTED` when the block is about to fall). The evaluation
+waits until the cursor rests on one cell for 0.2 s and the result is cached
+until the next block edit, because one window evaluation costs a few
+milliseconds on a large structure and running it every frame would hitch while
+sweeping the cursor.
+
+The label is its own node (`scripts/world/stability_readout.gd`) so its
+formatting is testable without a player, camera or autoloads.
+
+## Where the visuals live
+
+Chunk streaming hides the `GridMap` itself (`grid.visible = false`) and renders
+sibling `ChunkMeshes` instead. Debris bodies, the falling-block MultiMesh and the
+stability overlay are therefore parented to the grid's parent
+(`_visual_host()`), never to the grid: children of a hidden node report
+`is_visible_in_tree() == false` even when their own `visible` is `true`. The
+existing path debug mesh already followed the same rule.
+
+## Public API
+
+- `NavGridMap.get_stability(cell) -> int` — 0..255; -1 for air, stability
+  disabled, or a window too large to evaluate.
+- `NavGridMap.get_stability_field(cells) -> Dictionary` — batch values.
+- `NavGridMap.structure_collapsed(cells, style)` — emitted **once per collapse
+  edit**, not once per cell. The optimizer treats it as a route disruption and
+  the recorder writes a `structure_collapse` summary event.
+- `StructuralStability.evaluate_around(center)` — full window result.
+- `NavGridMap.get_structural_stability()` — the evaluator instance.
+
+## Optimizer disruption
+
+The optimizer already bumps `GlobalData.environment_version` on every block
+edit, so a collapse eventually re-solves on the 2 s / 15 s cadence. The collapse
+signal adds intent: `OptimizerBridge._on_structure_collapsed()` marks a pending
+disruption and allows the next solve as soon as `RESOLVE_MIN_GAP` (2 s) has
+passed, instead of waiting for the periodic interval. `request_solve()` clears
+the flag; `disruption_stats()` reports the count and last batch size. The solve
+itself is unchanged: the snapshot is rebuilt from the current navigation, so
+routes now avoid the collapsed cells.
 
 ## What is deliberately not planned
 
@@ -148,17 +299,21 @@ pause menu's dynamically built panel).
 - Custom Jolt narrowphase for per-voxel contacts. Blocks are grid cells with a
   merged per-chunk mesh, so Jolt already collides the correct shape. Island-level
   rigid bodies are the useful part of that idea.
-- Simulating debris as physics for the evacuation measurement. Stability must
-  stay deterministic (integer BFS) so same-seed runs and the optimizer's cost
-  fields remain reproducible.
+- Simulating rigid debris as physics for the evacuation measurement. Stability
+  must stay deterministic (integer BFS) so same-seed runs and the optimizer's
+  cost fields remain reproducible; debris stays on layer 0 and never re-enters
+  the grid.
 
 ## Next stage
 
-1. Store a per-cell support value beside the section data (computed, not
-   serialized; recompute on chunk load).
-2. Multi-source BFS from anchors on `block_placed` / `block_removed`, bounded to
-   the maximum reach around the edit.
-3. Collapse by collecting every 0 into one `remove_blocks()` call so the chunk
-   and navigation refresh happens once per event.
-4. Optional `Debris`: one `RigidBody3D` per detached island, not per block.
-5. Debug overlay before anything else: you cannot tune what you cannot see.
+1. Split a multi-island collapse batch into one body per island instead of one
+   body per batch.
+2. A per-chunk support cache if the window cost shows up in profiles; today
+   each edit is a bounded evaluation and nothing is stored.
+3. Surface damage and durability: the registry has `base_durability`, but
+   nothing consumes it yet.
+4. Include the collapse count in the optimizer overlay/panel so a player can see
+   that a disruption forced the re-solve.
+5. Sub-levels: a dedicated create-ship tool remains. Save/load, brush and drag
+   editing, attached placeables and agent collision are implemented (see
+   [`SUB_LEVELS.md`](SUB_LEVELS.md)).

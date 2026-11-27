@@ -48,6 +48,7 @@ func _build_world() -> void:
 	add_child(_world)
 
 	_grid = NavGridMap.new()
+	_grid.sync_settings_on_ready = false
 	_grid.name = "TestGrid"
 	_grid.mesh_library = _make_library()
 	_grid.cell_size = Vector3.ONE

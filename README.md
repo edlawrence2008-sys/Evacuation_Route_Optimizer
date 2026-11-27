@@ -67,8 +67,10 @@ will not merge into one flock. The old nine-spawner demo lives in the save slot
 |---|---|
 | Move / jump / sprint / crouch | WASD / Space / Ctrl / Shift |
 | Look | Mouse |
-| Place / break | RMB / LMB (hold and drag for areas) |
+| Place / break | RMB / LMB (hold and drag for areas; brushes/drags also edit sub-levels) |
 | Pick block | Middle mouse |
+| Grab (hold) | G (2D line beam) |
+| Useables physics gun | LMB grab/hold, RMB freeze, Q spin, `,`/`.` distance |
 | Rotate held stairs or placeable | Q |
 | Toggle build plane (floor/wall) | Alt |
 | Toggle inventory | R |

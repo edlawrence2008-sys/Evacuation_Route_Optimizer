@@ -13,6 +13,7 @@ const EXPECTED := {
 	"LeftColumn/Destruction": "destruction",
 	"RightColumn/PhysicsLevel": "physics_level",
 	"RightColumn/StabilityOverlay": "stability_debug",
+	"RightColumn/AutoDock": "auto_dock",
 }
 
 var _checks: int = 0

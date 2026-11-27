@@ -284,3 +284,20 @@ static func stability_reach_name(value: int) -> String:
 	if value <= STABILITY_UNSUPPORTED:
 		return "0 (falls)"
 	return str(value)
+
+
+## Largest finite reach in the registry. The structural pass uses it to size the
+## evaluation window; anchored (255) materials do not count.
+static func max_stability_reach() -> int:
+	_ensure_loaded()
+	var best: int = FALLBACK_STABILITY_REACH
+
+	for material: Variant in _materials:
+		if not material is Dictionary:
+			continue
+		if bool((material as Dictionary).get("anchored", false)):
+			continue
+		var base: Dictionary = (material as Dictionary).get("properties", {})
+		best = maxi(best, int(base.get("stability_reach", FALLBACK_STABILITY_REACH)))
+
+	return best

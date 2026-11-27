@@ -187,6 +187,26 @@ static func apply_distance_settings(
 			sprite.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
+## Material used by the MultiMesh foliage batcher. Reuses the per-texture shared
+## sway material so a whole batch is one material/draw.
+static func material_for_sprite(sprite: Sprite3D) -> Material:
+	if sprite == null:
+		return null
+	if sprite.material_override != null:
+		return sprite.material_override
+
+	# The batcher calls this for every card on each rebuild. Cache the shared
+	# material on the sprite so the string-keyed material lookup only runs once.
+	var cached: Variant = sprite.get_meta("foliage_batch_material", null)
+	if cached is Material:
+		return cached
+
+	var material := _shared_material(sprite)
+	if material != null:
+		sprite.set_meta("foliage_batch_material", material)
+	return material
+
+
 static func _shared_material(sprite: Sprite3D) -> ShaderMaterial:
 	if sprite.texture == null:
 		return null

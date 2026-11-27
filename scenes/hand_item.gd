@@ -13,6 +13,11 @@ const PLACEABLE_SIZE: float = 0.5
 const BLOCK_TILT := Vector3(26.565, 45.0, 0.0)
 const PLACEABLE_TILT := Vector3(26.565, 45.0, -15.0)
 
+## Nodes in a placeable scene that represent the barrel tip/muzzle. The physics
+## gun tags its `Emitter` mesh with `metadata/muzzle = true`; these names are a
+## fallback for other tools.
+const MUZZLE_NAMES := ["Emitter", "Muzzle", "MuzzlePoint", "BarrelTip"]
+
 const SWING_TIME: float = 0.2
 const SWING_DIP: float = 0.075
 const SWING_BACK: float = 0.055
@@ -291,6 +296,36 @@ func clear_item() -> void:
 	_holding = false
 
 
+## World-space point the held item's beam should start from. Placeable models
+## tag a muzzle mesh (the physics gun uses its `Emitter`); when a model has no
+## muzzle the held model's centre is used.
+func get_muzzle_position() -> Vector3:
+	if _model != null and is_instance_valid(_model):
+		var muzzle := _find_muzzle(_model)
+		if muzzle != null:
+			return muzzle.global_position
+
+	if _item_root != null and is_instance_valid(_item_root):
+		return _item_root.global_position
+
+	return global_position
+
+
+func _find_muzzle(node: Node) -> Node3D:
+	if node == null:
+		return null
+
+	if node is Node3D and node.has_meta("muzzle"):
+		return node as Node3D
+
+	for child in node.get_children():
+		var found := _find_muzzle(child)
+		if found != null:
+			return found
+
+	return null
+
+
 ## Plays the use swing: the held model dips and comes back.
 ## Breaking/destroying animation: dip and pull the model back toward the player.
 func play_break_swing() -> void:
@@ -494,11 +529,18 @@ func _copy_visuals(
 			var source_mesh := child as MeshInstance3D
 			if source_mesh.mesh != null:
 				var mesh_copy := MeshInstance3D.new()
+				mesh_copy.name = child.name
 				mesh_copy.mesh = source_mesh.mesh
 				mesh_copy.transform = child_xform
 				mesh_copy.cast_shadow = (
 					GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				)
+				# Keep the muzzle marker so tools can draw a beam from the
+				# barrel tip of the copied viewmodel.
+				if child.has_meta("muzzle"):
+					mesh_copy.set_meta("muzzle", true)
+				elif String(child.name) in MUZZLE_NAMES:
+					mesh_copy.set_meta("muzzle", true)
 				target.add_child(mesh_copy)
 		elif child is Sprite3D:
 			var source_sprite := child as Sprite3D

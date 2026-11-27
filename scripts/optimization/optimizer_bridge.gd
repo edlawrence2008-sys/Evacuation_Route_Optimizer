@@ -116,6 +116,12 @@ var _queue_total_cached: int = 0
 var _exit_signature_cached: String = ""
 var _poll_at: float = 0.0
 var _overlay: Node3D = null
+## A structural collapse schedules a solve at the next allowed moment instead of
+## waiting for the periodic interval.
+var _disruption_pending: bool = false
+var _disruption_at: float = 0.0
+var _disruption_count: int = 0
+var _disruption_cells: int = 0
 
 
 func _ready() -> void:
@@ -242,6 +248,9 @@ func _spawners_complete() -> bool:
 func _should_re_solve(now: float) -> bool:
 	if _last_solved_at > -INF and now - _last_solved_at < RESOLVE_MIN_GAP:
 		return false
+
+	if _disruption_pending and now >= _disruption_at:
+		return true
 
 	if _pending_spawns >= SPAWN_BATCH_TRIGGER:
 		return true
@@ -778,6 +787,7 @@ func request_solve() -> void:
 	if _solving:
 		return
 
+	_disruption_pending = false
 	_solving = true
 	_publish_state("queued")
 	call_deferred("_run_solve")
@@ -1683,6 +1693,9 @@ func _ensure_grid(tree: SceneTree) -> NavGridMap:
 	if not grid.block_removed.is_connected(_on_block_removed):
 		grid.block_removed.connect(_on_block_removed)
 
+	if not grid.structure_collapsed.is_connected(_on_structure_collapsed):
+		grid.structure_collapsed.connect(_on_structure_collapsed)
+
 	return grid
 
 
@@ -1697,6 +1710,9 @@ func _disconnect_grid() -> void:
 	if _connected_grid.block_removed.is_connected(_on_block_removed):
 		_connected_grid.block_removed.disconnect(_on_block_removed)
 
+	if _connected_grid.structure_collapsed.is_connected(_on_structure_collapsed):
+		_connected_grid.structure_collapsed.disconnect(_on_structure_collapsed)
+
 	_connected_grid = null
 
 
@@ -1706,6 +1722,25 @@ func _on_block_placed(_cell: Vector3i, _item: int) -> void:
 
 func _on_block_removed(_cell: Vector3i) -> void:
 	GlobalData.bump_environment_version()
+
+
+## A collapse is a route disruption, not a normal single-block edit: schedule a
+## solve as soon as the minimum gap allows instead of waiting for the periodic
+## interval. `_on_block_removed` already bumps the environment version per cell;
+## this adds the event-level intent and the shorter reaction.
+func _on_structure_collapsed(cells: Array[Vector3i], _style: int) -> void:
+	_disruption_pending = true
+	_disruption_at = GlobalData.sim_now() + RESOLVE_MIN_GAP
+	_disruption_count += 1
+	_disruption_cells = cells.size()
+
+
+func disruption_stats() -> Dictionary:
+	return {
+		"count": _disruption_count,
+		"last_cells": _disruption_cells,
+		"pending": _disruption_pending,
+	}
 
 
 func _publish_state(text: String) -> void:
