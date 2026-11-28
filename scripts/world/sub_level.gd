@@ -82,6 +82,11 @@ var origin_cell: Vector3i = Vector3i.ZERO
 var orientation_provider: Callable = Callable()
 var settled_for: float = 0.0
 var last_edit_at: float = 0.0
+## Nav Bodifier state: frozen diagonal map piece plus the world nav markers it
+## owns. Markers are invisible world cells; the body itself stays a diagonal
+## static collider.
+var nav_baked: bool = false
+var nav_marker_cells: Array[Vector3i] = []
 
 ## Copied from the owning grid/PerformanceSettings on spawn/restore.
 var stability_enabled: bool = false
@@ -194,6 +199,13 @@ func set_cells(data: Dictionary, apply_stability: bool = true) -> void:
 
 ## JSON-safe snapshot of the body, its cells and its motion state. Cell keys are
 ## stored as flat rows because JSON cannot key a dictionary by Vector3i.
+func _serialize_nav_marker_cells() -> Array:
+	var rows: Array = []
+	for cell: Vector3i in nav_marker_cells:
+		rows.append([cell.x, cell.y, cell.z])
+	return rows
+
+
 func serialize_state() -> Dictionary:
 	var entries: Array = []
 
@@ -227,6 +239,8 @@ func serialize_state() -> Dictionary:
 		"lock_x": axis_lock_angular_x,
 		"lock_y": axis_lock_angular_y,
 		"lock_z": axis_lock_angular_z,
+		"nav_baked": nav_baked,
+		"nav_marker_cells": _serialize_nav_marker_cells(),
 	}
 
 
@@ -272,6 +286,20 @@ func restore_state(state: Dictionary) -> bool:
 		return false
 
 	set_cells(data, false)
+
+	nav_baked = bool(state.get("nav_baked", false))
+	nav_marker_cells.clear()
+	var marker_rows: Variant = state.get("nav_marker_cells", [])
+	if marker_rows is Array:
+		for row_value: Variant in marker_rows:
+			if not row_value is Array:
+				continue
+			var row: Array = row_value
+			if row.size() < 3:
+				continue
+			nav_marker_cells.append(
+				Vector3i(int(row[0]), int(row[1]), int(row[2]))
+			)
 
 	var lv: Variant = state.get("linear_velocity", [])
 	if lv is Array and (lv as Array).size() == 3:
@@ -1451,6 +1479,133 @@ func merge_guest(other: SubLevel) -> int:
 
 ## World cells this sub-level would occupy when docked, or {} when it is not
 ## axis-aligned / not close enough to the grid / would overlap existing blocks.
+## Builds the invisible nav-marker placement for this body's walkable top cells.
+## A full marker reports its nav point at the cell top; the slab marker reports
+## the cell centre. The closer one approximates the diagonal surface.
+func nav_bake_placement(grid: NavGridMap) -> Dictionary:
+	var result: Dictionary = {}
+	if grid == null or not is_instance_valid(grid) or cells.is_empty():
+		return result
+
+	var full_item: int = grid.nav_marker_item(false)
+	var low_item: int = grid.nav_marker_item(true)
+	if full_item < 0 and low_item < 0:
+		return result
+
+	var cell_size: Vector3 = grid.cell_size
+	var half_y: float = block_size.y * 0.5
+	var low_offset: float = 0.0 if grid.cell_center_y else cell_size.y * 0.5
+	var full_offset: float = cell_size.y * 0.5
+
+	for cell: Vector3i in cells:
+		if cells.has(cell + Vector3i.UP):
+			continue
+		var top_world: Vector3 = to_global(
+			cell_center_local(cell) + Vector3.UP * half_y
+		)
+		var target: Vector3i = grid.world_to_cell(top_world)
+		if target.y < grid.min_block_y or target.y > grid.max_block_y:
+			continue
+		if grid.has_block(target) and not grid.is_nav_marker_cell(target):
+			continue
+
+		var center: Vector3 = grid.to_global(grid.map_to_local(target))
+		var full_y: float = center.y + full_offset
+		var low_y: float = center.y + low_offset
+		var full_delta: float = absf(full_y - top_world.y)
+		var low_delta: float = absf(low_y - top_world.y)
+		var use_low: bool = low_item >= 0 and low_delta < full_delta
+		var item: int = low_item if use_low else full_item
+		if item < 0:
+			item = full_item
+		var delta: float = low_delta if use_low else full_delta
+
+		if result.has(target):
+			var existing: Dictionary = result[target]
+			if float(existing.get("delta", INF)) <= delta:
+				continue
+		result[target] = {
+			"item": item,
+			"orientation": 0,
+			"delta": delta,
+		}
+	return result
+
+
+## Best-effort conversion of every local cell to a world grid cell at the
+## body's current transform. Unlike `dock_cells`, this does not require the body
+## to be axis-aligned or settled: it snaps each cell centre to the nearest world
+## cell, skips occupied cells, and remaps directional orientations to the
+## nearest world orientation. Used by the Static Bodifier.
+func world_cell_placement(grid: NavGridMap) -> Dictionary:
+	var result: Dictionary = {}
+	if grid == null or not is_instance_valid(grid) or cells.is_empty():
+		return result
+
+	var body_basis := global_transform.basis
+	var rotated := not body_basis.is_equal_approx(Basis.IDENTITY)
+	var min_y: int = grid.min_block_y
+	var max_y: int = grid.max_block_y
+
+	for cell: Vector3i in cells:
+		var world := cell_center_world(cell)
+		var target: Vector3i = grid.world_to_cell(world)
+		if target.y < min_y or target.y > max_y:
+			continue
+		if grid.has_block(target) or result.has(target):
+			continue
+
+		var entry: Dictionary = cells[cell]
+		var item: int = int(entry.get("item", -1))
+		if item < 0:
+			continue
+
+		var orientation: int = int(entry.get("orientation", 0))
+		if rotated and orientation != 0:
+			orientation = _nearest_world_orientation(
+				grid,
+				orientation,
+				body_basis
+			)
+		result[target] = {
+			"item": item,
+			"orientation": orientation,
+		}
+
+	return result
+
+
+func _nearest_world_orientation(
+	grid: NavGridMap,
+	orientation: int,
+	body_basis: Basis
+) -> int:
+	var local_basis: Basis
+	if orientation_provider.is_valid():
+		var value: Variant = orientation_provider.call(orientation)
+		if value is Basis:
+			local_basis = value
+		else:
+			return 0
+	else:
+		local_basis = grid.get_orientation_basis(orientation)
+
+	var world_basis := (body_basis * local_basis).orthonormalized()
+	var best := 0
+	var best_score := -INF
+	for index in 24:
+		var candidate: Basis = grid.get_orientation_basis(index)
+		var score := (
+			candidate.x.dot(world_basis.x)
+			+ candidate.y.dot(world_basis.y)
+			+ candidate.z.dot(world_basis.z)
+		)
+		if score > best_score:
+			best_score = score
+			best = index
+	return best
+
+
 func dock_cells(grid: NavGridMap) -> Dictionary:
 	if grid == null or cells.is_empty() or not is_axis_aligned():
 		return {}

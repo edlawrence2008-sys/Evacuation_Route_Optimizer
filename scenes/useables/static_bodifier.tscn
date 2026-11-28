@@ -1,0 +1,36 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/useables/static_bodifier_component.gd" id="1_tool"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_body"]
+albedo_color = Color(0.22, 0.25, 0.3, 1)
+metallic = 0.65
+roughness = 0.28
+
+[sub_resource type="StandardMaterial3D" id="Mat_glow"]
+albedo_color = Color(0.2, 0.75, 0.95, 1)
+emission_enabled = true
+emission = Color(0.14, 0.7, 1, 1)
+emission_energy_multiplier = 1.8
+
+[sub_resource type="BoxMesh" id="Mesh_body"]
+size = Vector3(0.2, 0.16, 0.34)
+material = SubResource("Mat_body")
+
+[sub_resource type="BoxMesh" id="Mesh_glow"]
+size = Vector3(0.16, 0.03, 0.24)
+material = SubResource("Mat_glow")
+
+[node name="StaticBodifier" type="Node3D"]
+metadata/hand_size = 0.2
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("Mesh_body")
+
+[node name="Stamp" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.09, -0.02)
+mesh = SubResource("Mesh_glow")
+
+[node name="StaticBodifierComponent" type="Node" parent="."]
+cooldown = 0.35
+script = ExtResource("1_tool")

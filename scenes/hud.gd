@@ -50,6 +50,9 @@ const USEABLE_SCENE_PATHS := [
 	"res://scenes/useables/route_paint_tool.tscn",
 	"res://scenes/useables/physics_gun.tscn",
 	"res://scenes/useables/fire_tool.tscn",
+	"res://scenes/useables/static_bodifier.tscn",
+	"res://scenes/useables/nav_bodifier.tscn",
+	"res://scenes/useables/dupe_gun.tscn",
 ]
 
 ## Property-tab row labels -> canonical BlockMaterials keys.
@@ -681,7 +684,8 @@ func _is_hidden_block_variant(item_name: String) -> bool:
 		):
 			return true
 	return (
-		lower.begins_with("auto_slab_bottom_")
+		lower.begins_with("navmarker")
+		or lower.begins_with("auto_slab_bottom_")
 		or lower.begins_with("auto_slab_side_")
 		or lower.begins_with("auto_panel_bottom_")
 		or lower.begins_with("auto_panel_side_")

@@ -1,0 +1,37 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/useables/dupe_gun_component.gd" id="1_tool"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_body"]
+albedo_color = Color(0.22, 0.24, 0.28, 1)
+metallic = 0.6
+roughness = 0.3
+
+[sub_resource type="StandardMaterial3D" id="Mat_core"]
+albedo_color = Color(0.35, 0.9, 0.45, 1)
+emission_enabled = true
+emission = Color(0.2, 0.9, 0.35, 1)
+emission_energy_multiplier = 1.6
+
+[sub_resource type="BoxMesh" id="Mesh_body"]
+size = Vector3(0.2, 0.17, 0.4)
+material = SubResource("Mat_body")
+
+[sub_resource type="SphereMesh" id="Mesh_core"]
+radius = 0.055
+height = 0.11
+material = SubResource("Mat_core")
+
+[node name="DupeGun" type="Node3D"]
+metadata/hand_size = 0.21
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("Mesh_body")
+
+[node name="Core" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.02, -0.22)
+mesh = SubResource("Mesh_core")
+
+[node name="DupeGunComponent" type="Node" parent="."]
+cooldown = 0.3
+script = ExtResource("1_tool")

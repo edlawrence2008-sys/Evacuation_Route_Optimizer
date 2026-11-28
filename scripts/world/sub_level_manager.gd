@@ -26,6 +26,10 @@ var sublevels: Array = []
 var _check_accum: float = 0.0
 
 
+## Emitted after the Static Bodifier turns a sub-level into world cells.
+signal staticified(cell_count: int)
+
+
 func setup(grid_ref: NavGridMap, host_node: Node3D) -> void:
 	grid = grid_ref
 	host = host_node
@@ -285,12 +289,20 @@ func _prune() -> void:
 func _weld_one() -> bool:
 	for index in sublevels.size():
 		var first: Variant = sublevels[index]
-		if not is_instance_valid(first) or first.settled_for < WELD_SETTLE:
+		if (
+			not is_instance_valid(first)
+			or first.settled_for < WELD_SETTLE
+			or first.nav_baked
+		):
 			continue
 
 		for other_index in range(index + 1, sublevels.size()):
 			var second: Variant = sublevels[other_index]
-			if not is_instance_valid(second) or second.settled_for < WELD_SETTLE:
+			if (
+				not is_instance_valid(second)
+				or second.settled_for < WELD_SETTLE
+				or second.nav_baked
+			):
 				continue
 
 			if not first.world_aabb().intersects(second.world_aabb()):
@@ -316,7 +328,11 @@ func _weld_one() -> bool:
 
 func _dock_one() -> bool:
 	for node: Variant in sublevels.duplicate():
-		if not is_instance_valid(node) or node.settled_for < DOCK_SETTLE:
+		if (
+			not is_instance_valid(node)
+			or node.settled_for < DOCK_SETTLE
+			or node.nav_baked
+		):
 			continue
 		if dock_now(node):
 			return true
@@ -366,6 +382,178 @@ func dock_now(node: SubLevel) -> bool:
 	sublevels.erase(node)
 	node.queue_free()
 	return true
+
+
+## Static Bodifier: convert a moving body into normal world blocks at its
+## current transform. The placed cells enter the chunk/nav/route/save systems,
+## so agents and the optimizer treat the result as map geometry.
+func staticify(node: SubLevel) -> int:
+	if grid == null or not is_instance_valid(grid):
+		return 0
+	if node == null or not is_instance_valid(node) or node.cells.is_empty():
+		return 0
+
+	unbake_nav(node)
+
+	var placement: Dictionary = node.world_cell_placement(grid)
+	if placement.is_empty():
+		return 0
+
+	var groups: Dictionary = {}
+	for target_value: Variant in placement:
+		var target: Vector3i = target_value
+		var entry: Dictionary = placement[target]
+		var item: int = int(entry.get("item", -1))
+		if item < 0:
+			continue
+		var orientation: int = int(entry.get("orientation", 0))
+		var key := "%d:%d" % [item, orientation]
+		if not groups.has(key):
+			groups[key] = {
+				"item": item,
+				"orientation": orientation,
+				"cells": [],
+			}
+		groups[key]["cells"].append(target)
+
+	var placed := 0
+	for key: Variant in groups:
+		var group: Dictionary = groups[key]
+		var cells: Array[Vector3i] = []
+		cells.assign(group["cells"])
+		placed += grid.place_blocks(
+			cells,
+			int(group["item"]),
+			int(group["orientation"])
+		)
+
+	if placed == 0:
+		return 0
+
+	var scene_root := get_tree().current_scene if is_inside_tree() else null
+	node.move_placeables_to(scene_root if scene_root != null else host)
+	node.detach_ash()
+	sublevels.erase(node)
+	node.queue_free()
+	staticified.emit(placed)
+	return placed
+
+
+## Dupe gun: create a new editable sub-level with the same cells and attached
+## placeables, translated by `world_offset`. The copy starts at rest.
+func duplicate_sublevel(node: SubLevel, world_offset: Vector3) -> SubLevel:
+	if grid == null or host == null:
+		return null
+	if node == null or not is_instance_valid(node) or node.cells.is_empty():
+		return null
+
+	var copy := SUB_LEVEL.new()
+	copy.name = "SubLevel"
+	copy.configure(
+		grid.mesh_library,
+		grid.cell_size,
+		node.origin_cell,
+		Callable(grid, "get_orientation_basis")
+	)
+	copy.ctm_grid = grid
+	_apply_grid_rules(copy)
+	copy.shed_callback = Callable(
+		self,
+		"_shed_sublevel_cells"
+	).bind(copy)
+	host.add_child(copy)
+	copy.global_transform = Transform3D(
+		node.global_transform.basis,
+		node.global_transform.origin + world_offset
+	)
+	copy.set_cells(node.cells.duplicate(true), false)
+	copy.linear_velocity = Vector3.ZERO
+	copy.angular_velocity = Vector3.ZERO
+	copy.freeze = node.freeze
+	copy.gravity_scale = node.gravity_scale if node.freeze else 1.0
+	copy.sleeping = false
+
+	for child in node.get_children():
+		if not child is Node3D or not child.is_in_group("placeables"):
+			continue
+		var duplicate := child.duplicate()
+		if duplicate is Node3D:
+			copy.add_child(duplicate)
+			(duplicate as Node3D).transform = (child as Node3D).transform
+
+	sublevels.append(copy)
+	return copy
+
+
+## Nav Bodifier: freeze the body in place and register invisible nav-marker
+## world cells along its walkable top surfaces. The body keeps its diagonal
+## visual/collision; the markers make the existing grid A*, routes and optimizer
+## treat the surface as walkable.
+func bake_nav(node: SubLevel) -> int:
+	if grid == null or not is_instance_valid(grid):
+		return 0
+	if node == null or not is_instance_valid(node) or node.cells.is_empty():
+		return 0
+
+	unbake_nav(node)
+	var placement: Dictionary = node.nav_bake_placement(grid)
+	if placement.is_empty():
+		return 0
+
+	var groups: Dictionary = {}
+	for target_value: Variant in placement:
+		var target: Vector3i = target_value
+		var entry: Dictionary = placement[target]
+		var item: int = int(entry.get("item", -1))
+		if item < 0:
+			continue
+		var key := "%d:%d" % [item, 0]
+		if not groups.has(key):
+			groups[key] = {"item": item, "cells": []}
+		groups[key]["cells"].append(target)
+
+	var placed := 0
+	for key: Variant in groups:
+		var group: Dictionary = groups[key]
+		var cells: Array[Vector3i] = []
+		cells.assign(group["cells"])
+		placed += grid.place_blocks(cells, int(group["item"]), 0)
+
+	if placed == 0:
+		return 0
+
+	node.nav_marker_cells.clear()
+	for target_value: Variant in placement:
+		node.nav_marker_cells.append(target_value as Vector3i)
+	node.nav_baked = true
+	node.set_meta("nav_baked", true)
+	node.freeze = true
+	node.linear_velocity = Vector3.ZERO
+	node.angular_velocity = Vector3.ZERO
+	node.gravity_scale = 0.0
+	node.sleeping = false
+	return placed
+
+
+func unbake_nav(node: SubLevel) -> int:
+	if node == null or not is_instance_valid(node) or grid == null:
+		return 0
+	var remove: Array[Vector3i] = []
+	for cell: Vector3i in node.nav_marker_cells:
+		if grid.is_nav_marker_cell(cell):
+			remove.append(cell)
+	var removed := 0
+	if not remove.is_empty():
+		removed = grid.remove_blocks(remove)
+	node.nav_marker_cells.clear()
+	node.nav_baked = false
+	if node.has_meta("nav_baked"):
+		node.remove_meta("nav_baked")
+	if node.freeze:
+		node.freeze = false
+	node.gravity_scale = 1.0
+	node.sleeping = false
+	return removed
 
 
 func _touches_world(placement: Dictionary) -> bool:

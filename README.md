@@ -70,8 +70,11 @@ will not merge into one flock. The old nine-spawner demo lives in the save slot
 | Place / break | RMB / LMB (hold and drag for areas; brushes/drags also edit sub-levels) |
 | Pick block | Middle mouse |
 | Grab (hold) | G (2D line beam) |
-| Useables physics gun | LMB grab/hold, RMB freeze, Q spin, `,`/`.` distance |
+| Useables physics gun | LMB grab/hold, RMB freeze, hold Q + mouse to rotate, Shift snaps, `,`/`.` distance |
 | Useables fire tool | LMB ignite any block or sub-level cell; non-fuel surfaces self-extinguish |
+| Useables static bodifier | LMB convert an aimed sub-level into permanent world/map blocks |
+| Useables nav bodifier | LMB freeze a sub-level and bake an invisible diagonal nav grid; RMB unbakes |
+| Useables dupe gun | LMB duplicate the aimed sub-level, cells and attached placeables |
 | Rotate held stairs or placeable | Q |
 | Toggle build plane (floor/wall) | Alt |
 | Toggle inventory | R |

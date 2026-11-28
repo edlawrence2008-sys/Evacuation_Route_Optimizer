@@ -133,8 +133,12 @@ force = force.limit_length(mass * 400)
   it. Release restores the exact previous layer/mask. The Property tab renders
   this boolean as a checkbox.
 - **RMB** freezes or unfreezes the held body (or the aimed one when empty).
-- **Q** rotates the held body around the view axis, pivoting on the grabbed
-  point.
+- **Hold Q + move the mouse** to rotate the held body. Player camera look is
+  locked while Q is held; horizontal mouse motion rolls around the camera's
+  view axis and vertical motion pitches around its right axis, pivoting on the
+  grabbed point. Holding **Shift** during rotation snaps the body's basis to the
+  nearest cardinal orientation (up/down/left/right/forward/back), so it can
+  still be rotated freely but lands on 90° axes.
 - **,** / **.** push the hold point 0.5 m out or in (2.5-11 m).
 - While held, gravity is cancelled and all three angular axes are locked
   (`axis_lock_angular_*`), so the body keeps its orientation instead of
@@ -167,8 +171,10 @@ fight.
     taller sub-level body (the probe sits above one-block step height, so
     step-ups still work). Non-kinematic physics-contact agents also add layer 5
     to their engine collision mask;
-  - the navigation graph remains world-based, so agents do not path around
-    moving bodies yet; they stop at a wall or walk on top of a floor.
+  - the normal navigation graph is world-based, so unchecked moving bodies are
+    not routed around. Use the **Nav Bodifier** to freeze a diagonal/rotated
+    sub-level and register its walkable cells as map nav terrain; otherwise agents
+    stop at a wall or walk on top of a floor.
 - Compound convex boxes are the practical substitute for Sable/Teardown's custom
   voxel narrowphase; Godot does not expose Jolt's contact callbacks to GDScript.
   Jolt performs the broadphase and contact generation between compounds, and the
@@ -193,6 +199,59 @@ fight.
 Auto-dock is off by default so a sub-level you are building on does not vanish
 into the world. Turn it on when you want rubble or landed structures to become
 permanent world geometry.
+
+### Static Bodifier
+
+The **Static Bodifier** is a Useables tool. Aim at a sub-level and press primary
+fire. It converts the body into normal world grid cells at its current
+transform:
+
+- Axis-aligned pieces map cleanly; rotated pieces snap each cell centre to the
+  nearest world cell and remap directional block orientations to the nearest
+  valid orientation.
+- Occupied world cells are skipped; a piece that overlaps existing blocks keeps
+  only its non-overlapping cells.
+- Attached placeables are returned to the world at their current transforms.
+- The rigid body is removed, so it no longer appears in `serialize_all()`.
+- The new blocks enter the chunk store, navigation graph, authored-route
+  invalidation and optimizer layout, and are saved with the map like any other
+  world edits.
+
+This is deliberately different from the physics gun's temporary freeze: the
+physics gun holds a moving body; the Static Bodifier turns the piece into map
+geometry. The regular **Auto Dock** remains the automatic settled/axis-aligned
+version of the same conversion.
+
+### Nav Bodifier (diagonal nav grid)
+
+The **Nav Bodifier** is the diagonal-friendly option. Primary fire freezes the
+aimed sub-level in place and bakes an **invisible navigation grid** over its
+walkable top cells:
+
+- The sub-level keeps its exact visual and collision shape, including arbitrary
+  rotation; it is not converted into axis-aligned blocks.
+- Each walkable top cell gets an invisible `NavMarker`/`NavMarker_Slab` world
+  cell at the closest matching height. The existing grid A*, authored routes and
+  optimizer see those cells as normal walkable map terrain.
+- The body is frozen (`freeze = true`, gravity 0) and marked `nav_baked`. It is
+  skipped by auto-dock/weld while baked, and the physics gun won't rotate it.
+- The bake is saved twice: the frozen body is in the sub-level save list, and the
+  marker cells are in the world chunk store. `nav_baked` plus the owned marker
+  cells are also stored in the body's state so unbaking works after a load.
+- Secondary fire removes the marker cells and unfreezes the body.
+
+This is meant for diagonal bridges, ramps and platforms that members should walk
+across even though the world grid is axis-aligned.
+
+### Dupe Gun
+
+The **Dupe Gun** is a Useables tool that duplicates the aimed sub-level in front
+of the camera:
+
+- Copies the body's local cells, orientation and attached placeables.
+- Creates a normal editable `SubLevel`, not a world bake.
+- The copy is offset along the aim direction by the body size plus a small gap.
+- The copy is saved with the map's normal sub-level list.
 
 ## Sub-level rules
 
@@ -289,8 +348,10 @@ agent sub-level layer constant, local stability (including shed debris bodies),
 entity damage, collision destruction (direct carve and moving-body AABB sweep),
 and sub-level/world fire (flammability gating, smoke visual, ash points and the
 auto-detected frame count, surface-fire self-extinguishing, ash panels and
-ash settling/merging). It is **70/70**. Useables is **26/26** including the Fire
-Tool, generated useable icons, and physics-gun collision/reach exports.
+ash settling/merging, Static Bodifier conversion, dupe-gun duplication and
+Nav Bodifier baking). It is **96/96**. Useables is **47/47** including the Fire
+Tool, Static Bodifier, Nav Bodifier, Dupe Gun, generated useable icons, and
+physics-gun collision/reach exports.
 
 ```
 godot --headless --path . --script res://tests/sublevel_test.gd

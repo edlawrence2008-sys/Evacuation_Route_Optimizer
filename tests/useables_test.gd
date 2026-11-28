@@ -102,6 +102,82 @@ func _run() -> void:
 			_expect("fire tool can use", fire_component.has_method("use"))
 		fire_root.free()
 
+	var static_path := "res://scenes/useables/static_bodifier.tscn"
+	_expect(
+		"catalog lists the static bodifier",
+		HUD_SCRIPT.USEABLE_SCENE_PATHS.has(static_path)
+	)
+	var static_packed := load(static_path) as PackedScene
+	_expect("static bodifier scene loads", static_packed != null)
+	if static_packed != null:
+		var static_root: Node = static_packed.instantiate()
+		var static_component: UseComponent = null
+		for child in static_root.get_children():
+			if child is UseComponent:
+				static_component = child
+				break
+		_expect(
+			"static bodifier owns a UseComponent",
+			static_component != null
+		)
+		if static_component != null:
+			_expect(
+				"component script is the static bodifier",
+				static_component.get_script().resource_path.ends_with(
+					"static_bodifier_component.gd"
+				)
+			)
+			_expect(
+				"static bodifier has a reach",
+				"reach" in static_component
+			)
+			_expect(
+				"static bodifier has a description",
+				not String(static_component.get("description")).is_empty()
+			)
+		static_root.free()
+
+	for tool_spec in [
+		["res://scenes/useables/nav_bodifier.tscn", "nav_bodifier_component.gd"],
+		["res://scenes/useables/dupe_gun.tscn", "dupe_gun_component.gd"],
+	]:
+		var tool_path := String(tool_spec[0])
+		var component_script := String(tool_spec[1])
+		_expect(
+			"catalog lists %s" % tool_path.get_file(),
+			HUD_SCRIPT.USEABLE_SCENE_PATHS.has(tool_path)
+		)
+		var tool_packed := load(tool_path) as PackedScene
+		_expect("%s loads" % tool_path.get_file(), tool_packed != null)
+		if tool_packed == null:
+			continue
+		var tool_root: Node = tool_packed.instantiate()
+		var tool_component: UseComponent = null
+		for child in tool_root.get_children():
+			if child is UseComponent:
+				tool_component = child
+				break
+		_expect(
+			"%s owns a UseComponent" % tool_path.get_file(),
+			tool_component != null
+		)
+		if tool_component != null:
+			_expect(
+				"%s has the expected script" % tool_path.get_file(),
+				tool_component.get_script().resource_path.ends_with(
+					component_script
+				)
+			)
+			_expect(
+				"%s has a reach" % tool_path.get_file(),
+				"reach" in tool_component
+			)
+			_expect(
+				"%s has a description" % tool_path.get_file(),
+				not String(tool_component.get("description")).is_empty()
+			)
+		tool_root.free()
+
 	for path_value: Variant in HUD_SCRIPT.USEABLE_SCENE_PATHS:
 		var scene_path := String(path_value)
 		var scene := load(scene_path) as PackedScene

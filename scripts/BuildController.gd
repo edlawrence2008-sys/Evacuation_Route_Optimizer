@@ -80,6 +80,10 @@ var _gun_previous_lock_z: bool = false
 var _gun_previous_collision_layer: int = 0
 var _gun_previous_collision_mask: int = 0
 var _gun_collision_restore: bool = false
+## Mouse-driven rotation while Q is held. Sprint snaps the body to a cardinal
+## orientation.
+var _gun_rotating: bool = false
+const GUN_MOUSE_ROTATE_SPEED: float = 0.011
 ## True while a Useables tool owns the primary-use button.
 var _primary_use_held: bool = false
 signal inventory_toggled(open: bool)
@@ -308,6 +312,14 @@ func _input(event: InputEvent) -> void:
 	if _is_typing():
 		return
 
+	if _gun_rotating and event is InputEventMouseMotion:
+		_apply_gun_mouse_rotation(event as InputEventMouseMotion)
+		get_viewport().set_input_as_handled()
+		return
+
+	if inventory_open and _gun_rotating:
+		_stop_gun_rotate()
+
 	if not inventory_open and event.is_action_pressed("interact"):
 		_try_interact()
 		return
@@ -352,7 +364,12 @@ func _input(event: InputEvent) -> void:
 		_toggle_build_plane()
 		return
 
-	if build_mode_active and event.is_action_pressed("ui_rotate"):
+	if event.is_action_pressed("ui_rotate"):
+		if _gun_body != null and is_instance_valid(_gun_body):
+			_start_gun_rotate()
+			return
+		if not build_mode_active:
+			return
 		if (
 			_held_use_component != null
 			and _held_use_component.rotate_held(player, 15.0)
@@ -360,6 +377,9 @@ func _input(event: InputEvent) -> void:
 			return
 		_rotate_placement()
 		return
+
+	if event.is_action_released("ui_rotate"):
+		_stop_gun_rotate()
 
 	if build_mode_active and event.is_action_pressed("toggle_inventory"):
 		_toggle_inventory()
@@ -415,6 +435,12 @@ func _is_typing() -> bool:
 func _process(_delta: float) -> void:
 	if not _setup_done or player == null:
 		return
+	if _gun_rotating and (
+		not Input.is_action_pressed("ui_rotate")
+		or _gun_body == null
+		or not is_instance_valid(_gun_body)
+	):
+		_stop_gun_rotate()
 
 	# Both beams follow the render-frame camera/emitter and the interpolated
 	# body, so they do not judder at the 30 Hz physics rate.
@@ -3110,6 +3136,8 @@ func _begin_grab() -> void:
 	var body := collider as RigidBody3D
 	if body == player:
 		return
+	if body is SubLevel and (body as SubLevel).nav_baked:
+		return
 
 	var distance: float = _camera.global_position.distance_to(hit.position)
 	if distance > 12.0:
@@ -3232,6 +3260,8 @@ func begin_gun_hold(
 	var body := collider as RigidBody3D
 	if body == player:
 		return false
+	if body is SubLevel and (body as SubLevel).nav_baked:
+		return false
 
 	# Same reach as the build ray by default; a tool can override it.
 	var reach: float = build_reach if reach_override <= 0.0 else reach_override
@@ -3272,6 +3302,7 @@ func begin_gun_hold(
 
 
 func end_gun_hold() -> void:
+	_stop_gun_rotate()
 	var body := _gun_body
 	_gun_body = null
 
@@ -3361,6 +3392,91 @@ func toggle_gun_freeze() -> void:
 		body.angular_velocity = Vector3.ZERO
 	else:
 		body.sleeping = false
+
+
+func _start_gun_rotate() -> void:
+	if _gun_body == null or not is_instance_valid(_gun_body):
+		return
+	if _gun_body.has_meta("nav_baked") and bool(_gun_body.get_meta("nav_baked")):
+		return
+	_gun_rotating = true
+	if player != null and "camera_look_locked" in player:
+		player.set("camera_look_locked", true)
+
+
+func _stop_gun_rotate() -> void:
+	if not _gun_rotating:
+		return
+	_gun_rotating = false
+	if player != null and "camera_look_locked" in player:
+		player.set("camera_look_locked", false)
+
+
+## Mouse-driven rotation: horizontal motion rolls around the camera forward
+## axis, vertical motion pitches around the camera right axis. Holding sprint
+## snaps the result to the nearest cardinal orientation.
+func _apply_gun_mouse_rotation(event: InputEventMouseMotion) -> void:
+	if (
+		_gun_body == null
+		or not is_instance_valid(_gun_body)
+		or _camera == null
+	):
+		_stop_gun_rotate()
+		return
+
+	var relative := event.relative
+	if relative.length_squared() <= 0.0001:
+		return
+
+	var forward: Vector3 = -_camera.global_transform.basis.z
+	var right: Vector3 = _camera.global_transform.basis.x
+	var body_basis: Basis = _gun_body.global_transform.basis
+	var delta := (
+		Basis(forward, -relative.x * GUN_MOUSE_ROTATE_SPEED)
+		* Basis(right, -relative.y * GUN_MOUSE_ROTATE_SPEED)
+	)
+	var new_basis := (delta * body_basis).orthonormalized()
+	if Input.is_action_pressed("sprint"):
+		var snapped := _snap_basis_cardinal(new_basis)
+		if snapped.determinant() < 0.0:
+			snapped = Basis(snapped.x, -snapped.y, -snapped.z)
+		new_basis = snapped
+
+	var pivot: Vector3 = _gun_body.to_global(_gun_local_point)
+	_gun_body.global_transform = Transform3D(
+		new_basis,
+		pivot - new_basis * _gun_local_point
+	)
+	_gun_body.angular_velocity = Vector3.ZERO
+	_gun_body.sleeping = false
+
+
+func _snap_basis_cardinal(basis: Basis) -> Basis:
+	var x := _nearest_world_axis(basis.x, Vector3.ZERO)
+	var y := _nearest_world_axis(basis.y, x)
+	var z := x.cross(y).normalized()
+	return Basis(x, y, z)
+
+
+func _nearest_world_axis(value: Vector3, exclude: Vector3) -> Vector3:
+	var axes: Array[Vector3] = [
+		Vector3.RIGHT,
+		Vector3.LEFT,
+		Vector3.UP,
+		Vector3.DOWN,
+		Vector3.BACK,
+		Vector3.FORWARD,
+	]
+	var best := Vector3.RIGHT
+	var best_dot := -INF
+	for axis: Vector3 in axes:
+		if exclude != Vector3.ZERO and absf(axis.dot(exclude)) > 0.5:
+			continue
+		var score: float = value.dot(axis)
+		if score > best_dot:
+			best_dot = score
+			best = axis
+	return best
 
 
 ## Q rotates the held body around the view axis, at the point the beam holds,
@@ -3483,6 +3599,10 @@ func _try_sublevel_edit(placing: bool) -> bool:
 	var sublevel := _sublevel_from_collider(hit.get("collider"))
 	if sublevel == null:
 		return false
+
+	# A Nav Bodifier piece is frozen map terrain. Unbake it before editing.
+	if sublevel.nav_baked:
+		return true
 
 	var hit_cell := _sublevel_hit_cell(sublevel, hit)
 	if not sublevel.cells.has(hit_cell):

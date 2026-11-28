@@ -15,6 +15,8 @@ const PLANK := 2
 const ASH_PANEL := 3
 const ASH_BLOCK := 4
 const ASH_SLAB := 5
+const NAV_MARKER := 6
+const NAV_MARKER_LOW := 7
 
 var _checks: int = 0
 var _failures: int = 0
@@ -40,6 +42,9 @@ func _run() -> void:
 	await _test_stability_and_fire()
 	await _test_contact_damage()
 	await _test_collision_destruction()
+	await _test_staticify()
+	await _test_dupe()
+	await _test_nav_bake()
 	await _test_world_fire()
 	_test_agent_layer()
 	_finish()
@@ -567,6 +572,154 @@ func _test_collision_destruction() -> void:
 	_free_all()
 
 
+func _test_staticify() -> void:
+	_begin()
+
+	var sublevel = _manager.spawn(
+		[Vector3i(2, 4, 0), Vector3i(3, 4, 0)],
+		{
+			Vector3i(2, 4, 0): CONCRETE,
+			Vector3i(3, 4, 0): CONCRETE,
+		},
+		{}
+	)
+	_expect("static bodifier: body spawned", sublevel != null)
+	if sublevel == null:
+		_free_all()
+		return
+
+	var placed: int = _manager.staticify(sublevel)
+	_expect("static bodifier: cells placed", placed == 2, str(placed))
+	_expect(
+		"static bodifier: first world cell exists",
+		_grid.has_block(Vector3i(2, 4, 0))
+	)
+	_expect(
+		"static bodifier: second world cell exists",
+		_grid.has_block(Vector3i(3, 4, 0))
+	)
+	_expect(
+		"static bodifier: rigid body removed from manager",
+		not _manager.sublevels.has(sublevel)
+	)
+	_expect(
+		"static bodifier: body not serialized as a sub-level",
+		_manager.serialize_all().is_empty()
+	)
+	await process_frame
+	_expect(
+		"static bodifier: rigid body freed",
+		not is_instance_valid(sublevel)
+	)
+
+	_free_all()
+
+
+func _test_dupe() -> void:
+	_begin()
+	var source = _manager.spawn(
+		[Vector3i(2, 4, 0), Vector3i(3, 4, 0)],
+		{
+			Vector3i(2, 4, 0): CONCRETE,
+			Vector3i(3, 4, 0): CONCRETE,
+		},
+		{}
+	)
+	_expect("dupe gun: source spawned", source != null)
+	if source == null:
+		_free_all()
+		return
+
+	var copy = _manager.duplicate_sublevel(source, Vector3(5, 0, 0))
+	_expect("dupe gun: copy created", copy != null and is_instance_valid(copy))
+	if copy == null:
+		_free_all()
+		return
+	_expect(
+		"dupe gun: copy has the same cells",
+		copy.cells.size() == source.cells.size()
+	)
+	_expect(
+		"dupe gun: copy is offset",
+		copy.global_position.distance_to(source.global_position + Vector3(5, 0, 0))
+		< 0.01
+	)
+	_expect(
+		"dupe gun: manager holds both bodies",
+		_manager.sublevels.size() == 2
+	)
+
+	var furniture := _make_placeable(source)
+	furniture.position = Vector3(0.25, 1.0, 0.0)
+	var with_furniture = _manager.duplicate_sublevel(source, Vector3(2, 0, 0))
+	var copied_furniture := 0
+	if with_furniture != null:
+		for child in with_furniture.get_children():
+			if child.is_in_group("placeables"):
+				copied_furniture += 1
+	_expect(
+		"dupe gun: placeables are copied",
+		copied_furniture == 1,
+		str(copied_furniture)
+	)
+
+	_free_all()
+
+
+func _test_nav_bake() -> void:
+	_begin()
+	var body = _manager.spawn(
+		[Vector3i(2, 4, 0), Vector3i(3, 4, 0)],
+		{
+			Vector3i(2, 4, 0): CONCRETE,
+			Vector3i(3, 4, 0): CONCRETE,
+		},
+		{}
+	)
+	_expect("nav bodifier: body spawned", body != null)
+	if body == null:
+		_free_all()
+		return
+
+	var nav_before: int = _grid.get_nav_point_count()
+	var baked: int = _manager.bake_nav(body)
+	_expect("nav bodifier: markers baked", baked > 0, str(baked))
+	_expect("nav bodifier: body marked baked", body.nav_baked)
+	_expect("nav bodifier: body frozen", body.freeze)
+	_expect(
+		"nav bodifier: marker cells recorded",
+		not body.nav_marker_cells.is_empty()
+	)
+	var marker_cell: Vector3i = body.nav_marker_cells[0]
+	_expect(
+		"nav bodifier: world nav marker exists",
+		_grid.is_nav_marker_cell(marker_cell)
+	)
+	_expect(
+		"nav bodifier: nav point count grew",
+		_grid.get_nav_point_count() > nav_before
+	)
+	_expect(
+		"nav bodifier: save state marks the body baked",
+		bool(body.serialize_state().get("nav_baked", false))
+	)
+	_expect(
+		"nav bodifier: body is not welded/docked while baked",
+		_manager._dock_one() == false
+	)
+
+	var removed: int = _manager.unbake_nav(body)
+	_expect("nav bodifier: markers removed", removed > 0, str(removed))
+	_expect("nav bodifier: body unbaked", not body.nav_baked)
+	_expect("nav bodifier: body unfrozen", not body.freeze)
+	_expect(
+		"nav bodifier: marker block cleared",
+		not _grid.is_nav_marker_cell(marker_cell)
+	)
+
+	_free_all()
+
+
 func _test_world_fire() -> void:
 	_begin()
 	_place(Vector3i(0, 3, 0), CONCRETE)
@@ -720,6 +873,8 @@ func _library() -> MeshLibrary:
 		ASH_PANEL: "Auto_Panel_Bottom_ash",
 		ASH_BLOCK: "Auto_ash",
 		ASH_SLAB: "Auto_Slab_Top_ash",
+		NAV_MARKER: "NavMarker",
+		NAV_MARKER_LOW: "NavMarker_Slab",
 	}
 	for item: int in names:
 		library.create_item(item)

@@ -120,6 +120,12 @@
 			"scene": "res://scenes/placeables/sim/sim_spawner.tscn",
 			"viewmodel": "scene"
 		},
+		"res://scenes/useables/dupe_gun.tscn": {
+			"icon": "res://resources/voxel_items/dupe_gun.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/dupe_gun.tscn",
+			"viewmodel": "scene"
+		},
 		"res://scenes/useables/fire_tool.tscn": {
 			"icon": "res://resources/voxel_items/fire_tool.tres",
 			"mesh": "",
@@ -132,6 +138,12 @@
 			"scene": "res://scenes/useables/gas_tool.tscn",
 			"viewmodel": "scene"
 		},
+		"res://scenes/useables/nav_bodifier.tscn": {
+			"icon": "res://resources/voxel_items/nav_bodifier.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/nav_bodifier.tscn",
+			"viewmodel": "scene"
+		},
 		"res://scenes/useables/physics_gun.tscn": {
 			"icon": "res://resources/voxel_items/physics_gun.tres",
 			"mesh": "",
@@ -142,6 +154,12 @@
 			"icon": "res://resources/voxel_items/route_paint_tool.tres",
 			"mesh": "",
 			"scene": "res://scenes/useables/route_paint_tool.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/useables/static_bodifier.tscn": {
+			"icon": "res://resources/voxel_items/static_bodifier.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/static_bodifier.tscn",
 			"viewmodel": "scene"
 		},
 		"res://scenes/useables/water_tool.tscn": {

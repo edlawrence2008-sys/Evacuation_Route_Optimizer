@@ -4176,6 +4176,24 @@ func get_block_item(cell: Vector3i) -> int:
 	return _sections.get_cell_item(cell)
 
 
+## Invisible navigation-only marker items used by the Nav Bodifier.
+func nav_marker_item(low: bool) -> int:
+	if mesh_library == null:
+		return -1
+	var name := "NavMarker_Slab" if low else "NavMarker"
+	return mesh_library.find_item_by_name(name)
+
+
+func is_nav_marker_item(item: int) -> bool:
+	if item < 0 or mesh_library == null:
+		return false
+	return String(mesh_library.get_item_name(item)).begins_with("NavMarker")
+
+
+func is_nav_marker_cell(cell: Vector3i) -> bool:
+	return is_nav_marker_item(get_block_item(cell))
+
+
 func get_block_orientation(cell: Vector3i) -> int:
 	return _sections.get_cell_orientation(cell)
 

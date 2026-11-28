@@ -87,6 +87,9 @@ const BOB_AMP = 0.06
 const LAND_BOUNCE_AMOUNT = -0.15
 const WALL_RUN_TILT = 5.0
 var camera_x_rotation = 0.0
+## Set while a held tool (physics-gun rotation) owns the mouse. Player look is
+## suppressed but movement stays live.
+var camera_look_locked: bool = false
 var camera_tween : Tween
 var damage_tween : Tween
 
@@ -146,6 +149,8 @@ func _input(event):
 	if is_dead: return
 
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		if camera_look_locked:
+			return
 		var current_sensitivity = SENSITIVITY * (0.5 if is_zooming else 1.0)
 		# Yaw turns the whole CharacterBody3D so the body (and anything that
 		# reads its basis) follows the camera. Pitch stays on the camera.

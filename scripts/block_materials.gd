@@ -262,6 +262,8 @@ static func is_flammable(item_name: String) -> bool:
 ## True when the material can never become unsupported (Bedrock). Anchored
 ## materials are the roots the structural pass floods from.
 static func is_anchored(item_name: String) -> bool:
+	if item_name.begins_with("NavMarker"):
+		return true
 	var definition := material_for(item_name)
 	return bool(definition.get("anchored", false))
 
@@ -271,6 +273,8 @@ static func is_anchored(item_name: String) -> bool:
 ## that shapes their inspector stability, so a concrete slab reaches slightly
 ## less far than a concrete block.
 static func stability_reach_for_item(item_name: String) -> int:
+	if item_name.begins_with("NavMarker"):
+		return STABILITY_ANCHORED
 	var definition := material_for(item_name)
 	if definition.is_empty():
 		return FALLBACK_STABILITY_REACH
