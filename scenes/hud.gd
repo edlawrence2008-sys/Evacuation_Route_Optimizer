@@ -49,6 +49,7 @@ const USEABLE_SCENE_PATHS := [
 	"res://scenes/useables/gas_tool.tscn",
 	"res://scenes/useables/route_paint_tool.tscn",
 	"res://scenes/useables/physics_gun.tscn",
+	"res://scenes/useables/fire_tool.tscn",
 ]
 
 ## Property-tab row labels -> canonical BlockMaterials keys.
@@ -1927,7 +1928,11 @@ func _add_useables_group() -> void:
 	for scene: PackedScene in loaded:
 		var button = item_button_scene.instantiate()
 		grid.add_child(button)
-		button.set_useable(scene, _useable_display_name(scene))
+		button.set_useable(
+			scene,
+			_useable_display_name(scene),
+			_get_scene_preview(scene)
+		)
 		button.useable_selected.connect(_on_useable_selected)
 
 
@@ -2691,7 +2696,18 @@ func _get_placeable_properties(scene: PackedScene) -> Array:
 
 	var props: Array = []
 	var temp: Node = scene.instantiate()
+	var script_node: Node = temp
 	var script: Script = temp.get_script()
+
+	# Useables put their exported behaviour on a child UseComponent rather than
+	# the visual scene root. Fall back to the first scripted child so those
+	# exports (reach, collision mode, tool tunables, etc.) stay editable.
+	if script == null:
+		for child in temp.find_children("*", "", true, false):
+			if child.get_script() != null:
+				script_node = child
+				script = child.get_script()
+				break
 
 	if script:
 		for prop in script.get_script_property_list():
@@ -2702,7 +2718,7 @@ func _get_placeable_properties(scene: PackedScene) -> Array:
 			props.append({
 				"name": String(prop.name),
 				"type": int(prop.type),
-				"default": temp.get(prop.name),
+				"default": script_node.get(prop.name),
 			})
 
 	temp.free()
@@ -2998,9 +3014,20 @@ func _show_adjustable_vars(
 		if label:
 			label.text = prop_name.capitalize()
 		if line_edit:
-			line_edit.text = _value_to_text(
-				overrides.get(prop_name, prop.get("default"))
-			)
+			if prop_type == TYPE_BOOL:
+				line_edit.visible = false
+				var toggle := CheckBox.new()
+				toggle.name = "BoolValue"
+				toggle.text = "On"
+				toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				toggle.button_pressed = bool(
+					overrides.get(prop_name, prop.get("default"))
+				)
+				row.get_node("HBoxContainer").add_child(toggle)
+			else:
+				line_edit.text = _value_to_text(
+					overrides.get(prop_name, prop.get("default"))
+				)
 
 		row.set_meta("var_name", prop_name)
 		row.set_meta("var_type", prop_type)
@@ -3090,6 +3117,10 @@ func get_placeable_overrides() -> Dictionary:
 			continue
 		var var_name: String = row.get_meta("var_name")
 		var var_type: int = row.get_meta("var_type")
+		var toggle := row.get_node_or_null("HBoxContainer/BoolValue") as CheckBox
+		if toggle != null:
+			overrides[var_name] = toggle.button_pressed
+			continue
 		var line_edit: LineEdit = row.get_node_or_null("HBoxContainer/LineEdit")
 		if line_edit:
 			overrides[var_name] = _parse_value(line_edit.text, var_type)

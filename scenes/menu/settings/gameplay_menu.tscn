@@ -28,6 +28,16 @@ position = Vector3(0, -0.24, 0)
 action = &"destruction"
 caption = "Destruction"
 
+[node name="SublevelStability" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.47, 0)
+action = &"sublevel_stability"
+caption = "Sublevel Stability"
+
+[node name="SublevelDamage" parent="LeftColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.70, 0)
+action = &"sublevel_damage"
+caption = "Sublevel Entity Damage"
+
 [node name="RightColumn" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.68, 0, 0.035)
 
@@ -51,7 +61,17 @@ position = Vector3(0, -0.24, 0)
 action = &"auto_dock"
 caption = "Auto Dock"
 
+[node name="SublevelFire" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.47, 0)
+action = &"sublevel_fire"
+caption = "Sublevel Fire"
+
+[node name="SublevelDestruction" parent="RightColumn" instance=ExtResource("1_btn")]
+position = Vector3(0, -0.70, 0)
+action = &"sublevel_destruction"
+caption = "Sublevel Block Damage"
+
 [node name="GameplayBack" parent="." instance=ExtResource("1_btn")]
-position = Vector3(0, -0.62, 0.035)
+position = Vector3(0, -0.94, 0.035)
 action = &"back_settings"
 caption = "Back"

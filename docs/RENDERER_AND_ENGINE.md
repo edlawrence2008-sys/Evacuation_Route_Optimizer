@@ -104,6 +104,41 @@ Measured on the same save:
 `tests/foliage_batcher_test.gd` (8 checks) covers grouping, hidden-card
 restoration, a removal shrinking the batch, and the batch/material contract.
 
+### 2.2 The 2-second stutter: RoutePainter layout hashing (2026-11-27)
+
+A second, unrelated stall showed up on the large terrain saves: **~2.1 s frames
+every ~72 frames**. The profiler put almost all of it in
+`RoutePainter._process -> _load_for_current_world ->
+EvacuationPlan.capture_layout_signature -> NavGridMap.get_used_block_cells`.
+
+`RoutePainter` (an autoload) was hashing the **entire used-block list** every
+2.5 s to detect a layout change, even when the save had no authored-route file.
+On `Big_world` (576 chunks) that is `get_column_cell_list()` across every chunk,
+a string per cell, a sort of hundreds of thousands of strings, JSON encoding and
+SHA-256: **~2.7 s per hash**.
+
+Fix:
+
+- If `user://saves/<slug>/authored_routes.json` does not exist, clear the
+  painted layer and **never compute the layout hash**. The large saves have no
+  route file, so the work disappears entirely.
+- If a route file does exist, recompute only after a real world change
+  (`block_placed`, `block_removed`, `navigation_changed`, `chunk_loaded`,
+  `chunk_unloaded`) and only after **1 s of quiet**, so a chunk-streaming burst
+  cannot queue repeated hashes.
+- Authoring entry points (`paint_between`, `set_cells`, `_save`) force the hash
+  lazily the first time a route is actually painted.
+
+Measured over 550 frames (~9 s) after load:
+
+| Save | Before | After |
+|---|---|---|
+| `Big_world` (576 chunks) | 2.1 s stalls every ~72 frames | avg 14.4 ms, max 29.3 ms, 0 spikes |
+| `Plains_Bigger` (8,448 foliage) | 2.1 s stalls every ~72 frames | avg 5.8 ms, max 24.6 ms, 0 spikes |
+
+The foliage batcher still has a one-time ~0.5 s of batch creation/shader warmup
+right after loading `Plains_Bigger`; after that the save holds 160+ FPS.
+
 ## 3. Renderer recommendation
 
 **Stay on `mobile` unless a specific Forward+ feature is required.** It has more

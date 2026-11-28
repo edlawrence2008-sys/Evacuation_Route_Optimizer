@@ -12,6 +12,12 @@
 			"scene": "res://scenes/placeables/device/device_fluorescent_light.tscn",
 			"viewmodel": "scene"
 		},
+		"res://scenes/placeables/env/env_animal.tscn": {
+			"icon": "res://resources/voxel_items/env_animal.tres",
+			"mesh": "",
+			"scene": "res://scenes/placeables/env/env_animal.tscn",
+			"viewmodel": "scene"
+		},
 		"res://scenes/placeables/env/env_false_boid_emitter.tscn": {
 			"icon": "res://resources/voxel_items/env_false_boid_emitter.tres",
 			"mesh": "",
@@ -112,6 +118,36 @@
 			"icon": "res://resources/voxel_items/sim_spawner.tres",
 			"mesh": "",
 			"scene": "res://scenes/placeables/sim/sim_spawner.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/useables/fire_tool.tscn": {
+			"icon": "res://resources/voxel_items/fire_tool.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/fire_tool.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/useables/gas_tool.tscn": {
+			"icon": "res://resources/voxel_items/gas_tool.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/gas_tool.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/useables/physics_gun.tscn": {
+			"icon": "res://resources/voxel_items/physics_gun.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/physics_gun.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/useables/route_paint_tool.tscn": {
+			"icon": "res://resources/voxel_items/route_paint_tool.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/route_paint_tool.tscn",
+			"viewmodel": "scene"
+		},
+		"res://scenes/useables/water_tool.tscn": {
+			"icon": "res://resources/voxel_items/water_tool.tres",
+			"mesh": "",
+			"scene": "res://scenes/useables/water_tool.tscn",
 			"viewmodel": "scene"
 		}
 	},

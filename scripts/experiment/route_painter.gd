@@ -38,7 +38,13 @@ var _hover_valid: bool = false
 var _hover_world: Vector3 = Vector3.ZERO
 var _load_key: String = ""
 var _layout_signature: String = ""
-var _signature_checked_msec: int = 0
+## Recompute the expensive world layout hash only after a real world edit or
+## chunk change, not on a timer. A big 576-chunk world takes seconds to hash.
+var _layout_dirty: bool = true
+## Last time the layout changed. Route-file worlds wait for a quiet moment
+## before hashing, so a chunk-streaming burst cannot trigger several full scans.
+var _layout_dirty_at_msec: int = 0
+var _connected_grid: NavGridMap = null
 var _accum: float = 0.0
 var _status_accum: float = 0.0
 var _last_status: String = ""
@@ -167,7 +173,7 @@ func paint_between(start: Vector3i, finish: Vector3i) -> int:
 		return 0
 
 	if _layout_signature.is_empty():
-		_load_for_current_world()
+		_load_for_current_world(true)
 
 	var cells: Array[Vector3i] = _grid.get_path_cells(
 		_grid.to_global(_grid.map_to_local(start)),
@@ -245,7 +251,7 @@ func set_cells(cells: Array) -> int:
 		return 0
 
 	if _layout_signature.is_empty():
-		_load_for_current_world()
+		_load_for_current_world(true)
 
 	_committed.clear()
 	var count := 0
@@ -501,23 +507,50 @@ func _set_overlay_visible(value: bool) -> void:
 # Persistence
 # ---------------------------------------------------------------------------
 
-func _load_for_current_world() -> void:
+## `force_signature` is only used by the authoring entry points when there is no
+## route file yet. Normal per-frame polling exits immediately unless the save
+## slug or the actual world layout changed.
+func _load_for_current_world(force_signature: bool = false) -> void:
 	if get_tree() == null:
 		return
 
 	var demo_store := get_node_or_null("/root/DemoStore")
 	var slug := String(demo_store.call("active_save_slug")) if demo_store != null else "_unsaved"
-	var now := Time.get_ticks_msec()
+	var known_slug_key := slug + "|"
 
-	# Hashing every used block each frame is unnecessary. Grid edits change the
-	# signature, so refresh at a low rate rather than every 60 Hz frame.
 	if (
-		_load_key.begins_with(slug + "|")
-		and now - _signature_checked_msec < 2500
+		not force_signature
+		and not _layout_dirty
+		and _load_key.begins_with(known_slug_key)
 	):
 		return
 
-	_signature_checked_msec = now
+	var file_path := _file_path(slug)
+	var has_routes := FileAccess.file_exists(file_path)
+
+	# A route-file world waits for a quiet second after the last chunk/edit
+	# signal. Streaming 576 chunks would otherwise queue repeated full hashes.
+	if (
+		has_routes
+		and _layout_dirty
+		and not force_signature
+		and Time.get_ticks_msec() - _layout_dirty_at_msec < 1000
+	):
+		return
+
+	# Most maps, including the large terrain saves, have no authored routes.
+	# Never run the full-world layout hash for them.
+	if not has_routes and not force_signature:
+		_layout_dirty = false
+
+		if _load_key != known_slug_key:
+			_load_key = known_slug_key
+			_layout_signature = ""
+			_committed.clear()
+			_apply_to_grid()
+		return
+
+	_layout_dirty = false
 	var layout := String(EvacuationPlan.capture_layout_signature().get("signature", ""))
 	var key := "%s|%s" % [slug, layout]
 
@@ -527,7 +560,11 @@ func _load_for_current_world() -> void:
 	_load_key = key
 	_layout_signature = layout
 	_committed.clear()
-	var file_path := _file_path(slug)
+
+	if not has_routes:
+		_apply_to_grid()
+		return
+
 	var data := _read_json(file_path)
 	var layouts: Dictionary = data.get("layouts", {})
 	var entry: Variant = layouts.get(layout, {})
@@ -545,6 +582,12 @@ func _load_for_current_world() -> void:
 func _save() -> void:
 	var demo_store := get_node_or_null("/root/DemoStore")
 	var slug := String(demo_store.call("active_save_slug")) if demo_store != null else "_unsaved"
+
+	if _layout_signature.is_empty():
+		_layout_signature = String(
+			EvacuationPlan.capture_layout_signature().get("signature", "")
+		)
+
 	var file_path := _file_path(slug)
 	var data := _read_json(file_path)
 	var layouts: Dictionary = data.get("layouts", {})
@@ -618,6 +661,39 @@ func _ensure_grid() -> void:
 		return
 
 	_grid = get_tree().get_first_node_in_group("grid_map") as NavGridMap
+	_connect_layout_signals(_grid)
+
+
+func _connect_layout_signals(grid: NavGridMap) -> void:
+	if grid == null or grid == _connected_grid:
+		return
+
+	_connected_grid = grid
+
+	for signal_name: StringName in [
+		&"block_placed",
+		&"block_removed",
+		&"navigation_changed",
+		&"chunk_loaded",
+		&"chunk_unloaded",
+	]:
+		if (
+			grid.has_signal(signal_name)
+			and not grid.is_connected(signal_name, _on_layout_changed)
+		):
+			grid.connect(signal_name, _on_layout_changed)
+
+	_layout_dirty = true
+	_layout_dirty_at_msec = Time.get_ticks_msec()
+
+
+func _on_layout_changed(
+	_first: Variant = null,
+	_second: Variant = null,
+	_third: Variant = null
+) -> void:
+	_layout_dirty = true
+	_layout_dirty_at_msec = Time.get_ticks_msec()
 
 
 func _build_controller() -> Node:

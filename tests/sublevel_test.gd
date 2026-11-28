@@ -7,14 +7,21 @@ extends SceneTree
 
 const GRID = preload("res://scripts/gridmap.gd")
 const MANAGER = preload("res://scripts/world/sub_level_manager.gd")
+const FIRE_TEXTURE: Texture2D = preload("res://textures/specialblocks/fire.png")
+const ASH_SETTLER = preload("res://scripts/world/ash_settler.gd")
 const ANCHOR := 0
 const CONCRETE := 1
+const PLANK := 2
+const ASH_PANEL := 3
+const ASH_BLOCK := 4
+const ASH_SLAB := 5
 
 var _checks: int = 0
 var _failures: int = 0
 var _grid: NavGridMap
 var _manager: Node
 var _host: Node3D
+var _stability_floor: StaticBody3D = null
 
 
 func _initialize() -> void:
@@ -30,6 +37,10 @@ func _run() -> void:
 	await _test_serialize_restore()
 	await _test_placeable_ownership()
 	await _test_edge_hit_resolution()
+	await _test_stability_and_fire()
+	await _test_contact_damage()
+	await _test_collision_destruction()
+	await _test_world_fire()
 	_test_agent_layer()
 	_finish()
 
@@ -63,6 +74,19 @@ func _test_spawn_and_edit() -> void:
 	_expect("add cell grows the grid", sublevel.cells.size() == 3)
 	_expect("remove cell", sublevel.remove_cell(Vector3i(2, 0, 0)))
 	_expect("remove cell shrinks the grid", sublevel.cells.size() == 2)
+
+	sublevel.set_cells({
+		Vector3i(0, 0, 0): {"item": CONCRETE, "orientation": 0},
+		Vector3i(0, 5, 0): {"item": ASH_PANEL, "orientation": 0},
+	}, false)
+	_expect(
+		"sub-level ash settles onto the surface below",
+		int((sublevel.cells.get(Vector3i(0, 1, 0), {}) as Dictionary).get(
+			"item",
+			-1
+		)) == ASH_PANEL
+		and not sublevel.cells.has(Vector3i(0, 5, 0))
+	)
 
 	_free_all()
 
@@ -293,6 +317,328 @@ func _test_edge_hit_resolution() -> void:
 	_free_all()
 
 
+func _test_stability_and_fire() -> void:
+	_begin()
+	_grid.sublevel_stability_enabled = true
+
+	var sublevel = _manager.spawn(
+		[
+			Vector3i(0, 0, 0),
+			Vector3i(1, 0, 0),
+			Vector3i(2, 0, 0),
+			Vector3i(3, 0, 0),
+			Vector3i(4, 1, 0),
+		],
+		{
+			Vector3i(0, 0, 0): CONCRETE,
+			Vector3i(1, 0, 0): PLANK,
+			Vector3i(2, 0, 0): CONCRETE,
+			Vector3i(3, 0, 0): CONCRETE,
+			Vector3i(4, 1, 0): CONCRETE,
+		},
+		{}
+	)
+	_expect("sublevel stability: body spawned", sublevel != null)
+	if sublevel == null:
+		_free_all()
+		return
+
+	_expect("sublevel stability: setting copied", sublevel.stability_enabled)
+	# Manager spawn defers stability until the body settles. Give it a real
+	# floor and run the settle-time ground check here.
+	_add_stability_floor(sublevel.cell_center_world(Vector3i(0, 0, 0)))
+	await process_frame
+	await process_frame
+	sublevel.apply_stability_now()
+	_expect(
+		"sublevel stability: unsupported overhang removed",
+		not sublevel.cells.has(Vector3i(2, 1, 0))
+	)
+	_expect(
+		"sublevel stability: anchored foundation kept",
+		sublevel.cells.has(Vector3i(0, 0, 0))
+	)
+	_expect(
+		"sublevel stability: unsupported piece sheds a new body",
+		_manager.sublevels.size() >= 2,
+		str(_manager.sublevels.size())
+	)
+
+	sublevel.fire_enabled = true
+	var plank_cell := Vector3i.ZERO
+	var concrete_cell := Vector3i.ZERO
+	for cell_value: Variant in sublevel.cells:
+		var cell: Vector3i = cell_value
+		var item: int = int((sublevel.cells[cell] as Dictionary).get("item", -1))
+		if item == PLANK:
+			plank_cell = cell
+		elif item == CONCRETE:
+			concrete_cell = cell
+	var ignited: bool = sublevel.ignite_cell(plank_cell)
+	_expect("sublevel fire: flammable cell ignites", ignited)
+	_expect("sublevel fire: body reports burning", sublevel.is_burning())
+	_expect(
+		"sublevel fire: concrete surface fire ignites",
+		sublevel.ignite_cell(concrete_cell)
+	)
+	_expect(
+		"sublevel fire: visual exists",
+		is_instance_valid(sublevel.get("_fire_visual"))
+	)
+
+	# Force both fuels to expire: the plank becomes an ash panel, the concrete
+	# surface fire goes out and leaves its block intact.
+	sublevel._fire_accum = 0.0
+	sublevel._burning_cells[plank_cell] = 0.01
+	sublevel._burning_cells[concrete_cell] = 0.01
+	sublevel.call("_update_fire", 0.5)
+	_expect(
+		"sublevel fire: concrete self-extinguishes",
+		not sublevel._burning_cells.has(concrete_cell)
+		and sublevel.cells.has(concrete_cell)
+	)
+	_expect(
+		"sublevel fire: consumed plank becomes an ash panel",
+		sublevel.cells.has(plank_cell)
+		and int((sublevel.cells[plank_cell] as Dictionary).get("item", -1))
+		== ASH_PANEL
+	)
+
+	var panel_bottom := Vector3i(10, 0, 10)
+	sublevel.cells[panel_bottom] = {"item": ASH_PANEL, "orientation": 0}
+	sublevel.cells[panel_bottom + Vector3i.UP] = {
+		"item": ASH_PANEL, "orientation": 0
+	}
+	ASH_SETTLER.compact_cells_column(
+		sublevel.cells,
+		sublevel.mesh_library,
+		panel_bottom
+	)
+	_expect(
+		"ash stacking: two panels merge into normal ash",
+		int((sublevel.cells[panel_bottom] as Dictionary).get("item", -1))
+		== ASH_BLOCK
+		and not sublevel.cells.has(panel_bottom + Vector3i.UP)
+	)
+
+	var slab_bottom := Vector3i(12, 0, 10)
+	sublevel.cells[slab_bottom] = {"item": ASH_SLAB, "orientation": 0}
+	sublevel.cells[slab_bottom + Vector3i.UP] = {
+		"item": ASH_SLAB, "orientation": 0
+	}
+	ASH_SETTLER.compact_cells_column(
+		sublevel.cells,
+		sublevel.mesh_library,
+		slab_bottom
+	)
+	_expect(
+		"ash stacking: two slabs merge into normal ash",
+		int((sublevel.cells[slab_bottom] as Dictionary).get("item", -1))
+		== ASH_BLOCK
+		and not sublevel.cells.has(slab_bottom + Vector3i.UP)
+	)
+
+	_free_all()
+
+
+func _test_contact_damage() -> void:
+	_begin()
+	_grid.sublevel_contact_damage_enabled = true
+	_grid.sublevel_contact_damage_scale = 0.5
+
+	var sublevel = _manager.spawn(
+		[Vector3i(0, 4, 0)],
+		{Vector3i(0, 4, 0): CONCRETE},
+		{Vector3i(0, 4, 0): 0}
+	)
+	_expect("contact damage: body spawned", sublevel != null)
+	if sublevel == null:
+		_free_all()
+		return
+
+	_expect(
+		"contact damage: setting copied",
+		sublevel.contact_damage_enabled
+	)
+
+	sublevel.gravity_scale = 0.0
+	sublevel.contact_damage_min_speed = 0.0
+	sublevel.linear_velocity = Vector3(1.0, 0.0, 0.0)
+
+	var target := Node3D.new()
+	target.name = "ContactTarget"
+	target.add_to_group("npc")
+	_host.add_child(target)
+	target.global_position = sublevel.global_position + Vector3.UP * 0.5
+	var health := HealthComponent.new()
+	health.name = "HealthComponent"
+	health.max_health = 100.0
+	target.add_child(health)
+	await process_frame
+
+	await create_timer(0.55).timeout
+	_expect(
+		"contact damage: nearby health target is damaged",
+		health.current_health < 100.0,
+		str(health.current_health)
+	)
+
+	target.queue_free()
+	_free_all()
+
+
+func _test_collision_destruction() -> void:
+	_begin()
+	_grid.sublevel_collision_destruction_enabled = true
+
+	for x in 3:
+		for y in 3:
+			for z in 3:
+				_place(Vector3i(x, 4 + y, z), CONCRETE)
+
+	var sublevel = _manager.spawn(
+		[
+			Vector3i(0, 10, 0),
+			Vector3i(1, 10, 0),
+			Vector3i(2, 10, 0),
+		],
+		{
+			Vector3i(0, 10, 0): CONCRETE,
+			Vector3i(1, 10, 0): CONCRETE,
+			Vector3i(2, 10, 0): CONCRETE,
+		},
+		{}
+	)
+	_expect("collision destruction: body spawned", sublevel != null)
+	if sublevel == null:
+		_free_all()
+		return
+
+	_expect(
+		"collision destruction: setting copied",
+		sublevel.collision_destruction_enabled
+	)
+
+	var world_point: Vector3 = _grid.to_global(
+		_grid.map_to_local(Vector3i(1, 5, 1))
+	)
+	var world_removed: int = sublevel.call(
+		"_carve_world_at",
+		world_point,
+		1.2
+	)
+	_expect(
+		"collision destruction: world blocks removed",
+		world_removed > 0 and not _grid.has_block(Vector3i(1, 5, 1)),
+		str(world_removed)
+	)
+
+	# The moving body path is separate from the direct carve helper: drop the
+	# body into the block field and run one destruction step. The result should
+	# be a rounded crater, not the entire AABB volume.
+	sublevel.global_position = _grid.to_global(
+		_grid.map_to_local(Vector3i(1, 6, 1))
+	)
+	sublevel.linear_velocity = Vector3(0.0, -10.0, 0.0)
+	sublevel.call("_update_collision_destruction", 0.25)
+	var destroyed := 0
+	for x in 3:
+		for y in 3:
+			for z in 3:
+				if not _grid.has_block(Vector3i(x, 4 + y, z)):
+					destroyed += 1
+	_expect(
+		"collision destruction: moving body carves a crater",
+		destroyed > 0 and destroyed < 27,
+		str(destroyed)
+	)
+
+	var before: int = sublevel.cells.size()
+	var local_point: Vector3 = sublevel.cell_center_world(
+		Vector3i(0, 0, 0)
+	)
+	var self_removed: int = sublevel.carve_at_world(local_point, 1.1)
+	_expect(
+		"collision destruction: sub-level cells carved",
+		self_removed > 0 and sublevel.cells.size() < before,
+		"%d -> %d" % [before, sublevel.cells.size()]
+	)
+
+	_free_all()
+
+
+func _test_world_fire() -> void:
+	_begin()
+	_place(Vector3i(0, 3, 0), CONCRETE)
+	_place(Vector3i(0, 4, 0), PLANK)
+	_place(Vector3i(1, 4, 0), CONCRETE)
+
+	var world_fire = _grid.get_node_or_null("WorldFire")
+	_expect("world fire: manager exists", world_fire != null)
+	if world_fire == null:
+		_free_all()
+		return
+
+	var cell := Vector3i(0, 4, 0)
+	var concrete_cell := Vector3i(1, 4, 0)
+	_expect("world fire: flammable block ignites", world_fire.ignite_cell(cell))
+	_expect("world fire: reports burning", world_fire.is_burning())
+	_expect(
+		"world fire: concrete surface fire ignites",
+		world_fire.ignite_cell(concrete_cell)
+	)
+	_expect(
+		"world fire: visual exists",
+		is_instance_valid(world_fire.get("_visual"))
+	)
+	_expect(
+		"world fire: frame count follows texture height",
+		WorldFire.fire_frame_count()
+		== maxi(1, FIRE_TEXTURE.get_height() / 16),
+		str(WorldFire.fire_frame_count())
+	)
+
+	# Expire both: the plank is consumed into an ash panel, the concrete fire
+	# goes out without damaging its block.
+	world_fire._accum = 0.0
+	world_fire.burning_cells[cell] = 0.01
+	world_fire.burning_cells[concrete_cell] = 0.01
+	world_fire.call("_physics_process", 0.5)
+	_expect(
+		"world fire: concrete self-extinguishes",
+		not world_fire.burning_cells.has(concrete_cell)
+		and _grid.has_block(concrete_cell)
+	)
+	_expect(
+		"world fire: consumed block leaves an ash panel",
+		_grid.get_block_item(cell) == ASH_PANEL,
+		str(_grid.get_block_item(cell))
+	)
+	_grid.place_block(cell + Vector3i.UP, ASH_PANEL, 0)
+	ASH_SETTLER.compact_world_column(_grid, cell)
+	_expect(
+		"world ash stacking: two panels merge into normal ash",
+		_grid.get_block_item(cell) == ASH_BLOCK
+		and not _grid.has_block(cell + Vector3i.UP)
+	)
+
+	_place(Vector3i(20, 4, 20), CONCRETE)
+	_grid.place_block(Vector3i(20, 8, 20), ASH_PANEL, 0)
+	_expect(
+		"world ash settling: floating panel falls to the floor",
+		_grid.get_block_item(Vector3i(20, 5, 20)) == ASH_PANEL
+		and not _grid.has_block(Vector3i(20, 8, 20))
+	)
+
+	var world_point: Vector3 = _grid.to_global(_grid.map_to_local(concrete_cell))
+	_expect("world fire: concrete surface fire re-ignites", world_fire.ignite_cell(concrete_cell))
+	var extinguished: int = world_fire.extinguish_at_world(world_point, 2.0)
+	_expect("world fire: extinguishes", extinguished > 0)
+	_expect("world fire: cleared", not world_fire.is_burning())
+
+	_free_all()
+
+
 func _test_agent_layer() -> void:
 	var member_script = load("res://scripts/NPCstuff/Member.gd")
 	if member_script == null:
@@ -367,7 +713,14 @@ func _library() -> MeshLibrary:
 	box.size = Vector3.ONE
 	shape.size = Vector3.ONE
 
-	var names := {ANCHOR: "Auto_bedrock", CONCRETE: "Auto_concrete_test"}
+	var names := {
+		ANCHOR: "Auto_bedrock",
+		CONCRETE: "Auto_concrete_test",
+		PLANK: "Auto_planks_test",
+		ASH_PANEL: "Auto_Panel_Bottom_ash",
+		ASH_BLOCK: "Auto_ash",
+		ASH_SLAB: "Auto_Slab_Top_ash",
+	}
 	for item: int in names:
 		library.create_item(item)
 		library.set_item_name(item, String(names[item]))
@@ -375,6 +728,23 @@ func _library() -> MeshLibrary:
 		library.set_item_shapes(item, [shape, Transform3D.IDENTITY])
 
 	return library
+
+
+func _add_stability_floor(lowest_center: Vector3) -> void:
+	if _stability_floor != null and is_instance_valid(_stability_floor):
+		_stability_floor.queue_free()
+	var body := StaticBody3D.new()
+	body.name = "StabilityTestFloor"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(20.0, 1.0, 20.0)
+	shape.shape = box
+	body.add_child(shape)
+	root.add_child(body)
+	body.global_position = lowest_center + Vector3.DOWN * 1.0
+	_stability_floor = body
 
 
 func _free_all() -> void:
@@ -390,6 +760,10 @@ func _free_all() -> void:
 	if _host != null and is_instance_valid(_host):
 		_host.queue_free()
 		_host = null
+
+	if _stability_floor != null and is_instance_valid(_stability_floor):
+		_stability_floor.queue_free()
+		_stability_floor = null
 
 
 func _expect(label: String, condition: bool, detail: String = "") -> void:

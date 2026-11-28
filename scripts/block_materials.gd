@@ -246,6 +246,19 @@ static func default_properties() -> Dictionary:
 	return FALLBACK_PROPERTIES.duplicate()
 
 
+## 0..1 burn likelihood for a block. Fire only ignites and spreads through
+## materials that report a real value here, so concrete/stone stay fireproof
+## even next to a burning wooden wall.
+static func flammability_for_item(item_name: String) -> float:
+	return float(properties_for_item(item_name).get("flammability", 0.0))
+
+
+## True when a block can catch fire at all. The small threshold keeps
+## rounding noise out of the spread roll.
+static func is_flammable(item_name: String) -> bool:
+	return flammability_for_item(item_name) > 0.04
+
+
 ## True when the material can never become unsupported (Bedrock). Anchored
 ## materials are the roots the structural pass floods from.
 static func is_anchored(item_name: String) -> bool:

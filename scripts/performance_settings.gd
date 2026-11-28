@@ -97,6 +97,14 @@ var collapse_style: int = 1
 ## When on, a settled sub-level that lines up with the world docks back into the
 ## normal chunk grid. Off by default so sub-levels stay editable.
 var auto_dock_sublevels: bool = false
+## Sub-level rules. Auto-dock is the world connection; these three govern the
+## moving body's own local grid.
+var sublevel_stability: bool = false
+var sublevel_contact_damage: bool = false
+var sublevel_contact_damage_scale: float = 0.05
+var sublevel_collision_destruction: bool = false
+var sublevel_collision_destruction_radius: float = 1.5
+var sublevel_fire: bool = true
 var stability_debug: bool = false
 
 
@@ -248,8 +256,29 @@ func apply_all() -> void:
 			grid.collapse_style = collapse_style
 		if "auto_dock_sublevels" in grid:
 			grid.auto_dock_sublevels = auto_dock_sublevels
+		if "sublevel_stability_enabled" in grid:
+			grid.sublevel_stability_enabled = sublevel_stability
+		if "sublevel_contact_damage_enabled" in grid:
+			grid.sublevel_contact_damage_enabled = sublevel_contact_damage
+		if "sublevel_contact_damage_scale" in grid:
+			grid.sublevel_contact_damage_scale = sublevel_contact_damage_scale
+		if "sublevel_collision_destruction_enabled" in grid:
+			grid.sublevel_collision_destruction_enabled = (
+				sublevel_collision_destruction
+			)
+		if "sublevel_collision_destruction_radius" in grid:
+			grid.sublevel_collision_destruction_radius = (
+				sublevel_collision_destruction_radius
+			)
+		if "sublevel_fire_enabled" in grid:
+			grid.sublevel_fire_enabled = sublevel_fire
 		if "stability_debug" in grid:
 			grid.stability_debug = stability_debug
+
+		if grid.has_method("get_sublevel_manager"):
+			var manager: Variant = grid.get_sublevel_manager()
+			if manager != null and manager.has_method("apply_grid_rules"):
+				manager.apply_grid_rules()
 
 		var mesher = grid.get_mesher()
 		if mesher != null:
@@ -362,8 +391,12 @@ func apply_all() -> void:
 		)
 
 	for batcher in tree.get_nodes_in_group("foliage_batcher"):
-		if batcher.has_method("mark_dirty"):
-			batcher.call("mark_dirty")
+		if batcher.has_method("apply_distance"):
+			batcher.call(
+				"apply_distance",
+				foliage_distance,
+				foliage_distance * 0.5
+			)
 
 	for node in tree.get_nodes_in_group("sun_light"):
 		if node is DirectionalLight3D:
@@ -599,6 +632,22 @@ func auto_dock_name() -> String:
 	return "On" if auto_dock_sublevels else "Off"
 
 
+func sublevel_stability_name() -> String:
+	return "On" if sublevel_stability else "Off"
+
+
+func sublevel_contact_damage_name() -> String:
+	return "On" if sublevel_contact_damage else "Off"
+
+
+func sublevel_collision_destruction_name() -> String:
+	return "On" if sublevel_collision_destruction else "Off"
+
+
+func sublevel_fire_name() -> String:
+	return "On" if sublevel_fire else "Off"
+
+
 func toggle_stability() -> void:
 	stability_enabled = not stability_enabled
 	_commit()
@@ -623,6 +672,26 @@ func toggle_stability_debug() -> void:
 
 func toggle_auto_dock() -> void:
 	auto_dock_sublevels = not auto_dock_sublevels
+	_commit()
+
+
+func toggle_sublevel_stability() -> void:
+	sublevel_stability = not sublevel_stability
+	_commit()
+
+
+func toggle_sublevel_contact_damage() -> void:
+	sublevel_contact_damage = not sublevel_contact_damage
+	_commit()
+
+
+func toggle_sublevel_collision_destruction() -> void:
+	sublevel_collision_destruction = not sublevel_collision_destruction
+	_commit()
+
+
+func toggle_sublevel_fire() -> void:
+	sublevel_fire = not sublevel_fire
 	_commit()
 
 
@@ -812,6 +881,28 @@ func save_settings() -> void:
 	config.set_value("structure", "collapse_enabled", collapse_enabled)
 	config.set_value("structure", "collapse_style", collapse_style)
 	config.set_value("structure", "auto_dock", auto_dock_sublevels)
+	config.set_value("structure", "sublevel_stability", sublevel_stability)
+	config.set_value(
+		"structure",
+		"sublevel_contact_damage",
+		sublevel_contact_damage
+	)
+	config.set_value(
+		"structure",
+		"sublevel_contact_damage_scale",
+		sublevel_contact_damage_scale
+	)
+	config.set_value(
+		"structure",
+		"sublevel_collision_destruction",
+		sublevel_collision_destruction
+	)
+	config.set_value(
+		"structure",
+		"sublevel_collision_destruction_radius",
+		sublevel_collision_destruction_radius
+	)
+	config.set_value("structure", "sublevel_fire", sublevel_fire)
 	config.set_value("structure", "debug", stability_debug)
 	config.set_value("system", "agent_cap", agent_cap)
 	config.set_value("system", "max_fps", max_fps)
@@ -911,6 +1002,40 @@ func load_settings() -> void:
 	)
 	auto_dock_sublevels = bool(
 		config.get_value("structure", "auto_dock", auto_dock_sublevels)
+	)
+	sublevel_stability = bool(
+		config.get_value("structure", "sublevel_stability", sublevel_stability)
+	)
+	sublevel_contact_damage = bool(
+		config.get_value(
+			"structure",
+			"sublevel_contact_damage",
+			sublevel_contact_damage
+		)
+	)
+	sublevel_contact_damage_scale = float(
+		config.get_value(
+			"structure",
+			"sublevel_contact_damage_scale",
+			sublevel_contact_damage_scale
+		)
+	)
+	sublevel_collision_destruction = bool(
+		config.get_value(
+			"structure",
+			"sublevel_collision_destruction",
+			sublevel_collision_destruction
+		)
+	)
+	sublevel_collision_destruction_radius = float(
+		config.get_value(
+			"structure",
+			"sublevel_collision_destruction_radius",
+			sublevel_collision_destruction_radius
+		)
+	)
+	sublevel_fire = bool(
+		config.get_value("structure", "sublevel_fire", sublevel_fire)
 	)
 	agent_cap = int(config.get_value("system", "agent_cap", 120))
 	max_fps = int(config.get_value("system", "max_fps", 60))

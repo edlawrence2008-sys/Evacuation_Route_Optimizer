@@ -71,6 +71,7 @@ will not merge into one flock. The old nine-spawner demo lives in the save slot
 | Pick block | Middle mouse |
 | Grab (hold) | G (2D line beam) |
 | Useables physics gun | LMB grab/hold, RMB freeze, Q spin, `,`/`.` distance |
+| Useables fire tool | LMB ignite any block or sub-level cell; non-fuel surfaces self-extinguish |
 | Rotate held stairs or placeable | Q |
 | Toggle build plane (floor/wall) | Alt |
 | Toggle inventory | R |

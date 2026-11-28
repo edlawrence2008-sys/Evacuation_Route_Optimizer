@@ -160,9 +160,16 @@ func stability_at(cell: Vector3i) -> int:
 ## Support field for an explicit set of cells. Used by the debug overlay: the
 ## caller passes the cells it wants to draw plus enough margin that the draw
 ## area is not on the set's boundary. Cells outside the set are treated as air.
-func field_for_cells(cells: Array[Vector3i]) -> Dictionary:
+func field_for_cells(
+	cells: Array[Vector3i],
+	extra_anchors: Array[Vector3i] = []
+) -> Dictionary:
 	var solid: Array[Vector3i] = []
 	var items: Dictionary = {}
+	var anchors: Dictionary = {}
+
+	for cell: Vector3i in extra_anchors:
+		anchors[cell] = true
 
 	for cell: Vector3i in cells:
 		var item: int = int(_grid.get_block_item(cell))
@@ -171,7 +178,7 @@ func field_for_cells(cells: Array[Vector3i]) -> Dictionary:
 		solid.append(cell)
 		items[cell] = item
 
-	return _relax(solid, items)
+	return _relax(solid, items, anchors)
 
 
 func _column_distance(cell: Vector3i, column: Vector2i) -> int:
@@ -240,7 +247,11 @@ func _collect_window(center: Vector3i, radius: int) -> Dictionary:
 ##
 ## Lateral edges spend one point from the neighbour's *capped* value, which is
 ## what makes wood beside concrete 8 become 4 and then 3.
-func _relax(cells: Array[Vector3i], items: Dictionary) -> Dictionary:
+func _relax(
+	cells: Array[Vector3i],
+	items: Dictionary,
+	extra_anchors: Dictionary = {}
+) -> Dictionary:
 	var raw: Dictionary = {}
 	var caps: Dictionary = {}
 
@@ -254,7 +265,7 @@ func _relax(cells: Array[Vector3i], items: Dictionary) -> Dictionary:
 		buckets[index] = []
 
 	for cell: Vector3i in cells:
-		if is_anchor(int(items.get(cell, -1))):
+		if extra_anchors.has(cell) or is_anchor(int(items.get(cell, -1))):
 			raw[cell] = STABILITY_ANCHORED
 			buckets[STABILITY_ANCHORED].append(cell)
 

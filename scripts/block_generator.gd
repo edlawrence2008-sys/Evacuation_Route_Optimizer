@@ -30,7 +30,10 @@ const GENERATE_SLABS := true
 ## Generates thin panel plates, but only for the textures listed below. Panels
 ## are intentionally not created for every block material.
 const GENERATE_PANELS := true
-const PANEL_TEXTURES: Array[String] = ["concrete_flat_offwhite"]
+const PANEL_TEXTURES: Array[String] = [
+	"concrete_flat_offwhite",
+	"ash",
+]
 
 ## Generates a normal and an upside-down stair block for every texture.
 const GENERATE_STAIRS := true

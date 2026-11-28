@@ -1,56 +1,55 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene format=3 uid="uid://dplm5dtj2kksr"]
 
-[ext_resource type="Script" path="res://scripts/useables/physics_gun_component.gd" id="1_tool"]
+[ext_resource type="Script" uid="uid://diyv84ekkf6hd" path="res://scripts/useables/physics_gun_component.gd" id="1_tool"]
 
 [sub_resource type="StandardMaterial3D" id="Mat_body"]
 albedo_color = Color(0.1, 0.16, 0.24, 1)
 metallic = 0.55
 roughness = 0.3
 
+[sub_resource type="BoxMesh" id="Mesh_body"]
+material = SubResource("Mat_body")
+size = Vector3(0.09, 0.1, 0.38)
+
 [sub_resource type="StandardMaterial3D" id="Mat_barrel"]
 albedo_color = Color(0.28, 0.33, 0.4, 1)
 metallic = 0.7
 roughness = 0.25
 
+[sub_resource type="BoxMesh" id="Mesh_barrel"]
+material = SubResource("Mat_barrel")
+size = Vector3(0.055, 0.055, 0.28)
+
 [sub_resource type="StandardMaterial3D" id="Mat_emitter"]
 albedo_color = Color(0.2, 1, 0.85, 1)
-metallic = 0.0
 roughness = 0.2
 emission_enabled = true
 emission = Color(0.15, 0.95, 0.8, 1)
 emission_energy_multiplier = 3.0
 
-[sub_resource type="BoxMesh" id="Mesh_body"]
-size = Vector3(0.09, 0.1, 0.38)
-material = SubResource("Mat_body")
-
-[sub_resource type="BoxMesh" id="Mesh_barrel"]
-size = Vector3(0.055, 0.055, 0.28)
-material = SubResource("Mat_barrel")
-
 [sub_resource type="BoxMesh" id="Mesh_emitter"]
-size = Vector3(0.085, 0.085, 0.025)
 material = SubResource("Mat_emitter")
+size = Vector3(0.085, 0.085, 0.025)
 
-[node name="PhysicsGun" type="Node3D"]
+[node name="PhysicsGun" type="Node3D" unique_id=172171364]
 metadata/hand_size = 0.22
 
-[node name="Body" type="MeshInstance3D" parent="."]
+[node name="Body" type="MeshInstance3D" parent="." unique_id=1295405456]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, -0.1875, 0, 0.0005265355)
 mesh = SubResource("Mesh_body")
 
-[node name="Barrel" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0.01, -0.31)
+[node name="Barrel" type="MeshInstance3D" parent="." unique_id=461653647]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0.1225, 0.01, 0.00052654906)
 mesh = SubResource("Mesh_barrel")
 
-[node name="Emitter" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0.01, -0.46)
-metadata/muzzle = true
+[node name="Emitter" type="MeshInstance3D" parent="." unique_id=45697427]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0.2725, 0.01, 0.00052655564)
 mesh = SubResource("Mesh_emitter")
+metadata/muzzle = true
 
-[node name="Handle" type="MeshInstance3D" parent="."]
-position = Vector3(0, -0.1, 0.02)
-rotation = Vector3(-0.25, 0, 0)
+[node name="Handle" type="MeshInstance3D" parent="." unique_id=1657283616]
+transform = Transform3D(-4.371139e-08, 0.24740396, -0.9689124, 0, 0.9689124, 0.24740396, 1, 1.0814371e-08, -4.2352507e-08, -0.2075, -0.099999994, 0.0005265346)
 mesh = SubResource("Mesh_body")
 
-[node name="PhysicsGunComponent" type="Node" parent="."]
+[node name="PhysicsGunComponent" type="Node" parent="." unique_id=1678183288]
 script = ExtResource("1_tool")

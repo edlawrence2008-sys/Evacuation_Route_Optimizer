@@ -47,6 +47,49 @@ static func damage_area(
 			_damage_node(collider as Node, damage)
 
 
+## Fire-friendly damage: one physics query per spatial cluster instead of one
+## per burning cell. Contiguous flames therefore cost the same as one flame,
+## while a spread-out fire still damages what it is actually touching.
+static func damage_area_clustered(
+	source: Node,
+	centers: Array,
+	radius: float,
+	damage: float,
+	cluster_size: float = 3.0
+) -> void:
+	if centers.is_empty():
+		return
+
+	var size := maxf(cluster_size, 0.5)
+	var clusters: Dictionary = {}
+
+	for center_value: Variant in centers:
+		var point: Vector3 = center_value
+		var key := Vector3i(
+			floori(point.x / size),
+			floori(point.y / size),
+			floori(point.z / size)
+		)
+		var bucket: Array = clusters.get(key, [])
+		bucket.append(point)
+		clusters[key] = bucket
+
+	for key_value: Variant in clusters:
+		var bucket: Array = clusters[key_value]
+		var sum := Vector3.ZERO
+		for point_value: Variant in bucket:
+			sum += point_value
+		var center := sum / float(bucket.size())
+		var reach := radius
+		for point_value: Variant in bucket:
+			var point: Vector3 = point_value
+			reach = maxf(reach, center.distance_to(point) + radius)
+		# A dense blaze hurts more than a single flame, but caps out so a
+		# large fire cannot one-shot everything in a huge sphere.
+		var scale := clampf(sqrt(float(bucket.size())), 1.0, 3.0)
+		damage_area(source, center, reach, damage * scale)
+
+
 static func _damage_node(node: Node, damage: float) -> void:
 	var current := node
 

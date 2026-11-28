@@ -44,6 +44,7 @@ var build_mode_active: bool = true
 ## rested on the same cell and results are cached until the world changes.
 const BLOCK_MATERIALS = preload("res://scripts/block_materials.gd")
 const STABILITY_READOUT = preload("res://scripts/world/stability_readout.gd")
+const VOXEL_CELL_HOST = preload("res://scripts/world/voxel_cell_host.gd")
 const STABILITY_READOUT_DELAY: float = 0.2
 const STABILITY_SENTINEL := Vector3i(2147483647, 2147483647, 2147483647)
 const STABILITY_CACHE_LIMIT: int = 512
@@ -76,6 +77,9 @@ var _gun_previous_gravity: float = 1.0
 var _gun_previous_lock_x: bool = false
 var _gun_previous_lock_y: bool = false
 var _gun_previous_lock_z: bool = false
+var _gun_previous_collision_layer: int = 0
+var _gun_previous_collision_mask: int = 0
+var _gun_collision_restore: bool = false
 ## True while a Useables tool owns the primary-use button.
 var _primary_use_held: bool = false
 signal inventory_toggled(open: bool)
@@ -1973,100 +1977,38 @@ func _surface_cells(
 	target_item: int,
 	tool_override: int = -1
 ) -> Array[Vector3i]:
-	if target_item == -1:
+	if target_item == -1 or grid_map == null:
 		return []
 
 	var tool := build_tool if tool_override == -1 else tool_override
-	var radius := clampi(brush_params.x, 1, 10)
 	var replace_mode := (
 		tool == BuildTool.REPLACE
 		or tool == BuildTool.CLEAR
 		or tool == BuildTool.FLATTEN
 	)
-	var start := target_cell if replace_mode else target_cell + face
-	var axis := _face_axis(face)
-	var offsets: Array[Vector3i] = []
-	for dx in range(-1, 2):
-		for dy in range(-1, 2):
-			for dz in range(-1, 2):
-				var offset := Vector3i(dx, dy, dz)
-				if offset == Vector3i.ZERO:
-					continue
-				if offset[axis] != 0:
-					continue
-				if absi(dx) + absi(dy) + absi(dz) > 1:
-					continue
-				offsets.append(offset)
-
-	var visited: Dictionary = {}
-	var frontier: Array[Vector3i] = [start]
-	var result: Array[Vector3i] = []
-
-	while not frontier.is_empty():
-		var current: Vector3i = frontier.pop_front()
-		if visited.has(current):
-			continue
-		visited[current] = true
-		if (current - start).length_squared() > radius * radius:
-			continue
-
-		if replace_mode:
-			if not grid_map.has_block(current):
-				continue
-			if int(grid_map.get_block_item(current)) != target_item:
-				continue
-			if grid_map.has_block(current + face):
-				continue
-			result.append(current)
-		else:
-			if grid_map.has_block(current):
-				continue
-			var behind := current - face
-			if not grid_map.has_block(behind):
-				continue
-			if int(grid_map.get_block_item(behind)) != target_item:
-				continue
-			result.append(current)
-
-		for offset: Vector3i in offsets:
-			frontier.append(current + offset)
-
-	return result
+	return VOXEL_CELL_HOST.surface_cells(
+		VOXEL_CELL_HOST.new(grid_map),
+		target_cell,
+		face,
+		target_item,
+		replace_mode,
+		clampi(brush_params.x, 1, 10)
+	)
 
 
 func _cluster_cells(
 	target_cell: Vector3i,
 	target_item: int
 ) -> Array[Vector3i]:
-	if target_item == -1:
+	if target_item == -1 or grid_map == null:
 		return []
 
-	var radius := clampi(brush_params.x, 1, 10)
-	var visited: Dictionary = {}
-	var frontier: Array[Vector3i] = [target_cell]
-	var result: Array[Vector3i] = []
-	var offsets: Array[Vector3i] = [
-		Vector3i.LEFT, Vector3i.RIGHT,
-		Vector3i.UP, Vector3i.DOWN,
-		Vector3i.FORWARD, Vector3i.BACK,
-	]
-
-	while not frontier.is_empty():
-		var current: Vector3i = frontier.pop_front()
-		if visited.has(current):
-			continue
-		visited[current] = true
-		if (current - target_cell).length_squared() > radius * radius:
-			continue
-		if not grid_map.has_block(current):
-			continue
-		if int(grid_map.get_block_item(current)) != target_item:
-			continue
-		result.append(current)
-		for offset: Vector3i in offsets:
-			frontier.append(current + offset)
-
-	return result
+	return VOXEL_CELL_HOST.cluster_cells(
+		VOXEL_CELL_HOST.new(grid_map),
+		target_cell,
+		target_item,
+		clampi(brush_params.x, 1, 10)
+	)
 
 
 func _normal_to_cell(normal: Vector3) -> Vector3i:
@@ -3125,6 +3067,29 @@ func _local_face_normal(sublevel: SubLevel, world_normal: Vector3) -> Vector3i:
 	return Vector3i(0, 0, 1 if local.z > 0.0 else -1)
 
 
+## The sub-level's own floor/wall plane. A floor drag lies in local X/Z; a wall
+## drag lies in local X/Y or Z/Y, choosing the local horizontal axis that faces
+## the camera. This is why a rotated body no longer drags on world axes.
+func _sublevel_plane_axis(sublevel: SubLevel) -> int:
+	if build_plane == BuildPlane.FLOOR:
+		return 1
+
+	var forward: Vector3 = -_camera.global_transform.basis.z
+	var local_forward: Vector3 = (
+		sublevel.global_transform.basis.inverse() * forward
+	)
+
+	if absf(local_forward.x) >= absf(local_forward.z):
+		return 0
+	return 2
+
+
+func _axis_vector(axis: int) -> Vector3:
+	var result := Vector3.ZERO
+	result[axis] = 1.0
+	return result
+
+
 # --- G grab ----------------------------------------------------------------
 
 ## Quick grab bound to G. This is deliberately "just a grab": the body keeps
@@ -3246,7 +3211,10 @@ func _update_grab_line(from: Vector3, to: Vector3) -> void:
 ## Rigid hold used by the Physics Gun tool. Unlike the G grab it cancels
 ## gravity, locks the body's rotation, keeps it at a fixed distance and draws a
 ## beam from the gun model's emitter.
-func begin_gun_hold() -> bool:
+func begin_gun_hold(
+	reach_override: float = 0.0,
+	ignore_collision: bool = false
+) -> bool:
 	if _camera == null:
 		return false
 
@@ -3265,8 +3233,10 @@ func begin_gun_hold() -> bool:
 	if body == player:
 		return false
 
+	# Same reach as the build ray by default; a tool can override it.
+	var reach: float = build_reach if reach_override <= 0.0 else reach_override
 	var distance: float = _camera.global_position.distance_to(hit.position)
-	if distance > 14.0:
+	if distance > reach:
 		return false
 
 	_stop_grab()
@@ -3278,6 +3248,15 @@ func begin_gun_hold() -> bool:
 	_gun_previous_lock_x = body.axis_lock_angular_x
 	_gun_previous_lock_y = body.axis_lock_angular_y
 	_gun_previous_lock_z = body.axis_lock_angular_z
+	_gun_previous_collision_layer = body.collision_layer
+	_gun_previous_collision_mask = body.collision_mask
+	_gun_collision_restore = true
+
+	if ignore_collision:
+		# Let the prop pass through geometry while held. Restored on release.
+		body.collision_layer = 0
+		body.collision_mask = 0
+
 	body.gravity_scale = 0.0
 	body.axis_lock_angular_x = true
 	body.axis_lock_angular_y = true
@@ -3300,12 +3279,18 @@ func end_gun_hold() -> void:
 		_gun_beam.visible = false
 
 	if body == null or not is_instance_valid(body):
+		_gun_collision_restore = false
 		return
 
 	body.gravity_scale = _gun_previous_gravity
 	body.axis_lock_angular_x = _gun_previous_lock_x
 	body.axis_lock_angular_y = _gun_previous_lock_y
 	body.axis_lock_angular_z = _gun_previous_lock_z
+
+	if _gun_collision_restore:
+		body.collision_layer = _gun_previous_collision_layer
+		body.collision_mask = _gun_previous_collision_mask
+		_gun_collision_restore = false
 
 	if not body.freeze:
 		body.sleeping = false
@@ -3581,12 +3566,15 @@ func _begin_sublevel_area(
 			_area_resolved_item = int(resolved["item"])
 			_area_resolved_orientation = int(resolved["orientation"])
 
-	_area_plane_axis = _face_axis(face)
+	# Drag planes follow the body's local floor/wall axes, not world axes and
+	# not necessarily the clicked face. Floor = local Y; wall = the local
+	# horizontal axis most face-on to the camera.
+	_area_plane_axis = _sublevel_plane_axis(sublevel)
 	_area_plane_point = sublevel.to_global(
 		sublevel.cell_center_local(anchor)
 	)
 	_area_plane_normal = (
-		sublevel.global_transform.basis * Vector3(face)
+		sublevel.global_transform.basis * _axis_vector(_area_plane_axis)
 	).normalized()
 
 	_area_active = true
@@ -3619,7 +3607,7 @@ func _refresh_sublevel_area_target(force: bool = false) -> void:
 		_area_sublevel.cell_center_local(_area_anchor)
 	)
 	_area_plane_normal = (
-		_area_sublevel.global_transform.basis * Vector3(_area_face)
+		_area_sublevel.global_transform.basis * _axis_vector(_area_plane_axis)
 	).normalized()
 
 	var projected: Variant = _ray_plane_point(
@@ -3814,61 +3802,14 @@ func _sublevel_surface_cells(
 		or tool == BuildTool.CLEAR
 		or tool == BuildTool.FLATTEN
 	)
-	var start := target_cell if replace_mode else target_cell + face
-	var radius := clampi(brush_params.x, 1, 10)
-	var axis := _face_axis(face)
-	var offsets: Array[Vector3i] = []
-
-	for dx in range(-1, 2):
-		for dy in range(-1, 2):
-			for dz in range(-1, 2):
-				var offset := Vector3i(dx, dy, dz)
-				if offset == Vector3i.ZERO:
-					continue
-				if offset[axis] != 0:
-					continue
-				if absi(dx) + absi(dy) + absi(dz) > 1:
-					continue
-				offsets.append(offset)
-
-	var visited: Dictionary = {}
-	var frontier: Array[Vector3i] = [start]
-	var result: Array[Vector3i] = []
-
-	while not frontier.is_empty():
-		var current: Vector3i = frontier.pop_front()
-		if visited.has(current):
-			continue
-		visited[current] = true
-		if (current - start).length_squared() > radius * radius:
-			continue
-
-		if replace_mode:
-			if not sublevel.cells.has(current):
-				continue
-			if int(
-				(sublevel.cells[current] as Dictionary).get("item", -1)
-			) != target_item:
-				continue
-			if sublevel.cells.has(current + face):
-				continue
-			result.append(current)
-		else:
-			if sublevel.cells.has(current):
-				continue
-			var behind := current - face
-			if not sublevel.cells.has(behind):
-				continue
-			if int(
-				(sublevel.cells[behind] as Dictionary).get("item", -1)
-			) != target_item:
-				continue
-			result.append(current)
-
-		for offset: Vector3i in offsets:
-			frontier.append(current + offset)
-
-	return result
+	return VOXEL_CELL_HOST.surface_cells(
+		VOXEL_CELL_HOST.new(sublevel),
+		target_cell,
+		face,
+		target_item,
+		replace_mode,
+		clampi(brush_params.x, 1, 10)
+	)
 
 
 func _sublevel_cluster_cells(
@@ -3879,34 +3820,12 @@ func _sublevel_cluster_cells(
 	if target_item < 0:
 		return []
 
-	var radius := clampi(brush_params.x, 1, 10)
-	var visited: Dictionary = {}
-	var frontier: Array[Vector3i] = [target_cell]
-	var result: Array[Vector3i] = []
-	var offsets: Array[Vector3i] = [
-		Vector3i.LEFT, Vector3i.RIGHT,
-		Vector3i.UP, Vector3i.DOWN,
-		Vector3i.FORWARD, Vector3i.BACK,
-	]
-
-	while not frontier.is_empty():
-		var current: Vector3i = frontier.pop_front()
-		if visited.has(current):
-			continue
-		visited[current] = true
-		if (current - target_cell).length_squared() > radius * radius:
-			continue
-		if not sublevel.cells.has(current):
-			continue
-		if int(
-			(sublevel.cells[current] as Dictionary).get("item", -1)
-		) != target_item:
-			continue
-		result.append(current)
-		for offset: Vector3i in offsets:
-			frontier.append(current + offset)
-
-	return result
+	return VOXEL_CELL_HOST.cluster_cells(
+		VOXEL_CELL_HOST.new(sublevel),
+		target_cell,
+		target_item,
+		clampi(brush_params.x, 1, 10)
+	)
 
 
 func _apply_sublevel_cells(
@@ -4016,19 +3935,11 @@ func _sublevel_cell_overlaps_player(
 	sublevel: SubLevel,
 	cell: Vector3i
 ) -> bool:
-	if player == null or not is_instance_valid(player):
+	if sublevel == null:
 		return false
-
-	var center := sublevel.to_global(sublevel.cell_center_local(cell))
-	var half := sublevel.block_size * 0.5
-	var feet := player.global_position
-	var head_y := feet.y + 1.8
-
-	return (
-		absf(center.x - feet.x) < half.x + 0.35
-		and absf(center.z - feet.z) < half.z + 0.35
-		and center.y + half.y > feet.y
-		and center.y - half.y < head_y
+	return _host_cell_overlaps_player(
+		VOXEL_CELL_HOST.new(sublevel),
+		cell
 	)
 
 
@@ -5058,10 +4969,28 @@ func _play_build_increment(pitch_min: float, pitch_max: float) -> void:
 	voice.play()
 
 func _cell_overlaps_player(cell: Vector3i) -> bool:
-	var size: Vector3 = grid_map.cell_size
-	var center: Vector3 = grid_map.to_global(grid_map.map_to_local(cell))
-	var cell_box := AABB(center - size * 0.5, size)
+	if grid_map == null:
+		return false
+	return _host_cell_overlaps_player(
+		VOXEL_CELL_HOST.new(grid_map),
+		cell
+	)
 
+
+func _host_cell_overlaps_player(
+	host,
+	cell: Vector3i
+) -> bool:
+	if (
+		player == null
+		or not is_instance_valid(player)
+		or _collision_shape == null
+		or host == null
+		or not bool(host.call("is_valid"))
+	):
+		return false
+
+	var cell_box: AABB = host.call("cell_aabb", cell)
 	var r: float = _collision_shape.shape.radius
 	var h: float = _collision_shape.shape.height
 	var player_box := AABB(

@@ -14,6 +14,9 @@ const SUB_LEVEL = preload("res://scripts/world/sub_level.gd")
 const CHECK_INTERVAL: float = 0.25
 const WELD_SETTLE: float = 0.5
 const DOCK_SETTLE: float = 1.5
+## A newly spawned/loaded body gets one ground-backed stability check after it
+## has been at rest this long.
+const STABILITY_SETTLE: float = 0.6
 
 var grid: NavGridMap = null
 var host: Node3D = null
@@ -69,11 +72,55 @@ func spawn(
 		origin,
 		Callable(grid, "get_orientation_basis")
 	)
+	node.ctm_grid = grid
+	_apply_grid_rules(node)
+	node.shed_callback = Callable(
+		self,
+		"_shed_sublevel_cells"
+	).bind(node)
 	host.add_child(node)
 	node.global_position = grid.to_global(grid.map_to_local(origin))
-	node.set_cells(local_cells)
+	node.set_cells(local_cells, false)
 	sublevels.append(node)
 	return node
+
+
+func _apply_grid_rules(node: SubLevel) -> void:
+	if grid == null or node == null:
+		return
+	if "sublevel_stability_enabled" in grid:
+		node.stability_enabled = bool(grid.sublevel_stability_enabled)
+	if "sublevel_contact_damage_enabled" in grid:
+		node.contact_damage_enabled = bool(
+			grid.sublevel_contact_damage_enabled
+		)
+	if "sublevel_contact_damage_scale" in grid:
+		node.contact_damage_scale = float(
+			grid.sublevel_contact_damage_scale
+		)
+	if "sublevel_collision_destruction_enabled" in grid:
+		node.collision_destruction_enabled = bool(
+			grid.sublevel_collision_destruction_enabled
+		)
+	if "sublevel_collision_destruction_radius" in grid:
+		node.collision_destruction_radius = float(
+			grid.sublevel_collision_destruction_radius
+		)
+	if "sublevel_fire_enabled" in grid:
+		node.fire_enabled = bool(grid.sublevel_fire_enabled)
+		if not node.fire_enabled and node.is_burning():
+			node.extinguish_all()
+
+
+## Pushes the current grid rules onto live bodies after a settings change.
+func apply_grid_rules() -> void:
+	_prune()
+	for node: Variant in sublevels.duplicate():
+		if not is_instance_valid(node):
+			continue
+		_apply_grid_rules(node)
+		if node.stability_enabled:
+			node.apply_stability_now()
 
 
 ## Snapshots every live body. The array order is stable within a save so
@@ -110,6 +157,12 @@ func restore_all(entries: Array) -> int:
 			Vector3i.ZERO,
 			Callable(grid, "get_orientation_basis")
 		)
+		node.ctm_grid = grid
+		_apply_grid_rules(node)
+		node.shed_callback = Callable(
+			self,
+			"_shed_sublevel_cells"
+		).bind(node)
 		host.add_child(node)
 
 		if not node.restore_state(state):
@@ -119,6 +172,54 @@ func restore_all(entries: Array) -> int:
 		sublevels.append(node)
 
 	return sublevels.size()
+
+
+## Stability shed: turn removed local cells into a new free rigid sub-level.
+func _shed_sublevel_cells(
+	removed_cells: Array,
+	removed_data: Dictionary,
+	source: SubLevel
+) -> void:
+	if (
+		grid == null
+		or host == null
+		or source == null
+		or not is_instance_valid(source)
+		or removed_data.is_empty()
+	):
+		return
+
+	var node := SUB_LEVEL.new()
+	node.name = "SubLevel"
+	node.configure(
+		grid.mesh_library,
+		grid.cell_size,
+		Vector3i.ZERO,
+		Callable(grid, "get_orientation_basis")
+	)
+	node.ctm_grid = grid
+	_apply_grid_rules(node)
+	# Shed pieces are already the unstable fragment; let them exist as free
+	# bodies instead of immediately shedding again.
+	node.stability_enabled = false
+	host.add_child(node)
+	node.global_transform = source.global_transform
+	node.set_cells(removed_data, false)
+	node.linear_velocity = source.linear_velocity
+	node.angular_velocity = source.angular_velocity
+	node.sleeping = false
+
+	# Move placeables on the removed cells with their fragment.
+	for child in source.get_children():
+		if not child is Node3D or not child.is_in_group("placeables"):
+			continue
+		var local := source.local_cell_at_world(
+			(child as Node3D).global_position
+		)
+		if removed_data.has(local):
+			(child as Node3D).reparent(node, true)
+
+	sublevels.append(node)
 
 
 func active_count() -> int:
@@ -149,13 +250,22 @@ func _process(delta: float) -> void:
 
 	_prune()
 
-	for node: Variant in sublevels:
+	for node: Variant in sublevels.duplicate():
 		if not is_instance_valid(node):
 			continue
 		if node.is_settled():
 			node.settled_for += step
+			if (
+				node.stability_enabled
+				and not node.freeze
+				and not node.stability_checked
+				and node.settled_for >= STABILITY_SETTLE
+			):
+				node.stability_checked = true
+				node.apply_stability_now()
 		else:
 			node.settled_for = 0.0
+			node.stability_checked = false
 
 	# One connection decision per tick keeps the loop simple and spread out.
 	if _weld_one():
@@ -197,6 +307,7 @@ func _weld_one() -> bool:
 				continue
 
 			sublevels.erase(guest)
+			guest.detach_ash()
 			guest.queue_free()
 			return true
 
@@ -250,6 +361,7 @@ func dock_now(node: SubLevel) -> bool:
 	# instead of being freed with the body.
 	var scene_root := get_tree().current_scene if is_inside_tree() else null
 	node.move_placeables_to(scene_root if scene_root != null else host)
+	node.detach_ash()
 
 	sublevels.erase(node)
 	node.queue_free()

@@ -24,6 +24,8 @@ const BLOCK_IDS = preload("res://scripts/world/block_ids.gd")
 const FALLING_BLOCKS = preload("res://scripts/world/falling_blocks.gd")
 const SUB_LEVEL_MANAGER = preload("res://scripts/world/sub_level_manager.gd")
 const FOLIAGE_BATCHER = preload("res://scripts/world/foliage_batcher.gd")
+const WORLD_FIRE = preload("res://scripts/world/world_fire.gd")
+const ASH_SETTLER = preload("res://scripts/world/ash_settler.gd")
 
 ## Body radius used for navigation clearance checks. The spawned NPC body is a
 ## 0.25 m sphere; matching it here keeps path validation honest.
@@ -74,6 +76,14 @@ var authored_route_cells: Dictionary = {}
 ## When on, a settled sub-level that lines up with the world docks back into the
 ## normal chunk grid. Off by default so sub-levels stay editable.
 @export var auto_dock_sublevels: bool = false
+## Sub-level rules. Stability uses the body's local grid with its lowest layer
+## as the foundation; contact damage and fire are opt-in.
+@export var sublevel_stability_enabled: bool = false
+@export var sublevel_contact_damage_enabled: bool = false
+@export var sublevel_contact_damage_scale: float = 0.05
+@export var sublevel_collision_destruction_enabled: bool = false
+@export var sublevel_collision_destruction_radius: float = 1.5
+@export var sublevel_fire_enabled: bool = true
 @export var stability_debug: bool = false:
 	set(value):
 		stability_debug = value
@@ -246,6 +256,8 @@ var _sublevel_manager = null
 ## True while the collapse loop is removing cells, so the removal hook does not
 ## re-enter and recurse.
 var _structural_busy: bool = false
+## Guards the ash-only settle pass while it rewrites blocks.
+var _ash_settling: bool = false
 ## Debug overlay.
 var _stability_overlay: MultiMeshInstance3D = null
 var _stability_overlay_accum: float = 0.0
@@ -384,6 +396,26 @@ func _sync_structural_settings() -> void:
 		collapse_style = int(settings.collapse_style)
 	if "auto_dock_sublevels" in settings:
 		auto_dock_sublevels = bool(settings.auto_dock_sublevels)
+	if "sublevel_stability" in settings:
+		sublevel_stability_enabled = bool(settings.sublevel_stability)
+	if "sublevel_contact_damage" in settings:
+		sublevel_contact_damage_enabled = bool(
+			settings.sublevel_contact_damage
+		)
+	if "sublevel_contact_damage_scale" in settings:
+		sublevel_contact_damage_scale = float(
+			settings.sublevel_contact_damage_scale
+		)
+	if "sublevel_collision_destruction" in settings:
+		sublevel_collision_destruction_enabled = bool(
+			settings.sublevel_collision_destruction
+		)
+	if "sublevel_collision_destruction_radius" in settings:
+		sublevel_collision_destruction_radius = float(
+			settings.sublevel_collision_destruction_radius
+		)
+	if "sublevel_fire" in settings:
+		sublevel_fire_enabled = bool(settings.sublevel_fire)
 	if "stability_debug" in settings:
 		stability_debug = bool(settings.stability_debug)
 
@@ -427,6 +459,12 @@ func _ready() -> void:
 		batcher.name = "FoliageBatcher"
 		batcher.add_to_group("foliage_batcher")
 		add_child(batcher)
+
+	if get_tree().get_first_node_in_group("world_fire") == null:
+		var world_fire := WORLD_FIRE.new()
+		world_fire.name = "WorldFire"
+		add_child(world_fire)
+		world_fire.setup(self)
 
 	if debug_show_paths:
 		_ensure_debug_mesh()
@@ -2835,6 +2873,22 @@ func _find_mesh_instance(node: Node) -> MeshInstance3D:
 	return null
 
 
+## Ash-only settle/merge. Safe to call for every block; it does nothing for
+## non-ash items. The guard prevents compaction's own place_block calls from
+## re-entering the settle pass.
+func settle_ash_cell(cell: Vector3i) -> void:
+	if _ash_settling or mesh_library == null:
+		return
+	var item: int = get_block_item(cell)
+	if item < 0:
+		return
+	if not ASH_SETTLER.is_ash_name(String(mesh_library.get_item_name(item))):
+		return
+	_ash_settling = true
+	ASH_SETTLER.settle_world_cell(self, cell)
+	_ash_settling = false
+
+
 func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 	if mesh_library == null:
 		return false
@@ -2856,6 +2910,7 @@ func place_block(cell: Vector3i, item: int, orientation: int = 0) -> bool:
 	_refresh_nav_around(cell)
 	block_placed.emit(cell, item)
 	_apply_structure_after_edit([cell], {}, true)
+	settle_ash_cell(cell)
 
 	return true
 
@@ -2914,6 +2969,8 @@ func place_blocks(
 
 	navigation_changed.emit(affected)
 	_apply_structure_after_edit(placed_cells, {}, true)
+	for cell: Vector3i in placed_cells:
+		settle_ash_cell(cell)
 	return placed_cells.size()
 
 

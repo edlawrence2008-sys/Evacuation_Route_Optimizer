@@ -6,6 +6,7 @@ extends SceneTree
 ##   godot --headless --path . --script res://tests/useables_test.gd
 
 const HUD_SCRIPT = preload("res://scenes/hud.gd")
+const VOXEL_ITEMS = preload("res://scripts/voxel_item_generator.gd")
 
 var _checks: int = 0
 var _failures: int = 0
@@ -53,6 +54,14 @@ func _run() -> void:
 			"use", "alt_use", "hold", "release", "rotate_held"
 		]:
 			_expect("component implements %s" % method, component.has_method(method))
+		_expect(
+			"component exposes a reach override",
+			"reach_override" in component
+		)
+		_expect(
+			"component exposes the held-collision toggle",
+			"ignore_collision_while_held" in component
+		)
 
 	var meshes := 0
 	for child in root.get_children():
@@ -66,6 +75,42 @@ func _run() -> void:
 		_expect("emitter is tagged as the beam muzzle", emitter.has_meta("muzzle"))
 
 	root.free()
+
+	var fire_path := "res://scenes/useables/fire_tool.tscn"
+	_expect(
+		"catalog lists the fire tool",
+		HUD_SCRIPT.USEABLE_SCENE_PATHS.has(fire_path)
+	)
+	var fire_packed := load(fire_path) as PackedScene
+	_expect("fire tool scene loads", fire_packed != null)
+	if fire_packed != null:
+		var fire_root: Node = fire_packed.instantiate()
+		var fire_component: UseComponent = null
+		for child in fire_root.get_children():
+			if child is UseComponent:
+				fire_component = child
+				break
+		_expect("fire tool owns a UseComponent", fire_component != null)
+		if fire_component != null:
+			_expect(
+				"component script is the fire tool",
+				fire_component.get_script().resource_path.ends_with(
+					"fire_tool_component.gd"
+				)
+			)
+			_expect("fire tool has a reach", "reach" in fire_component)
+			_expect("fire tool can use", fire_component.has_method("use"))
+		fire_root.free()
+
+	for path_value: Variant in HUD_SCRIPT.USEABLE_SCENE_PATHS:
+		var scene_path := String(path_value)
+		var scene := load(scene_path) as PackedScene
+		var icon: Texture2D = VOXEL_ITEMS.icon_for_scene(scene)
+		_expect(
+			"useable has an icon: %s" % scene_path.get_file(),
+			icon != null
+		)
+
 	_finish()
 
 

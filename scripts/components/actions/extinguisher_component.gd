@@ -38,6 +38,20 @@ func use(actor: Node, origin: Vector3, direction: Vector3) -> void:
 
 		fire.extinguish(power)
 
+	# Sub-levels carry cell-level fire rather than a per-placeable FireComponent.
+	var spray_point: Vector3 = origin + aim * range * 0.5
+	for node in actor.get_tree().get_nodes_in_group("sublevels"):
+		var sublevel := node as SubLevel
+		if sublevel == null or not sublevel.is_burning():
+			continue
+		if sublevel.global_position.distance_to(origin) > range * 2.0:
+			continue
+		sublevel.extinguish_at_world(spray_point, range * 0.75)
+
+	for node in actor.get_tree().get_nodes_in_group("world_fire"):
+		if node.has_method("extinguish_at_world"):
+			node.call("extinguish_at_world", spray_point, range * 0.75)
+
 	if spray_effect_scene != null:
 		var effect := spray_effect_scene.instantiate()
 		actor.get_tree().current_scene.add_child(effect)

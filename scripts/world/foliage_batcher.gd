@@ -32,6 +32,9 @@ var _hidden_nodes: Dictionary = {}
 var _dirty: bool = true
 var _dirty_age: float = REBUILD_DEBOUNCE
 var _has_built: bool = false
+## Diagnostic counter; also lets tests/profiling distinguish repeated rebuilds
+## from one-time shader/batch cost.
+var rebuild_count: int = 0
 
 
 func _ready() -> void:
@@ -87,10 +90,23 @@ func _on_node_removed(node: Node) -> void:
 
 
 ## Public so PerformanceSettings can request a rebuild after changing the
-## foliage distance bands.
+## foliage population/materials.
 func mark_dirty() -> void:
 	_dirty = true
 	_dirty_age = 0.0
+
+
+## Updates the distance bands of existing batches in place. Distance changes do
+## not need a 16k-instance rebuild.
+func apply_distance(far_distance: float, mid_distance: float) -> void:
+	for batch: Variant in _batches:
+		if not is_instance_valid(batch):
+			continue
+		var multi := batch as MultiMeshInstance3D
+		var secondary: bool = bool(multi.get_meta("foliage_secondary", false))
+		var distance := mid_distance if secondary else far_distance
+		multi.visibility_range_end = distance
+		multi.visibility_range_end_margin = maxf(8.0, distance * 0.15)
 
 
 func _refresh() -> void:
@@ -176,6 +192,7 @@ func _is_batchable(sprite: Sprite3D) -> bool:
 
 
 func _rebuild(scan: Dictionary) -> void:
+	rebuild_count += 1
 	_clear_batches()
 	_restore_sprites()
 	_has_built = false
@@ -216,6 +233,7 @@ func _rebuild(scan: Dictionary) -> void:
 		var batch := MultiMeshInstance3D.new()
 		batch.name = "FoliageBatch"
 		batch.set_meta("foliage_batch", true)
+		batch.set_meta("foliage_secondary", bool(group["secondary"]))
 		batch.top_level = true
 		batch.multimesh = multimesh
 		batch.material_override = group["material"]

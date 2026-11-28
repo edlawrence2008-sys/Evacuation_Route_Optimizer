@@ -1,0 +1,63 @@
+[gd_scene format=3 uid="uid://c6d6k11emp7h3"]
+
+[ext_resource type="Script" uid="uid://bkhjqtysxpp6r" path="res://addons/cheap_kinesis_based_npcs/animal.gd" id="1_sm7m2"]
+[ext_resource type="Script" uid="uid://dicxn3bycy5f5" path="res://scripts/NPCstuff/HealthComponent.gd" id="4_ywn8a"]
+[ext_resource type="Script" uid="uid://cxv5rrfdgun1d" path="res://scripts/NPCstuff/BelowChunkKillComponent.gd" id="5_kill"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_sfe85"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_sfe85"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_g4v7s"]
+size = Vector3(0.8, 1, 2)
+
+[sub_resource type="SeparationRayShape3D" id="SeparationRayShape3D_g4v7s"]
+length = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_g4v7s"]
+size = Vector3(0.8, 0.5, 0.3)
+
+[node name="Animal" type="CharacterBody3D" unique_id=1477606098 groups=["kinesis"]]
+collision_layer = 2
+collision_mask = 17
+max_slides = 2
+script = ExtResource("1_sm7m2")
+uncomfortability_decay_rate = 0.1
+jump_stuck_time = 0.01
+jump_cooldown = 0.1
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=918017690]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("CapsuleMesh_sfe85")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1516521314]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("CapsuleShape3D_sfe85")
+
+[node name="HealthComponent" type="Node" parent="." unique_id=904989909]
+script = ExtResource("4_ywn8a")
+max_health = 5.0
+
+[node name="BelowChunkKillComponent" type="Node" parent="." unique_id=1368851198]
+script = ExtResource("5_kill")
+
+[node name="Eyeray" type="ShapeCast3D" parent="." unique_id=1693398399]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, -0.5)
+shape = SubResource("BoxShape3D_g4v7s")
+target_position = Vector3(0, 0, -1)
+max_results = 1
+collision_mask = 17
+
+[node name="FloorCast" type="RayCast3D" parent="." unique_id=1281229312]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -1)
+target_position = Vector3(0, -2, 0)
+collision_mask = 17
+hit_from_inside = true
+
+[node name="Separationray" type="CollisionShape3D" parent="." unique_id=459465238]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0.6, -1)
+shape = SubResource("SeparationRayShape3D_g4v7s")
+
+[node name="MeshInstance3D2" type="MeshInstance3D" parent="." unique_id=1350428020]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.9802322e-08, 1.25, -0.45000005)
+mesh = SubResource("BoxMesh_g4v7s")

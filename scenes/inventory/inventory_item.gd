@@ -177,19 +177,23 @@ func set_variants(group_id: String, has_variants: bool) -> void:
 
 ## Turns this card into a Useables-tab tool entry. It reuses the normal item
 ## card so it sits in the same 60x60 inventory grid as blocks and placeables.
-func set_useable(scene: PackedScene, display_name: String) -> void:
+func set_useable(
+	scene: PackedScene,
+	display_name: String,
+	icon: Texture2D = null
+) -> void:
 	useable_scene = scene
-	setup(-1, display_name, null, true, scene)
+	setup(-1, display_name, icon, true, scene)
 
 	if label:
 		label.text = display_name
-		label.visible = true
+		label.visible = icon == null
 
 	if texture_rect:
-		texture_rect.visible = false
+		texture_rect.visible = icon != null
 
 	if sprite_2d:
-		sprite_2d.visible = true
+		sprite_2d.visible = icon == null
 
 
 ## Turns this cell into a palette entry. The plus badge is always visible and

@@ -73,6 +73,10 @@ func _impact(hit: Dictionary) -> void:
 	# Chain reactions: hitting an armed explosive or a fire source.
 	var collider: Object = hit.get("collider")
 	if collider is Node:
+		var sublevel := _find_sublevel(collider as Node)
+		if sublevel != null:
+			sublevel.ignite_at_world(global_position)
+
 		var target := _find_placeable(collider as Node)
 		if target != null:
 			_trigger_components(target)
@@ -96,5 +100,14 @@ func _find_placeable(node: Node) -> Node:
 	while current != null:
 		if current.is_in_group("placeables"):
 			return current
+		current = current.get_parent()
+	return null
+
+
+func _find_sublevel(node: Node) -> SubLevel:
+	var current := node
+	while current != null:
+		if current is SubLevel:
+			return current as SubLevel
 		current = current.get_parent()
 	return null

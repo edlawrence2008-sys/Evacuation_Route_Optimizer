@@ -24,6 +24,7 @@ const SOURCE_FOLDERS: Array[String] = [
 	"res://scenes/placeables/device/",
 	"res://scenes/placeables/foilage/",
 	"res://scenes/placeables/env/",
+	"res://scenes/useables/",
 ]
 
 static var _manifest: Dictionary = {}
@@ -109,6 +110,60 @@ static func generate_all(
 				continue
 			entries[scene_path] = result
 			generated.append(scene_path)
+
+	var manifest := {
+		"version": 1,
+		"items": entries,
+	}
+	var file := FileAccess.open(manifest_path, FileAccess.WRITE)
+	if file == null:
+		errors.append("could not write " + manifest_path)
+	else:
+		file.store_string(JSON.stringify(manifest, "\t"))
+		file.close()
+
+	_manifest = manifest
+	_manifest_loaded = true
+	_icon_cache.clear()
+	return {
+		"generated": generated,
+		"errors": errors,
+	}
+
+
+## Renders only the requested scene paths and merges them into the existing
+## manifest. Used to add new catalogs (for example Useables) without re-rendering
+## every existing placeable icon.
+static func generate_selected(
+	host: Node,
+	scene_paths: Array,
+	output_dir: String = OUTPUT_DIR,
+	manifest_path: String = MANIFEST_PATH
+) -> Dictionary:
+	var entries: Dictionary = {}
+	if FileAccess.file_exists(manifest_path):
+		var existing := FileAccess.open(manifest_path, FileAccess.READ)
+		if existing != null:
+			var parsed: Variant = JSON.parse_string(existing.get_as_text())
+			existing.close()
+			if parsed is Dictionary:
+				entries = (parsed as Dictionary).get("items", {})
+
+	var generated: Array[String] = []
+	var errors: Array[String] = []
+
+	for path_value: Variant in scene_paths:
+		var scene_path := String(path_value)
+		var result: Dictionary = await generate_for_scene(
+			host,
+			scene_path,
+			output_dir
+		)
+		if result.has("error"):
+			errors.append(String(result["error"]))
+			continue
+		entries[scene_path] = result
+		generated.append(scene_path)
 
 	var manifest := {
 		"version": 1,

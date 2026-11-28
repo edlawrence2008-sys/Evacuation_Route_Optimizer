@@ -765,6 +765,35 @@ func _ensure_settings_ui() -> void:
 	_ensure_water_button(
 		gameplay_right, "AutoDock", "auto_dock", "Auto Dock", -0.24
 	)
+	_ensure_water_button(
+		gameplay_left,
+		"SublevelStability",
+		"sublevel_stability",
+		"Sublevel Stability",
+		-0.47
+	)
+	_ensure_water_button(
+		gameplay_left,
+		"SublevelDamage",
+		"sublevel_damage",
+		"Sublevel Entity Damage",
+		-0.70
+	)
+	_ensure_water_button(
+		gameplay_right,
+		"SublevelFire",
+		"sublevel_fire",
+		"Sublevel Fire",
+		-0.47
+	)
+	_ensure_water_button(
+		gameplay_right,
+		"SublevelDestruction",
+		"sublevel_destruction",
+		"Sublevel Block Damage",
+		-0.70
+	)
+	_move_settings_button("GameplayBack", _gameplay_panel, -0.94)
 
 	_move_settings_button("Volume", audio_left, 0.10)
 	_ensure_water_button(audio_left, "Music", "music", "Music", 0.40)
@@ -2235,6 +2264,23 @@ func _dynamic_caption(action: String) -> String:
 			return "Stability Overlay: " + PerformanceSettings.stability_debug_name()
 		"auto_dock":
 			return "Auto Dock: " + PerformanceSettings.auto_dock_name()
+		"sublevel_stability":
+			return (
+				"Sublevel Stability: "
+				+ PerformanceSettings.sublevel_stability_name()
+			)
+		"sublevel_damage":
+			return (
+				"Sublevel Entity Damage: "
+				+ PerformanceSettings.sublevel_contact_damage_name()
+			)
+		"sublevel_destruction":
+			return (
+				"Sublevel Block Damage: "
+				+ PerformanceSettings.sublevel_collision_destruction_name()
+			)
+		"sublevel_fire":
+			return "Sublevel Fire: " + PerformanceSettings.sublevel_fire_name()
 		"shadows":
 			return "Shadows: " + PerformanceSettings.shadows_name()
 		"shadow_distance":
@@ -2536,6 +2582,18 @@ func _click_at(screen_position: Vector2) -> void:
 			_refresh_labels()
 		"auto_dock":
 			PerformanceSettings.toggle_auto_dock()
+			_refresh_labels()
+		"sublevel_stability":
+			PerformanceSettings.toggle_sublevel_stability()
+			_refresh_labels()
+		"sublevel_damage":
+			PerformanceSettings.toggle_sublevel_contact_damage()
+			_refresh_labels()
+		"sublevel_destruction":
+			PerformanceSettings.toggle_sublevel_collision_destruction()
+			_refresh_labels()
+		"sublevel_fire":
+			PerformanceSettings.toggle_sublevel_fire()
 			_refresh_labels()
 		"shadows":
 			PerformanceSettings.toggle_shadows()

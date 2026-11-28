@@ -1,0 +1,50 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/useables/fire_tool_component.gd" id="1_tool"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_body"]
+albedo_color = Color(0.48, 0.08, 0.05, 1)
+metallic = 0.5
+roughness = 0.35
+
+[sub_resource type="StandardMaterial3D" id="Mat_nozzle"]
+albedo_color = Color(0.16, 0.16, 0.18, 1)
+metallic = 0.8
+roughness = 0.2
+
+[sub_resource type="StandardMaterial3D" id="Mat_flame"]
+albedo_color = Color(1, 0.45, 0.05, 1)
+emission_enabled = true
+emission = Color(1, 0.3, 0.02, 1)
+emission_energy_multiplier = 2.5
+
+[sub_resource type="BoxMesh" id="Mesh_body"]
+size = Vector3(0.16, 0.18, 0.42)
+material = SubResource("Mat_body")
+
+[sub_resource type="CylinderMesh" id="Mesh_nozzle"]
+top_radius = 0.035
+bottom_radius = 0.05
+height = 0.2
+material = SubResource("Mat_nozzle")
+
+[node name="FireTool" type="Node3D"]
+metadata/hand_size = 0.22
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("Mesh_body")
+
+[node name="Nozzle" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.02, -0.3)
+rotation = Vector3(1.5708, 0, 0)
+mesh = SubResource("Mesh_nozzle")
+
+[node name="Pilot" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.02, -0.42)
+mesh = SubResource("Mesh_nozzle")
+material_override = SubResource("Mat_flame")
+scale = Vector3(0.35, 0.35, 0.35)
+
+[node name="FireToolComponent" type="Node" parent="."]
+cooldown = 0.2
+script = ExtResource("1_tool")
