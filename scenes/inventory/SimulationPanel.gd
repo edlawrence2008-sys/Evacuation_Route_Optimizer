@@ -223,10 +223,14 @@ func _on_populate_pressed() -> void:
 	var reason: String = String(result.get("reason", ""))
 
 	if reason.is_empty():
-		status_label.text = "Populated %d of %d members." % [
+		var status := "Populated %d of %d members." % [
 			int(result.get("spawned", 0)),
 			int(result.get("requested", 0)),
 		]
+		var warning: String = String(result.get("warning", ""))
+		if not warning.is_empty():
+			status += " " + warning
+		status_label.text = status
 	else:
 		status_label.text = "Populate failed: %s" % reason
 

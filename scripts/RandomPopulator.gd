@@ -55,6 +55,8 @@ func populate() -> Dictionary:
 		GlobalData.population_frozen = true
 
 	var evac_positions: Array[Vector3] = []
+	var use_pathfind_filter := only_pathfindable_blocks
+	var warning := ""
 	if only_pathfindable_blocks:
 		for node in tree.get_nodes_in_group("EvacPoint"):
 			var point := node as Node3D
@@ -62,10 +64,12 @@ func populate() -> Dictionary:
 				evac_positions.append(point.global_position)
 
 		if evac_positions.is_empty():
-			return {
-				"spawned": 0,
-				"reason": "Pathfind-only is enabled but there is no evacuation point.",
-			}
+			# Sandbox maps often have no evacuation point yet. Falling back to
+			# any walkable cell keeps Random Populate useful instead of failing.
+			use_pathfind_filter = false
+			warning = (
+				"No evacuation point found; populated on any walkable cell."
+			)
 
 	var candidates: Array[Vector3i] = []
 	for cell: Vector3i in grid.get_used_block_cells():
@@ -99,7 +103,7 @@ func populate() -> Dictionary:
 			grid.map_to_local(cell) + Vector3(0.0, grid.cell_size.y * 0.5, 0.0)
 		)
 
-		if only_pathfindable_blocks:
+		if use_pathfind_filter:
 			var reachable: bool = false
 			for evac_position: Vector3 in evac_positions:
 				if grid.estimate_path_distance(spawn_position, evac_position) < INF:
@@ -141,6 +145,7 @@ func populate() -> Dictionary:
 		"requested": member_count,
 		"attempts": attempts,
 		"reason": reason,
+		"warning": warning,
 	}
 
 

@@ -1,0 +1,77 @@
+[gd_scene format=3 uid="uid://drnkbt6yv0ns8"]
+
+[ext_resource type="PackedScene" uid="uid://dah8vfgmj812f" path="res://scene/Active_Ragdoll.tscn" id="1_cf262"]
+
+[sub_resource type="Environment" id="Environment_yf5fn"]
+
+[sub_resource type="CameraAttributesPhysical" id="CameraAttributesPhysical_57qmd"]
+
+[sub_resource type="Compositor" id="Compositor_d0u6y"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_cf262"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_g4v7s"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_eysa7"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_g4v7s"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_g4v7s"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_eysa7"]
+
+[node name="Node3D" type="Node3D" unique_id=1964445328]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2031646874]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 5, 0)
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1958436531]
+environment = SubResource("Environment_yf5fn")
+camera_attributes = SubResource("CameraAttributesPhysical_57qmd")
+compositor = SubResource("Compositor_d0u6y")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=963665302]
+transform = Transform3D(31.127676, 0, 0, 0, 1, 0, 0, 0, 31.127676, 0, -0.8390355, 0)
+material = SubResource("StandardMaterial3D_cf262")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="CSGBox3D" unique_id=263838150]
+
+[node name="CSGBakedCollisionShape3D" type="CollisionShape3D" parent="CSGBox3D/StaticBody3D" unique_id=1103558642]
+shape = SubResource("BoxShape3D_g4v7s")
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="." unique_id=1594147747]
+transform = Transform3D(6.225535, 0, 0, 0, 1, 0, 0, 0, 4.669151, 3, 1.1609645, 1)
+material = SubResource("StandardMaterial3D_eysa7")
+
+[node name="StaticBody3D" type="StaticBody3D" parent="CSGBox3D2" unique_id=120171034]
+
+[node name="CSGBakedCollisionShape3D" type="CollisionShape3D" parent="CSGBox3D2/StaticBody3D" unique_id=414666831]
+shape = SubResource("BoxShape3D_g4v7s")
+
+[node name="Active_Ragdoll" parent="." unique_id=993213452 instance=ExtResource("1_cf262")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 0, -1)
+
+[node name="RigidBody3D" type="RigidBody3D" parent="." unique_id=289812805]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1, 0)
+physics_material_override = SubResource("PhysicsMaterial_g4v7s")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RigidBody3D" unique_id=1794434979]
+mesh = SubResource("BoxMesh_g4v7s")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RigidBody3D" unique_id=1995217674]
+shape = SubResource("BoxShape3D_eysa7")
+
+[node name="RigidBody3D2" type="RigidBody3D" parent="." unique_id=1134107878]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 3, -1)
+physics_material_override = SubResource("PhysicsMaterial_g4v7s")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="RigidBody3D2" unique_id=1727346960]
+mesh = SubResource("BoxMesh_g4v7s")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RigidBody3D2" unique_id=203595895]
+shape = SubResource("BoxShape3D_eysa7")
+
+[node name="GPUParticlesCollisionBox3D" type="GPUParticlesCollisionBox3D" parent="." unique_id=1493091720]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2, 0)
+size = Vector3(100, 2, 100)

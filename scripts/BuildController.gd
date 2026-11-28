@@ -328,11 +328,11 @@ func _input(event: InputEvent) -> void:
 		_pick_aimed()
 		return
 
-	if not inventory_open and event.is_action_pressed("physics_gun"):
+	if not inventory_open and event.is_action_pressed("grab"):
 		_begin_grab()
 		return
 
-	if event.is_action_released("physics_gun"):
+	if event.is_action_released("grab"):
 		_stop_grab()
 		return
 
@@ -3412,9 +3412,9 @@ func _stop_gun_rotate() -> void:
 		player.set("camera_look_locked", false)
 
 
-## Mouse-driven rotation: horizontal motion rolls around the camera forward
-## axis, vertical motion pitches around the camera right axis. Holding sprint
-## snaps the result to the nearest cardinal orientation.
+## Mouse-driven rotation: horizontal motion yaws around the world up axis,
+## vertical motion pitches around the camera right axis. Holding sprint snaps the
+## result to the nearest cardinal orientation.
 func _apply_gun_mouse_rotation(event: InputEventMouseMotion) -> void:
 	if (
 		_gun_body == null
@@ -3428,12 +3428,12 @@ func _apply_gun_mouse_rotation(event: InputEventMouseMotion) -> void:
 	if relative.length_squared() <= 0.0001:
 		return
 
-	var forward: Vector3 = -_camera.global_transform.basis.z
-	var right: Vector3 = _camera.global_transform.basis.x
+	var yaw_axis: Vector3 = Vector3.UP
+	var pitch_axis: Vector3 = _camera.global_transform.basis.x
 	var body_basis: Basis = _gun_body.global_transform.basis
 	var delta := (
-		Basis(forward, -relative.x * GUN_MOUSE_ROTATE_SPEED)
-		* Basis(right, -relative.y * GUN_MOUSE_ROTATE_SPEED)
+		Basis(yaw_axis, -relative.x * GUN_MOUSE_ROTATE_SPEED)
+		* Basis(pitch_axis, -relative.y * GUN_MOUSE_ROTATE_SPEED)
 	)
 	var new_basis := (delta * body_basis).orthonormalized()
 	if Input.is_action_pressed("sprint"):

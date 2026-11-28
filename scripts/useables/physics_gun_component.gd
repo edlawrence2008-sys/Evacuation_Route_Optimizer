@@ -10,8 +10,9 @@ extends UseComponent
 @export var description: String = (
 	"Primary grabs and holds a physics body with an axis-locked beam from the "
 	+ "gun's emitter; release to throw it. Secondary freezes or unfreezes the "
-	+ "body. Q rotates the held body. Reach defaults to the build reach; "
-	+ "Ignore Collision While Held lets a blocked prop pass through geometry."
+	+ "body. Hold Q and move the mouse to rotate it; hold Sprint to snap to "
+	+ "cardinal axes. Ignore Collision While Held lets a blocked prop pass "
+	+ "through geometry."
 )
 ## 0 uses the BuildController's normal build reach. A positive value overrides
 ## it for this tool.

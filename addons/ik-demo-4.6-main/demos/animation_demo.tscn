@@ -1,0 +1,70 @@
+[gd_scene format=3 uid="uid://cpxcll7jtn776"]
+
+[ext_resource type="Texture2D" uid="uid://cmga7xmdfngcn" path="res://assets/HDRI/kloofendal_48d_partly_cloudy_puresky_4k.hdr" id="1_hh46w"]
+[ext_resource type="Texture2D" uid="uid://2iy8weuaf8be" path="res://assets/textures/kenney_grids/Light/texture_07.png" id="2_sspd6"]
+[ext_resource type="PackedScene" uid="uid://ct5t3botxhlnc" path="res://scenes/active_ragdoll.tscn" id="3_hh46w"]
+
+[sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_8vvj0"]
+panorama = ExtResource("1_hh46w")
+
+[sub_resource type="Sky" id="Sky_c6xj6"]
+sky_material = SubResource("PanoramaSkyMaterial_8vvj0")
+
+[sub_resource type="Environment" id="Environment_6bw2v"]
+background_mode = 2
+sky = SubResource("Sky_c6xj6")
+ambient_light_sky_contribution = 0.32
+tonemap_mode = 2
+glow_enabled = true
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1xu4i"]
+albedo_color = Color(0.32172796, 0.32172796, 0.32172796, 1)
+albedo_texture = ExtResource("2_sspd6")
+uv1_triplanar = true
+
+[node name="world" type="Node3D" unique_id=1534360198]
+
+[node name="env" type="Node" parent="." unique_id=1926040072]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="env" unique_id=1581935707]
+environment = SubResource("Environment_6bw2v")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="env" unique_id=439935835]
+transform = Transform3D(0.8026927, -0.5164916, 0.2981964, 2.7879908e-08, 0.49999997, 0.86602557, -0.59639305, -0.69515234, 0.4013463, 0, 0, 0)
+shadow_enabled = true
+
+[node name="stage" type="CSGCombiner3D" parent="." unique_id=1045162169]
+material_override = SubResource("StandardMaterial3D_1xu4i")
+use_collision = true
+
+[node name="CSGBox3D" type="CSGBox3D" parent="stage" unique_id=400722263]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+use_collision = true
+size = Vector3(100, 1, 100)
+
+[node name="CSGBox3D2" type="CSGBox3D" parent="stage" unique_id=197580553]
+transform = Transform3D(0.7924961, -0.1428275, -0.5929167, 0.14000095, 0.9888335, -0.05107373, 0.5935906, -0.042533197, 0.8036425, 4.418614, -0.4122107, 3.8735237)
+use_collision = true
+size = Vector3(3, 3, 3)
+
+[node name="CSGBox3D4" type="CSGBox3D" parent="stage" unique_id=1994085279]
+transform = Transform3D(0.68779445, 0.37443697, 0.6218807, -0.119673535, 0.90346354, -0.4116212, -0.7159728, 0.20868811, 0.6662073, 0.038697243, -0.21502328, -4.9555387)
+use_collision = true
+size = Vector3(3, 3, 3)
+
+[node name="CSGBox3D5" type="CSGBox3D" parent="stage" unique_id=701073630]
+transform = Transform3D(-0.9186721, 0.056438513, 0.39096847, -0.119673535, 0.90346354, -0.4116212, -0.3764571, -0.42493346, -0.8232323, -2.115626, -0.54075885, 4.219141)
+use_collision = true
+size = Vector3(3, 3, 3)
+
+[node name="CSGBox3D3" type="CSGBox3D" parent="stage" unique_id=1395104005]
+transform = Transform3D(-0.09324588, 0.9320058, 0.3502436, -0.9345486, 0.03939937, -0.35364825, -0.34340146, -0.36029604, 0.8673307, -11.715984, -0.44132888, -3.3711157)
+use_collision = true
+size = Vector3(3, 3, 3)
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=779950754]
+transform = Transform3D(0.7727588, 0.14926818, 0.6168978, 0, 0.9719521, -0.23517917, -0.6346998, 0.18173677, 0.7510845, 1.0220213, 0.42673454, 1.3049941)
+visible = false
+fov = 59.81846
+
+[node name="active_ragdoll" parent="." unique_id=198152158 instance=ExtResource("3_hh46w")]

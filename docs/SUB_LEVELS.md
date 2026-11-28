@@ -134,11 +134,11 @@ force = force.limit_length(mass * 400)
   this boolean as a checkbox.
 - **RMB** freezes or unfreezes the held body (or the aimed one when empty).
 - **Hold Q + move the mouse** to rotate the held body. Player camera look is
-  locked while Q is held; horizontal mouse motion rolls around the camera's
-  view axis and vertical motion pitches around its right axis, pivoting on the
-  grabbed point. Holding **Shift** during rotation snaps the body's basis to the
-  nearest cardinal orientation (up/down/left/right/forward/back), so it can
-  still be rotated freely but lands on 90° axes.
+  locked while Q is held; horizontal mouse motion yaws around the world up axis
+  and vertical motion pitches around the camera's right axis, pivoting on the
+  grabbed point. Holding the **Sprint** action during rotation snaps the body's
+  basis to the nearest cardinal orientation (up/down/left/right/forward/back), so
+  it can still be rotated freely but lands on 90° axes.
 - **,** / **.** push the hold point 0.5 m out or in (2.5-11 m).
 - While held, gravity is cancelled and all three angular axes are locked
   (`axis_lock_angular_*`), so the body keeps its orientation instead of
